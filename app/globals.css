@@ -3,6 +3,14 @@
 /* =====================
    CareCircle theme vars
 ===================== */
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background: #f8fafc;
+  color: #0f172a;
+}
 
 :root {
   --cc-bg: #f6f9fb;
