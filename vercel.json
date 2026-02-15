@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/med-reminders?slot=morning",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/med-reminders?slot=midday",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/med-reminders?slot=evening",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/med-reminders?slot=bedtime",
+      "schedule": "0 21 * * *"
+    }
+  ]
+}

@@ -1,0 +1,322 @@
+@import "tailwindcss";
+
+/* =====================
+   CareCircle theme vars
+===================== */
+
+:root {
+  --cc-bg: #f6f9fb;
+  --cc-card: #ffffff;
+  --cc-border: rgba(0, 0, 0, 0.08);
+
+  --cc-primary: #5e7fa3; /* blue */
+  --cc-secondary: #7faf9f; /* green */
+  --cc-muted: #6b7280;
+
+  --cc-radius: 16px;
+
+  --cc-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cc-bg: #0b1220;
+    --cc-card: #0f172a;
+    --cc-border: rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* =====================
+   Base
+===================== */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--cc-bg);
+  color: #0f172a;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+/* =====================
+   Layout helpers
+===================== */
+
+.cc-page {
+  padding: 24px;
+}
+
+.cc-container {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.cc-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.cc-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cc-row-between {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.cc-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.cc-grid-2-125 {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .cc-grid-2,
+  .cc-grid-2-125 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cc-spacer-12 {
+  height: 12px;
+}
+
+.cc-spacer-24 {
+  height: 24px;
+}
+
+/* =====================
+   Card + panel styling
+===================== */
+
+.cc-card {
+  background: var(--cc-card);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius);
+  box-shadow: var(--cc-shadow);
+}
+
+.cc-card-pad {
+  padding: 16px;
+}
+
+.cc-panel {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(201, 211, 224, 0.18);
+}
+
+.cc-panel-soft {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.cc-panel-green {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(127, 175, 163, 0.1);
+}
+
+.cc-panel-blue {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(94, 127, 163, 0.1);
+}
+
+/* =====================
+   Typography helpers
+===================== */
+
+.cc-kicker {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.cc-h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.2px;
+}
+
+.cc-h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.1px;
+}
+
+.cc-subtle {
+  opacity: 0.75;
+  font-size: 13px;
+}
+
+.cc-small {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.cc-strong {
+  font-weight: 900;
+}
+
+.cc-pill {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 900;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: white;
+}
+
+.cc-pill-primary {
+  background: rgba(94, 127, 163, 0.18);
+}
+
+.cc-pill-danger {
+  background: rgba(220, 38, 38, 0.12);
+}
+
+/* =====================
+   Buttons + tabs
+===================== */
+
+.cc-btn {
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 800;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: white;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cc-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cc-btn-primary {
+  background: rgba(94, 127, 163, 0.16);
+}
+
+.cc-btn-secondary {
+  background: rgba(127, 175, 163, 0.18);
+}
+
+.cc-btn-danger {
+  color: crimson;
+}
+
+.cc-tabbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.cc-tab {
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-weight: 900;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: white;
+  cursor: pointer;
+}
+
+.cc-tab-active {
+  background: rgba(94, 127, 163, 0.22);
+}
+
+/* =====================
+   Inputs
+===================== */
+
+.cc-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cc-label {
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.cc-input,
+.cc-select,
+.cc-textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: white;
+}
+
+.cc-textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.cc-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* =====================
+   Status callout
+===================== */
+
+.cc-status {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--cc-border);
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(6px);
+}
+
+.cc-status-ok {
+  border-left: 4px solid #2f8f5b;
+}
+
+.cc-status-loading {
+  border-left: 4px solid rgba(94, 127, 163, 1);
+}
+
+.cc-status-error {
+  border-left: 4px solid crimson;
+}
+
+.cc-status-error-title {
+  color: crimson;
+  font-weight: 900;
+}
