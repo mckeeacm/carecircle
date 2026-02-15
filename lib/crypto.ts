@@ -16,6 +16,12 @@ type PayloadLike =
 
 const ENC_PREFIX = "enc:v1:";
 
+// --- WebCrypto TS typing helper ---
+// Ensures we pass a REAL ArrayBuffer (not ArrayBufferLike / SharedArrayBuffer typing)
+function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
+}
+
 // --- base64 helpers (browser) ---
 function bytesToB64(bytes: Uint8Array): string {
   let binary = "";
@@ -50,14 +56,24 @@ function isB64String(v: any): v is string {
 }
 
 export async function derivePatientKey(patientId: string, serverSalt: string): Promise<CryptoKey> {
-  const baseKey = await crypto.subtle.importKey("raw", enc.encode(serverSalt), "HKDF", false, ["deriveKey"]);
+  const saltBytes = enc.encode(serverSalt);
+  const patientBytes = enc.encode(patientId);
+  const infoBytes = enc.encode("carecircle-patient-v1");
+
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    toArrayBuffer(saltBytes),
+    "HKDF",
+    false,
+    ["deriveKey"]
+  );
 
   return crypto.subtle.deriveKey(
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: enc.encode(patientId),
-      info: enc.encode("carecircle-patient-v1"),
+      salt: toArrayBuffer(patientBytes),
+      info: toArrayBuffer(infoBytes),
     },
     baseKey,
     { name: "AES-GCM", length: 256 },
@@ -74,7 +90,13 @@ export async function derivePatientKey(patientId: string, serverSalt: string): P
  */
 export async function encryptText(key: CryptoKey, text: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(text));
+  const plainBytes = enc.encode(text);
+
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    toArrayBuffer(plainBytes)
+  );
 
   return {
     iv: Array.from(iv),
@@ -88,7 +110,11 @@ export async function encryptText(key: CryptoKey, text: string) {
  */
 export async function encryptTextEnvelope(key: CryptoKey, text: string): Promise<string> {
   const obj = await encryptText(key, text);
-  const json = JSON.stringify({ v: 1, iv: bytesToB64(new Uint8Array(obj.iv)), data: bytesToB64(new Uint8Array(obj.data)) });
+  const json = JSON.stringify({
+    v: 1,
+    iv: bytesToB64(new Uint8Array(obj.iv)),
+    data: bytesToB64(new Uint8Array(obj.data)),
+  });
   const packed = bytesToB64(enc.encode(json));
   return `${ENC_PREFIX}${packed}`;
 }
@@ -138,7 +164,6 @@ export async function decryptText(key: CryptoKey, payload: PayloadLike): Promise
 
   // If we couldn't normalize, return something safe
   if (!ivBytes || !dataBytes) {
-    // If this is an unexpected object, return a string so UI doesn't explode
     try {
       return typeof payload === "object" ? JSON.stringify(payload) : String(payload);
     } catch {
@@ -147,7 +172,11 @@ export async function decryptText(key: CryptoKey, payload: PayloadLike): Promise
   }
 
   try {
-    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, key, dataBytes);
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: toArrayBuffer(ivBytes) },
+      key,
+      toArrayBuffer(dataBytes)
+    );
     return dec.decode(plain);
   } catch {
     // key mismatch, corrupted data, or different derived key
