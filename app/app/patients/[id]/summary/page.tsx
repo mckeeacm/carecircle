@@ -102,8 +102,6 @@ const slotLabel: Record<Slot, string> = {
   prn: "As needed",
 };
 
-const SLOTS: Slot[] = ["morning", "midday", "evening", "bedtime", "prn"];
-
 /* ================= HELPERS ================= */
 
 function yesNo(v: boolean | null | undefined) {
@@ -143,7 +141,70 @@ function scheduledSlots(m: Medication): Slot[] {
   return slots;
 }
 
+/** Fetch E2EE salt from DB (preferred), fallback to NEXT_PUBLIC_ENC_SALT. */
+async function loadEncSalt(): Promise<string> {
+  const q = await supabase.from("app_config").select("value").eq("key", "enc_salt").maybeSingle();
+  if (!q.error && q.data?.value) return String(q.data.value);
+  return process.env.NEXT_PUBLIC_ENC_SALT || "";
+}
+
+/** Try audit tables in order and return rows + resolved table name. */
+async function loadAuditBestEffort(patientId: string) {
+  const candidates = ["audit_events", "audit_log", "audit_trail"];
+  let lastErr: string | null = null;
+
+  for (const table of candidates) {
+    const res = await supabase
+      .from(table)
+      .select("*")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (res.error) {
+      lastErr = res.error.message;
+      continue;
+    }
+
+    return { table, rows: (res.data ?? []) as AuditRowAny[], error: null as string | null };
+  }
+
+  return { table: null as string | null, rows: [] as AuditRowAny[], error: lastErr };
+}
+
+function mapAuditRow(row: AuditRowAny): AuditEvent {
+  const id = String(row.id ?? row.event_id ?? row.audit_id ?? crypto.randomUUID());
+  const created_at = String(row.created_at ?? row.timestamp ?? row.time ?? new Date().toISOString());
+
+  const action =
+    safeStr(row.action) ??
+    safeStr(row.event) ??
+    safeStr(row.event_type) ??
+    safeStr(row.type) ??
+    safeStr(row.operation) ??
+    null;
+
+  const resource =
+    safeStr(row.resource) ??
+    safeStr(row.entity) ??
+    safeStr(row.table) ??
+    safeStr(row.table_name) ??
+    safeStr(row.target) ??
+    null;
+
+  const user_id =
+    safeStr(row.user_id) ??
+    safeStr(row.actor_id) ??
+    safeStr(row.performed_by) ??
+    safeStr(row.created_by) ??
+    null;
+
+  return { id, created_at, action, resource, user_id };
+}
+
 /* ================= PAGE ================= */
+
+type ViewKey = "glance" | "profile" | "meds" | "diagnoses" | "notes" | "audit";
 
 export default function ClinicianSummaryPage() {
   const params = useParams();
@@ -157,13 +218,16 @@ export default function ClinicianSummaryPage() {
   const [meds, setMeds] = useState<Medication[]>([]);
   const [notes, setNotes] = useState<SummaryNote[]>([]);
 
-  // adherence + audit
   const [logs, setLogs] = useState<MedLog[]>([]);
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null); // null = not loaded/available
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[] | null>(null);
+  const [auditInfo, setAuditInfo] = useState<{ table: string | null; error: string | null }>({ table: null, error: null });
 
-  // optional E2EE
+  // E2EE
   const [patientKey, setPatientKey] = useState<CryptoKey | null>(null);
-  const ENC_SALT = process.env.NEXT_PUBLIC_ENC_SALT || "";
+  const [encStatus, setEncStatus] = useState<"loading" | "enabled" | "disabled" | "error">("loading");
+
+  // Mobile efficiency: default "At a glance" + sticky nav
+  const [view, setView] = useState<ViewKey>("glance");
 
   useEffect(() => {
     (async () => {
@@ -175,22 +239,33 @@ export default function ClinicianSummaryPage() {
           return;
         }
 
-        // Patient name
-        const p = await supabase.from("patients").select("display_name").eq("id", patientId).single();
-        if (p.error) {
-          setError(p.error.message);
+        // Require auth
+        const u = await supabase.auth.getUser();
+        if (!u.data.user) {
+          window.location.href = "/";
           return;
         }
+
+        // Patient name
+        const p = await supabase.from("patients").select("display_name").eq("id", patientId).single();
+        if (p.error) return setError(p.error.message);
         setPatientName(p.data.display_name);
 
-        // Try to derive patient key (optional)
+        // Salt -> derive key
+        setEncStatus("loading");
+        const salt = await loadEncSalt();
+
         let key: CryptoKey | null = null;
-        if (ENC_SALT) {
+        if (salt && salt.trim().length >= 8) {
           try {
-            key = await derivePatientKey(patientId, ENC_SALT);
+            key = await derivePatientKey(patientId, salt);
+            setEncStatus("enabled");
           } catch {
             key = null;
+            setEncStatus("error");
           }
+        } else {
+          setEncStatus("disabled");
         }
         setPatientKey(key);
 
@@ -200,7 +275,7 @@ export default function ClinicianSummaryPage() {
               const out = await decryptText(key, encrypted);
               return safeStr(out);
             } catch {
-              return "(Encrypted)";
+              return "(Encrypted – unable to decrypt)";
             }
           }
           if (!key && encrypted && !plaintext) return "(Encrypted)";
@@ -209,10 +284,8 @@ export default function ClinicianSummaryPage() {
 
         // PROFILE
         const prof = await supabase.from("patient_profiles").select("*").eq("patient_id", patientId).maybeSingle();
-        if (prof.error) {
-          setError(prof.error.message);
-          return;
-        }
+        if (prof.error) return setError(prof.error.message);
+
         if (prof.data && typeof prof.data === "object") {
           const r = prof.data as ProfileRowAny;
           const hydrated: Profile = {
@@ -245,10 +318,7 @@ export default function ClinicianSummaryPage() {
           .order("diagnosed_on", { ascending: false })
           .order("created_at", { ascending: false });
 
-        if (dx.error) {
-          setError(dx.error.message);
-          return;
-        }
+        if (dx.error) return setError(dx.error.message);
 
         const dxRows = await Promise.all(
           (dx.data ?? []).map(async (row: DiagnosisRowAny) => {
@@ -273,10 +343,7 @@ export default function ClinicianSummaryPage() {
           .eq("active", true)
           .order("created_at", { ascending: false });
 
-        if (m.error) {
-          setError(m.error.message);
-          return;
-        }
+        if (m.error) return setError(m.error.message);
 
         const medsRows: Medication[] = (m.data ?? []).map((row: MedicationRowAny) => ({
           id: String(row.id),
@@ -300,10 +367,7 @@ export default function ClinicianSummaryPage() {
           .eq("include_in_clinician_summary", true)
           .order("created_at", { ascending: false });
 
-        if (n.error) {
-          setError(n.error.message);
-          return;
-        }
+        if (n.error) return setError(n.error.message);
 
         const noteRows = await Promise.all(
           (n.data ?? []).map(async (row: NoteRowAny) => {
@@ -320,7 +384,7 @@ export default function ClinicianSummaryPage() {
         );
         setNotes(noteRows);
 
-        // MED LOGS (for adherence snapshot) — best effort
+        // MED LOGS (best effort)
         const logsSince = daysAgoIso(7);
         const ml = await supabase
           .from("medication_logs")
@@ -338,32 +402,15 @@ export default function ClinicianSummaryPage() {
           }));
           setLogs(lrows);
         } else {
-          // don't block the page; just skip
           setLogs([]);
         }
 
-        // AUDIT TRAIL — best effort
-        // If you have an audit table named `audit_events`, this will show it.
-        // If not, we show "not available".
-        const ae = await supabase
-          .from("audit_events")
-          .select("id,created_at,action,resource,user_id")
-          .eq("patient_id", patientId)
-          .order("created_at", { ascending: false })
-          .limit(50);
+        // AUDIT (best effort)
+        const a = await loadAuditBestEffort(patientId);
+        setAuditInfo({ table: a.table, error: a.error });
 
-        if (ae.error) {
-          setAuditEvents(null);
-        } else {
-          const arows: AuditEvent[] = (ae.data ?? []).map((row: AuditRowAny) => ({
-            id: String(row.id),
-            created_at: String(row.created_at),
-            action: safeStr(row.action),
-            resource: safeStr(row.resource),
-            user_id: safeStr(row.user_id),
-          }));
-          setAuditEvents(arows);
-        }
+        if (a.table === null) setAuditEvents(null);
+        else setAuditEvents(a.rows.map(mapAuditRow));
       } catch (e: any) {
         setError(e?.message ?? "Unknown error");
       }
@@ -382,21 +429,17 @@ export default function ClinicianSummaryPage() {
     return parts.length ? parts.join(", ") : "—";
   };
 
-  // Adherence snapshot (last 7 days):
-  // For each medication+slot, we take the latest log as the current status.
+  // Adherence snapshot: latest log per medication+slot (within logs window)
   const adherence = useMemo(() => {
     const byMedSlot: Record<string, Record<string, MedLog>> = {};
     for (const l of logs) {
-      const slot = l.slot ?? "unslotted";
+      const slot = (l.slot ?? "unslotted") as any;
       if (!byMedSlot[l.medication_id]) byMedSlot[l.medication_id] = {};
-      if (!byMedSlot[l.medication_id][slot]) byMedSlot[l.medication_id][slot] = l; // logs are desc; first is latest
+      if (!byMedSlot[l.medication_id][slot]) byMedSlot[l.medication_id][slot] = l;
     }
 
-    // Expected = active meds scheduled slots (PRN included only if scheduled_prn true)
     const expected: { medication_id: string; slot: Slot }[] = [];
-    for (const m of meds) {
-      for (const s of scheduledSlots(m)) expected.push({ medication_id: m.id, slot: s });
-    }
+    for (const m of meds) for (const s of scheduledSlots(m)) expected.push({ medication_id: m.id, slot: s });
 
     const total = expected.length;
     let taken = 0;
@@ -411,9 +454,29 @@ export default function ClinicianSummaryPage() {
     }
 
     const pct = total > 0 ? Math.round((taken / total) * 100) : 0;
-
     return { total, taken, missed, unlogged, pct, byMedSlot };
   }, [logs, meds]);
+
+  // Glance slices (compact)
+  const glanceNotes = useMemo(() => notes.slice(0, 3), [notes]);
+  const glanceAudit = useMemo(() => (auditEvents ?? []).slice(0, 5), [auditEvents]);
+  const glanceMeds = useMemo(() => meds.slice(0, 3), [meds]);
+
+  const encBanner = useMemo(() => {
+    if (encStatus === "loading") return "Checking encrypted view…";
+    if (encStatus === "enabled") return "Encrypted view enabled";
+    if (encStatus === "disabled") return "Encrypted view not available (enc_salt not configured)";
+    return "Encrypted view error (salt/key mismatch or format mismatch)";
+  }, [encStatus]);
+
+  const navItems: { key: ViewKey; label: string }[] = [
+    { key: "glance", label: "At a glance" },
+    { key: "profile", label: "Profile" },
+    { key: "meds", label: "Meds" },
+    { key: "diagnoses", label: "Diagnoses" },
+    { key: "notes", label: "Notes" },
+    { key: "audit", label: "Audit" },
+  ];
 
   return (
     <main className="cc-page">
@@ -429,8 +492,23 @@ export default function ClinicianSummaryPage() {
               <div>
                 <div className="cc-kicker">Clinician summary</div>
                 <h1 className="cc-h1">{patientName}</h1>
+
                 <div className="cc-small" style={{ marginTop: 6 }}>
-                  {patientKey ? "Encrypted view enabled" : "Encrypted view not available (salt/key missing or not set up)"}
+                  {encBanner}
+                </div>
+
+                {/* Compact “counts” row (no new colours/cards) */}
+                <div className="cc-row" style={{ marginTop: 10, flexWrap: "wrap", gap: 8 } as any}>
+                  <span className="cc-pill">Active dx: <b>{activeDx.length}</b></span>
+                  <span className="cc-pill">Meds: <b>{meds.length}</b></span>
+                  <span className="cc-pill">Summary notes: <b>{notes.length}</b></span>
+                  <span className="cc-pill">Adherence: <b>{adherence.total ? `${adherence.pct}%` : "—"}</b></span>
+                  <span className="cc-pill">
+                    Audit:{" "}
+                    <b>
+                      {auditEvents === null ? "—" : auditEvents.length}
+                    </b>
+                  </span>
                 </div>
               </div>
             </div>
@@ -447,227 +525,517 @@ export default function ClinicianSummaryPage() {
           ) : null}
         </div>
 
-        {/* Care profile */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Care profile</h2>
+        {/* Sticky mini-nav (mobile efficient, same pills/cards) */}
+        <div
+          className="cc-card cc-card-pad print:hidden"
+          style={{ position: "sticky", top: 8, zIndex: 10 } as any}
+        >
+          <div className="cc-row" style={{ gap: 8, flexWrap: "wrap" } as any}>
+            {navItems.map((it) => {
+              const active = view === it.key;
+              return (
+                <button
+                  key={it.key}
+                  className={active ? "cc-pill cc-pill-primary" : "cc-pill"}
+                  onClick={() => setView(it.key)}
+                  type="button"
+                >
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-          {!profile ? (
-            <p className="cc-subtle" style={{ marginTop: 10 }}>
-              Not set.
-            </p>
-          ) : (
-            <>
-              <div className="cc-grid-2" style={{ marginTop: 12 }}>
-                <KV label="Speaks">
-                  {profile.speaks === null ? "Not specified" : profile.speaks ? "Yes" : "No / limited"}
-                </KV>
-                <KV label="Communication">{profile.communication_methods}</KV>
-                <KV label="Languages">{profile.languages_understood}</KV>
-                <KV label="Preferred language">{profile.preferred_language}</KV>
-
-                <KV label="Allergies">{profile.allergies}</KV>
-                <KV label="Panic triggers">{profile.panic_triggers}</KV>
-                <KV label="Calming strategies">{profile.calming_strategies}</KV>
-
-                <KV label="Health POA in place">{yesNo(profile.has_health_poa)}</KV>
-                {profile.has_health_poa ? <KV label="Health POA held by">{profile.health_poa_held_by}</KV> : null}
-
-                <KV label="RESPECT letter in place">{yesNo(profile.has_respect_letter)}</KV>
-                {profile.has_respect_letter ? <KV label="RESPECT letter held by">{profile.respect_letter_held_by}</KV> : null}
+        {/* ================= AT A GLANCE (DEFAULT) ================= */}
+        {view === "glance" ? (
+          <section className="cc-stack">
+            {/* Profile (compact) */}
+            <section className="cc-card cc-card-pad">
+              <div className="cc-row-between">
+                <h2 className="cc-h2">Care profile (key)</h2>
+                <button className="cc-btn" onClick={() => setView("profile")}>
+                  See all
+                </button>
               </div>
 
-              {profile.important_notes ? (
-                <div className="cc-panel" style={{ marginTop: 12 }}>
-                  <div className="cc-strong">Important notes</div>
-                  <div className="cc-subtle" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
-                    {profile.important_notes}
+              {!profile ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  Not set.
+                </p>
+              ) : (
+                <div className="cc-panel" style={{ marginTop: 12 } as any}>
+                  <div className="cc-stack" style={{ gap: 8 } as any}>
+                    <div className="cc-subtle">
+                      <b>Speaks:</b> {profile.speaks === null ? "Not specified" : profile.speaks ? "Yes" : "No / limited"}
+                    </div>
+                    {profile.languages_understood ? (
+                      <div className="cc-subtle">
+                        <b>Languages:</b> {profile.languages_understood}
+                      </div>
+                    ) : null}
+                    {profile.preferred_language ? (
+                      <div className="cc-subtle">
+                        <b>Preferred:</b> {profile.preferred_language}
+                      </div>
+                    ) : null}
+                    <div className="cc-subtle">
+                      <b>Health POA:</b> {yesNo(profile.has_health_poa)}
+                      {profile.has_health_poa && profile.health_poa_held_by ? <>{" • "} <b>Held by:</b> {profile.health_poa_held_by}</> : null}
+                    </div>
+                    <div className="cc-subtle">
+                      <b>RESPECT:</b> {yesNo(profile.has_respect_letter)}
+                      {profile.has_respect_letter && profile.respect_letter_held_by ? <>{" • "} <b>Held by:</b> {profile.respect_letter_held_by}</> : null}
+                    </div>
+                    {profile.allergies ? (
+                      <div className="cc-subtle">
+                        <b>Allergies:</b> {profile.allergies}
+                      </div>
+                    ) : null}
+                    {profile.important_notes ? (
+                      <div className="cc-subtle">
+                        <b>Important notes:</b> {profile.important_notes}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
-              ) : null}
+              )}
+            </section>
 
-              {profile.updated_at ? (
-                <div className="cc-small" style={{ marginTop: 12 }}>
-                  Updated: {fmt(profile.updated_at)}
+            {/* Adherence (compact topline) */}
+            <section className="cc-card cc-card-pad">
+              <div className="cc-row-between">
+                <h2 className="cc-h2">Adherence (7 days)</h2>
+                <button className="cc-btn" onClick={() => setView("meds")}>
+                  See meds
+                </button>
+              </div>
+
+              {adherence.total === 0 ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  No scheduled active medications to measure.
+                </p>
+              ) : (
+                <div className="cc-panel-green" style={{ marginTop: 12 }}>
+                  <div className="cc-strong">{adherence.pct}% taken</div>
+                  <div className="cc-subtle" style={{ marginTop: 6 }}>
+                    Taken: <b>{adherence.taken}</b> • Missed: <b>{adherence.missed}</b> • Unlogged: <b>{adherence.unlogged}</b> • Expected: <b>{adherence.total}</b>
+                  </div>
+
+                  {/* Show just 3 meds here to reduce scroll */}
+                  <div className="cc-stack" style={{ marginTop: 12 }}>
+                    {glanceMeds.length === 0 ? (
+                      <div className="cc-subtle">No active medications.</div>
+                    ) : (
+                      glanceMeds.map((m) => {
+                        const slots = scheduledSlots(m);
+                        return (
+                          <div key={m.id} className="cc-panel-soft">
+                            <div className="cc-row-between">
+                              <div style={{ minWidth: 220 } as any}>
+                                <div className="cc-strong">{m.name}</div>
+                                <div className="cc-subtle" style={{ marginTop: 6 }}>
+                                  {m.dosage ?? "—"} • {medScheduleLabel(m)}
+                                </div>
+                              </div>
+                              <div className="cc-row" style={{ flexWrap: "wrap", gap: 6 } as any}>
+                                {slots.slice(0, 3).map((s) => {
+                                  const latest = adherence.byMedSlot?.[m.id]?.[s];
+                                  const label = latest ? (latest.status === "taken" ? "✅" : "❌") : "—";
+                                  return (
+                                    <span key={s} className="cc-pill">
+                                      {slotLabel[s]} {label}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {meds.length > 3 ? (
+                    <div className="cc-row" style={{ marginTop: 10 } as any}>
+                      <button className="cc-btn" onClick={() => setView("meds")}>
+                        View all medications
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </>
-          )}
-        </section>
+              )}
+            </section>
 
-        {/* Adherence snapshot */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Medication adherence snapshot (last 7 days)</h2>
-          <p className="cc-subtle" style={{ marginTop: 6 }}>
-            Uses the latest log per medication + slot as the current status for this window.
-          </p>
+            {/* Diagnoses (compact) */}
+            <section className="cc-card cc-card-pad">
+              <div className="cc-row-between">
+                <h2 className="cc-h2">Diagnoses</h2>
+                <button className="cc-btn" onClick={() => setView("diagnoses")}>
+                  See all
+                </button>
+              </div>
 
-          {adherence.total === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 10 }}>
-              No scheduled active medications to measure.
-            </p>
-          ) : (
-            <div className="cc-panel-green" style={{ marginTop: 12 }}>
+              {activeDx.length === 0 ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  No active diagnoses.
+                </p>
+              ) : (
+                <div className="cc-panel" style={{ marginTop: 12 } as any}>
+                  <div className="cc-stack" style={{ gap: 8 } as any}>
+                    {activeDx.slice(0, 4).map((d) => (
+                      <div key={d.id} className="cc-subtle">
+                        <b>{d.diagnosis}</b>
+                        {d.diagnosed_on ? ` • ${d.diagnosed_on}` : ""}
+                      </div>
+                    ))}
+                    {activeDx.length > 4 ? <div className="cc-small">+ {activeDx.length - 4} more</div> : null}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Notes (latest few) */}
+            <section className="cc-card cc-card-pad">
               <div className="cc-row-between">
                 <div>
+                  <h2 className="cc-h2">Shared notes (latest)</h2>
+                  <p className="cc-subtle" style={{ marginTop: 6 }}>
+                    Entries marked “Include in summary”.
+                  </p>
+                </div>
+                <button className="cc-btn" onClick={() => setView("notes")}>
+                  See all
+                </button>
+              </div>
+
+              {glanceNotes.length === 0 ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  No shared notes.
+                </p>
+              ) : (
+                <div className="cc-stack" style={{ marginTop: 12 }}>
+                  {glanceNotes.map((n) => (
+                    <div key={n.id} className="cc-panel-soft">
+                      <div className="cc-small">
+                        {fmt(n.created_at)} • {n.journal_type}
+                      </div>
+
+                      <div className="cc-row" style={{ marginTop: 8 }}>
+                        {n.mood ? <span>{moodEmoji[n.mood]}</span> : null}
+                        {typeof n.pain_level === "number" ? <span className="cc-subtle">Pain {n.pain_level}/10</span> : null}
+                      </div>
+
+                      <div className="cc-subtle" style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
+                        {n.content ?? "(No note)"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Audit (latest few) */}
+            <section className="cc-card cc-card-pad">
+              <div className="cc-row-between">
+                <div>
+                  <h2 className="cc-h2">Audit (latest)</h2>
+                  <p className="cc-subtle" style={{ marginTop: 6 }}>
+                    Recent access / actions{auditInfo.table ? <> • source: <b>{auditInfo.table}</b></> : ""}.
+                  </p>
+                </div>
+                <button className="cc-btn" onClick={() => setView("audit")}>
+                  See all
+                </button>
+              </div>
+
+              {auditEvents === null ? (
+                <div className="cc-panel" style={{ marginTop: 12 }}>
+                  <div className="cc-subtle">Not available.</div>
+                  {auditInfo.error ? (
+                    <div className="cc-small" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                      {auditInfo.error}
+                    </div>
+                  ) : null}
+                </div>
+              ) : glanceAudit.length === 0 ? (
+                <div className="cc-panel" style={{ marginTop: 12 }}>
+                  <div className="cc-subtle">No events yet.</div>
+                </div>
+              ) : (
+                <div className="cc-stack" style={{ marginTop: 12 }}>
+                  {glanceAudit.map((a) => (
+                    <div key={a.id} className="cc-panel">
+                      <div className="cc-small">{fmt(a.created_at)}</div>
+                      <div className="cc-subtle" style={{ marginTop: 6 }}>
+                        <b>{a.action ?? "action"}</b> • {a.resource ?? "resource"}
+                        {a.user_id ? ` • user: ${a.user_id}` : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </section>
+        ) : null}
+
+        {/* ================= FULL SECTIONS (SAME CARDS) ================= */}
+
+        {view === "profile" ? (
+          <section className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Care profile</h2>
+              <button className="cc-btn" onClick={() => setView("glance")}>
+                Back to glance
+              </button>
+            </div>
+
+            {!profile ? (
+              <p className="cc-subtle" style={{ marginTop: 10 }}>
+                Not set.
+              </p>
+            ) : (
+              <>
+                <div className="cc-grid-2" style={{ marginTop: 12 }}>
+                  <KV label="Speaks">{profile.speaks === null ? "Not specified" : profile.speaks ? "Yes" : "No / limited"}</KV>
+                  <KV label="Communication">{profile.communication_methods}</KV>
+                  <KV label="Languages">{profile.languages_understood}</KV>
+                  <KV label="Preferred language">{profile.preferred_language}</KV>
+
+                  <KV label="Allergies">{profile.allergies}</KV>
+                  <KV label="Panic triggers">{profile.panic_triggers}</KV>
+                  <KV label="Calming strategies">{profile.calming_strategies}</KV>
+
+                  <KV label="Health POA in place">{yesNo(profile.has_health_poa)}</KV>
+                  {profile.has_health_poa ? <KV label="Health POA held by">{profile.health_poa_held_by}</KV> : null}
+
+                  <KV label="RESPECT letter in place">{yesNo(profile.has_respect_letter)}</KV>
+                  {profile.has_respect_letter ? <KV label="RESPECT letter held by">{profile.respect_letter_held_by}</KV> : null}
+                </div>
+
+                {profile.important_notes ? (
+                  <div className="cc-panel" style={{ marginTop: 12 }}>
+                    <div className="cc-strong">Important notes</div>
+                    <div className="cc-subtle" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                      {profile.important_notes}
+                    </div>
+                  </div>
+                ) : null}
+
+                {profile.updated_at ? (
+                  <div className="cc-small" style={{ marginTop: 12 }}>
+                    Updated: {fmt(profile.updated_at)}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {view === "meds" ? (
+          <section className="cc-stack">
+            <section className="cc-card cc-card-pad">
+              <div className="cc-row-between">
+                <div>
+                  <h2 className="cc-h2">Medication adherence snapshot (last 7 days)</h2>
+                  <p className="cc-subtle" style={{ marginTop: 6 }}>
+                    Uses the latest log per medication + slot as the current status for this window.
+                  </p>
+                </div>
+                <button className="cc-btn" onClick={() => setView("glance")}>
+                  Back to glance
+                </button>
+              </div>
+
+              {adherence.total === 0 ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  No scheduled active medications to measure.
+                </p>
+              ) : (
+                <div className="cc-panel-green" style={{ marginTop: 12 }}>
                   <div className="cc-strong">Overall: {adherence.pct}% taken</div>
                   <div className="cc-subtle" style={{ marginTop: 6 }}>
                     Taken: <b>{adherence.taken}</b> • Missed: <b>{adherence.missed}</b> • Unlogged: <b>{adherence.unlogged}</b> • Expected: <b>{adherence.total}</b>
                   </div>
+
+                  <div className="cc-spacer-12" />
+
+                  <div className="cc-stack">
+                    {meds.map((m) => {
+                      const slots = scheduledSlots(m);
+                      if (slots.length === 0) return null;
+
+                      return (
+                        <div key={m.id} className="cc-panel-soft">
+                          <div className="cc-strong">{m.name}</div>
+                          <div className="cc-subtle" style={{ marginTop: 6 }}>
+                            {m.dosage ?? "—"} • Schedule: {medScheduleLabel(m)}
+                          </div>
+
+                          <div className="cc-row" style={{ marginTop: 10, flexWrap: "wrap", gap: 6 } as any}>
+                            {slots.map((s) => {
+                              const latest = adherence.byMedSlot?.[m.id]?.[s];
+                              const label = latest ? (latest.status === "taken" ? "✅ Taken" : "❌ Missed") : "— Unlogged";
+                              return (
+                                <span key={s} className="cc-pill">
+                                  {slotLabel[s]}: {label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
+            </section>
 
-              <div className="cc-spacer-12" />
+            <section className="cc-card cc-card-pad">
+              <h2 className="cc-h2">Current medications</h2>
 
-              <div className="cc-stack">
-                {meds.map((m) => {
-                  const slots = scheduledSlots(m);
-                  if (slots.length === 0) return null;
-
-                  return (
-                    <div key={m.id} className="cc-panel-soft">
+              {meds.length === 0 ? (
+                <p className="cc-subtle" style={{ marginTop: 10 }}>
+                  No active medications.
+                </p>
+              ) : (
+                <div className="cc-stack" style={{ marginTop: 12 }}>
+                  {meds.map((m) => (
+                    <div key={m.id} className="cc-panel-blue">
                       <div className="cc-strong">{m.name}</div>
                       <div className="cc-subtle" style={{ marginTop: 6 }}>
-                        {m.dosage ?? "—"} • Schedule: {medScheduleLabel(m)}
+                        Dosage: {m.dosage ?? "—"}
                       </div>
-
-                      <div className="cc-row" style={{ marginTop: 10 }}>
-                        {slots.map((s) => {
-                          const latest = adherence.byMedSlot?.[m.id]?.[s];
-                          const label = latest ? (latest.status === "taken" ? "✅ Taken" : "❌ Missed") : "— Unlogged";
-                          return (
-                            <span key={s} className="cc-pill">
-                              {slotLabel[s]}: {label}
-                            </span>
-                          );
-                        })}
+                      <div className="cc-subtle" style={{ marginTop: 6 }}>
+                        Schedule: {medScheduleLabel(m)}
+                      </div>
+                      <div className="cc-small" style={{ marginTop: 8 }}>
+                        Added: {fmt(m.created_at)}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </section>
+        ) : null}
+
+        {view === "diagnoses" ? (
+          <section className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Diagnoses</h2>
+              <button className="cc-btn" onClick={() => setView("glance")}>
+                Back to glance
+              </button>
             </div>
-          )}
-        </section>
 
-        {/* Diagnoses */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Diagnoses</h2>
-
-          {activeDx.length === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 10 }}>
-              No active diagnoses.
-            </p>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 }}>
-              {activeDx.map((d) => (
-                <div key={d.id} className="cc-panel-green">
-                  <div className="cc-strong">{d.diagnosis}</div>
-                  <div className="cc-subtle" style={{ marginTop: 6 }}>
-                    {d.diagnosed_on ? `Diagnosed: ${d.diagnosed_on}` : "Diagnosis date unknown"}
-                  </div>
-                  {d.notes ? (
-                    <div className="cc-subtle" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                      {d.notes}
+            {activeDx.length === 0 ? (
+              <p className="cc-subtle" style={{ marginTop: 10 }}>
+                No active diagnoses.
+              </p>
+            ) : (
+              <div className="cc-stack" style={{ marginTop: 12 }}>
+                {activeDx.map((d) => (
+                  <div key={d.id} className="cc-panel-green">
+                    <div className="cc-strong">{d.diagnosis}</div>
+                    <div className="cc-subtle" style={{ marginTop: 6 }}>
+                      {d.diagnosed_on ? `Diagnosed: ${d.diagnosed_on}` : "Diagnosis date unknown"}
                     </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Medications */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Current medications</h2>
-
-          {meds.length === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 10 }}>
-              No active medications.
-            </p>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 }}>
-              {meds.map((m) => (
-                <div key={m.id} className="cc-panel-blue">
-                  <div className="cc-strong">{m.name}</div>
-                  <div className="cc-subtle" style={{ marginTop: 6 }}>
-                    Dosage: {m.dosage ?? "—"}
-                  </div>
-                  <div className="cc-subtle" style={{ marginTop: 6 }}>
-                    Schedule: {medScheduleLabel(m)}
-                  </div>
-                  <div className="cc-small" style={{ marginTop: 8 }}>
-                    Added: {fmt(m.created_at)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Summary notes */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Shared notes</h2>
-          <p className="cc-subtle" style={{ marginTop: 6 }}>
-            Entries marked “Include in summary”.
-          </p>
-
-          {notes.length === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 10 }}>
-              No shared notes.
-            </p>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 }}>
-              {notes.map((n) => (
-                <div key={n.id} className="cc-panel-soft">
-                  <div className="cc-small">
-                    {fmt(n.created_at)} • {n.journal_type}
-                  </div>
-
-                  <div className="cc-row" style={{ marginTop: 8 }}>
-                    {n.mood ? <span>{moodEmoji[n.mood]}</span> : null}
-                    {typeof n.pain_level === "number" ? (
-                      <span className="cc-subtle">Pain {n.pain_level}/10</span>
+                    {d.notes ? (
+                      <div className="cc-subtle" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                        {d.notes}
+                      </div>
                     ) : null}
                   </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
-                  <div className="cc-subtle" style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
-                    {n.content ?? "(No note)"}
+        {view === "notes" ? (
+          <section className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <div>
+                <h2 className="cc-h2">Shared notes</h2>
+                <p className="cc-subtle" style={{ marginTop: 6 }}>
+                  Entries marked “Include in summary”.
+                </p>
+              </div>
+              <button className="cc-btn" onClick={() => setView("glance")}>
+                Back to glance
+              </button>
+            </div>
+
+            {notes.length === 0 ? (
+              <p className="cc-subtle" style={{ marginTop: 10 }}>
+                No shared notes.
+              </p>
+            ) : (
+              <div className="cc-stack" style={{ marginTop: 12 }}>
+                {notes.map((n) => (
+                  <div key={n.id} className="cc-panel-soft">
+                    <div className="cc-small">
+                      {fmt(n.created_at)} • {n.journal_type}
+                    </div>
+
+                    <div className="cc-row" style={{ marginTop: 8 }}>
+                      {n.mood ? <span>{moodEmoji[n.mood]}</span> : null}
+                      {typeof n.pain_level === "number" ? <span className="cc-subtle">Pain {n.pain_level}/10</span> : null}
+                    </div>
+
+                    <div className="cc-subtle" style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
+                      {n.content ?? "(No note)"}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
-        {/* Audit trail */}
-        <section className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Audit trail (latest)</h2>
-          <p className="cc-subtle" style={{ marginTop: 6 }}>
-            Recent access / actions. If this section shows “not available”, the DB table may be named differently (or not created yet).
-          </p>
+        {view === "audit" ? (
+          <section className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <div>
+                <h2 className="cc-h2">Audit trail (latest)</h2>
+                <p className="cc-subtle" style={{ marginTop: 6 }}>
+                  Recent access / actions{auditInfo.table ? <> • source: <b>{auditInfo.table}</b></> : ""}.
+                </p>
+              </div>
+              <button className="cc-btn" onClick={() => setView("glance")}>
+                Back to glance
+              </button>
+            </div>
 
-          {auditEvents === null ? (
-            <div className="cc-panel" style={{ marginTop: 12 }}>
-              <div className="cc-subtle">Not available.</div>
-            </div>
-          ) : auditEvents.length === 0 ? (
-            <div className="cc-panel" style={{ marginTop: 12 }}>
-              <div className="cc-subtle">No events yet.</div>
-            </div>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 }}>
-              {auditEvents.map((a) => (
-                <div key={a.id} className="cc-panel">
-                  <div className="cc-small">{fmt(a.created_at)}</div>
-                  <div className="cc-subtle" style={{ marginTop: 6 }}>
-                    <b>{a.action ?? "action"}</b> • {a.resource ?? "resource"}
-                    {a.user_id ? ` • user: ${a.user_id}` : ""}
+            {auditEvents === null ? (
+              <div className="cc-panel" style={{ marginTop: 12 }}>
+                <div className="cc-subtle">Not available.</div>
+                {auditInfo.error ? (
+                  <div className="cc-small" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                    {auditInfo.error}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+                ) : null}
+              </div>
+            ) : auditEvents.length === 0 ? (
+              <div className="cc-panel" style={{ marginTop: 12 }}>
+                <div className="cc-subtle">No events yet.</div>
+              </div>
+            ) : (
+              <div className="cc-stack" style={{ marginTop: 12 }}>
+                {auditEvents.map((a) => (
+                  <div key={a.id} className="cc-panel">
+                    <div className="cc-small">{fmt(a.created_at)}</div>
+                    <div className="cc-subtle" style={{ marginTop: 6 }}>
+                      <b>{a.action ?? "action"}</b> • {a.resource ?? "resource"}
+                      {a.user_id ? ` • user: ${a.user_id}` : ""}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
         <div className="cc-spacer-24" />
       </div>

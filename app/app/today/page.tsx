@@ -4,17 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type PatientRow = {
-  id: string;
-  display_name: string;
-};
-
-type MemberRow = {
-  patient_id: string;
-  role: string;
-  patients: PatientRow | null;
-};
-
 type Status =
   | { kind: "idle" }
   | { kind: "loading"; msg: string }
@@ -42,6 +31,59 @@ function humanRole(role: string | null | undefined) {
   return role!;
 }
 
+function fmtShort(iso: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+function isTodayIso(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
+function relTime(iso: string) {
+  const t = new Date(iso).getTime();
+  const now = Date.now();
+  const diff = Math.max(0, now - t);
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
+
+/* ---------------- Overview row from RPC ---------------- */
+
+type TodayOverviewRow = {
+  patient_id: string;
+  display_name: string;
+  role: string;
+
+  next_appt_at: string | null;
+  next_appt_title: string | null;
+
+  meds_due_today: number | null;
+  meds_taken_today: number | null;
+
+  last_journal_at: string | null;
+  last_journal_type: string | null;
+  last_journal_id: string | null;
+};
+
+/* ---------------- Tour ---------------- */
+
 type TourStep = {
   id: string;
   anchorId: string;
@@ -50,35 +92,33 @@ type TourStep = {
   placement?: "top" | "bottom" | "left" | "right";
 };
 
-const TOUR_STORAGE_KEY = "cc_tour_done_today_v1";
+const TOUR_STORAGE_KEY = "cc_tour_done_today_v2";
 
 export default function TodayPage() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
-  const [authedUserId, setAuthedUserId] = useState<string | null>(null);
 
-  const [patients, setPatients] = useState<Array<{ patient_id: string; role: string; patient: PatientRow }>>([]);
+  const [rows, setRows] = useState<TodayOverviewRow[]>([]);
   const [newPatientName, setNewPatientName] = useState("");
+
+  // UI state
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [tourOn, setTourOn] = useState(false);
+  const [tourPid, setTourPid] = useState<string | null>(null);
 
   const base = useMemo(() => {
     if (typeof window === "undefined") return "/app";
     return appBaseFromPathname(window.location.pathname);
   }, []);
 
-  // ---- Tour query params
-  const [tourOn, setTourOn] = useState(false);
-  const [tourPid, setTourPid] = useState<string | null>(null);
-
   function setPageError(msg: string) {
     setError(msg);
     setStatus({ kind: "error", msg });
   }
-
   function setOk(msg: string) {
     setError(null);
     setStatus({ kind: "ok", msg });
   }
-
   function setLoading(msg: string) {
     setError(null);
     setStatus({ kind: "loading", msg });
@@ -90,42 +130,38 @@ export default function TodayPage() {
       window.location.href = "/";
       return null;
     }
-    setAuthedUserId(data.user.id);
     return data.user;
   }
 
-  async function loadMyPatients() {
+  async function loadTodayOverview() {
+    setError(null);
     setLoading("Loading your CareCircles…");
 
     const user = await requireAuth();
     if (!user) return;
 
-    const q = await supabase
-      .from("patient_members")
-      .select("patient_id,role,patients:patients(id,display_name)")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
+    // 🚀 Single call
+    const q = await supabase.rpc("today_overview");
     if (q.error) return setPageError(q.error.message);
 
-    const rows = (q.data ?? []) as unknown as MemberRow[];
-    const mapped = rows
-      .filter((r) => r.patients?.id)
-      .map((r) => ({
-        patient_id: r.patient_id,
-        role: r.role,
-        patient: r.patients as PatientRow,
-      }));
+    const data = (q.data ?? []) as TodayOverviewRow[];
 
-    setPatients(mapped);
+    // Sort: next appointment soonest, else by name
+    data.sort((a, b) => {
+      const at = a.next_appt_at ? new Date(a.next_appt_at).getTime() : Number.POSITIVE_INFINITY;
+      const bt = b.next_appt_at ? new Date(b.next_appt_at).getTime() : Number.POSITIVE_INFINITY;
+      if (at !== bt) return at - bt;
+      return (a.display_name ?? "").localeCompare(b.display_name ?? "");
+    });
 
-    // If tour is running but pid wasn't provided, auto-pick if single circle
+    setRows(data);
+
+    // Tour continuity
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
       const pid = sp.get("pid");
-      if (!pid && mapped.length === 1) {
-        setTourPid(mapped[0].patient_id);
-      }
+      if (pid) setTourPid(pid);
+      if (!pid && data.length === 1) setTourPid(data[0].patient_id);
     }
 
     setOk("Up to date.");
@@ -145,7 +181,7 @@ export default function TodayPage() {
     if (error) return setPageError(error.message);
 
     setNewPatientName("");
-    await loadMyPatients();
+    await loadTodayOverview();
 
     const pid = String(data ?? "");
     if (pid && pid !== "null" && pid !== "undefined") {
@@ -156,7 +192,7 @@ export default function TodayPage() {
     setOk("Created ✅");
   }
 
-  // Init tour from URL + localStorage
+  // Init tour mode
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -166,57 +202,76 @@ export default function TodayPage() {
     if (pid) setTourPid(pid);
 
     const done = window.localStorage.getItem(TOUR_STORAGE_KEY) === "1";
-    setTourOn(forceTour || !done ? forceTour : false); // only show automatically if forced; otherwise user can start elsewhere
+    setTourOn(forceTour || (!done && forceTour)); // only forced auto-run
     if (forceTour) setTourOn(true);
   }, []);
 
   useEffect(() => {
-    loadMyPatients();
+    loadTodayOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const tourSteps: TourStep[] = useMemo(() => {
-    const hasPatients = patients.length > 0;
+  const atAGlance = useMemo(() => {
+    // Small header numbers: how many circles, how many have upcoming appts, etc.
+    const circles = rows.length;
+    const withAppt = rows.filter((r) => !!r.next_appt_at).length;
 
+    let due = 0;
+    let taken = 0;
+    for (const r of rows) {
+      due += Number(r.meds_due_today ?? 0);
+      taken += Number(r.meds_taken_today ?? 0);
+    }
+
+    return { circles, withAppt, due, taken };
+  }, [rows]);
+
+  const tourSteps: TourStep[] = useMemo(() => {
+    const hasPatients = rows.length > 0;
     return [
       {
         id: "welcome",
         anchorId: "tour-today-header",
-        title: "Welcome to Today",
-        body: "This is your hub: jump into a patient, then meds/journals/appointments in one tap.",
+        title: "Today dashboard",
+        body: "This page shows the key info for each patient at a glance: next appointment, meds today, and latest journal activity.",
+        placement: "bottom",
+      },
+      {
+        id: "overview-strip",
+        anchorId: "tour-overview-strip",
+        title: "At-a-glance totals",
+        body: "Quick totals across all your circles so you don’t have to open each one.",
         placement: "bottom",
       },
       {
         id: "patients",
         anchorId: "tour-patients-card",
-        title: "Your patients",
-        body: "Each patient has their own circle. Open one to see the full dashboard.",
-        placement: "bottom",
+        title: "Patient cards",
+        body: "Each card is compact. Tap “More” to expand without leaving the page.",
+        placement: "top",
       },
       {
         id: "quick-actions",
         anchorId: hasPatients ? "tour-first-patient-actions" : "tour-create-card",
         title: hasPatients ? "Quick actions" : "Create your first patient",
         body: hasPatients
-          ? "These shortcuts take you straight to Meds, Journals, or Appointments."
+          ? "Jump straight into Overview, Meds, Journals, or Appointments."
           : "If you're the patient or legal guardian, create the circle here.",
         placement: "top",
       },
       {
         id: "account",
         anchorId: "tour-account-btn",
-        title: "Account settings",
-        body: "Change your account settings, sign out, and (later) manage your onboarding preferences.",
+        title: "Account",
+        body: "Account settings and sign out live here.",
         placement: "bottom",
       },
     ];
-  }, [patients]);
+  }, [rows]);
 
   function endTour() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(TOUR_STORAGE_KEY, "1");
-
-      // remove tour=1 from URL so the page isn't “stuck” in tour mode
       const sp = new URLSearchParams(window.location.search);
       sp.delete("tour");
       const next = `${window.location.pathname}${sp.toString() ? `?${sp}` : ""}`;
@@ -226,14 +281,15 @@ export default function TodayPage() {
   }
 
   function goNextFromToday() {
-    // Next page in the tour: patient overview
-    const pid = tourPid ?? (patients.length === 1 ? patients[0].patient_id : null);
+    const pid = tourPid ?? (rows.length === 1 ? rows[0].patient_id : null);
     if (!pid) {
       setPageError("Select or create a patient first, then continue the tour.");
       return;
     }
     window.location.href = `${base}/patients/${pid}?tab=overview&tour=1&pid=${pid}`;
   }
+
+  const hasRows = rows.length > 0;
 
   return (
     <main className="cc-page">
@@ -244,7 +300,7 @@ export default function TodayPage() {
             <div>
               <div className="cc-kicker">CareCircle</div>
               <h1 className="cc-h1">Today</h1>
-              <div className="cc-subtle">Quick access to patients, meds, journals, and appointments.</div>
+              <div className="cc-subtle">At-a-glance dashboard for your circles.</div>
             </div>
 
             <div className="cc-row">
@@ -280,7 +336,9 @@ export default function TodayPage() {
               style={{ marginTop: 12 } as any}
             >
               <div>
-                {status.kind === "error" ? <span className="cc-status-error-title">Something needs attention: </span> : null}
+                {status.kind === "error" ? (
+                  <span className="cc-status-error-title">Something needs attention: </span>
+                ) : null}
                 {status.msg}
               </div>
               {error ? (
@@ -290,21 +348,45 @@ export default function TodayPage() {
               ) : null}
             </div>
           )}
+
+          {/* ✅ At-a-glance strip */}
+          <div className="cc-panel" style={{ marginTop: 12 } as any} id="tour-overview-strip">
+            <div
+              className="cc-row"
+              style={{
+                gap: 10,
+                flexWrap: "wrap",
+              } as any}
+            >
+              <span className="cc-pill cc-pill-primary">Circles: {atAGlance.circles}</span>
+              <span className="cc-pill">With upcoming appt: {atAGlance.withAppt}</span>
+              <span className="cc-pill">
+                Meds today: {atAGlance.taken}/{atAGlance.due}
+              </span>
+
+              <div style={{ flex: 1 } as any} />
+
+              <button className="cc-btn" onClick={loadTodayOverview}>
+                ↻ Refresh
+              </button>
+            </div>
+
+            <div className="cc-small" style={{ marginTop: 8 } as any}>
+              Tip: each patient card is compact — tap <b>More</b> to expand.
+            </div>
+          </div>
         </div>
 
-        {/* My patients */}
+        {/* Patients */}
         <div className="cc-card cc-card-pad" id="tour-patients-card">
           <div className="cc-row-between">
             <div>
               <h2 className="cc-h2">Your patients</h2>
-              <div className="cc-subtle">Open a patient to view Overview, Meds, Journals, and Appointments.</div>
+              <div className="cc-subtle">Most important info first, without needing to open each circle.</div>
             </div>
-            <button className="cc-btn" onClick={loadMyPatients}>
-              ↻ Refresh
-            </button>
           </div>
 
-          {patients.length === 0 ? (
+          {!hasRows ? (
             <div className="cc-panel" style={{ marginTop: 12 } as any}>
               <div className="cc-strong">No patients yet.</div>
               <div className="cc-subtle" style={{ marginTop: 6 } as any}>
@@ -313,47 +395,121 @@ export default function TodayPage() {
             </div>
           ) : (
             <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {patients.map((p, idx) => (
-                <div key={p.patient_id} className="cc-panel-soft">
-                  <div className="cc-row-between">
-                    <div>
-                      <div className="cc-strong">{p.patient.display_name}</div>
-                      <div className="cc-small">
-                        You: <b>{humanRole(p.role)}</b>
+              {rows.map((r, idx) => {
+                const isExpanded = !!expanded[r.patient_id];
+
+                const due = Number(r.meds_due_today ?? 0);
+                const taken = Number(r.meds_taken_today ?? 0);
+                const medsLabel = due === 0 ? "No meds due" : `${taken}/${due} taken`;
+                const medsOk = due > 0 && taken >= due;
+
+                const apptLabel = r.next_appt_at
+                  ? isTodayIso(r.next_appt_at)
+                    ? `Today • ${fmtShort(r.next_appt_at)}`
+                    : fmtShort(r.next_appt_at)
+                  : "No upcoming appt";
+
+                const journalLabel = r.last_journal_at
+                  ? `${r.last_journal_type ?? "journal"} • ${relTime(r.last_journal_at)}`
+                  : "No journal activity";
+
+                return (
+                  <div key={r.patient_id} className="cc-panel-soft">
+                    {/* Top row: name + role + actions */}
+                    <div className="cc-row-between">
+                      <div style={{ minWidth: 220 } as any}>
+                        <div className="cc-strong">{r.display_name}</div>
+                        <div className="cc-small">
+                          You: <b>{humanRole(r.role)}</b>
+                        </div>
+                      </div>
+
+                      <div className="cc-row" id={idx === 0 ? "tour-first-patient-actions" : undefined}>
+                        <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${r.patient_id}`}>
+                          Open
+                        </Link>
+
+                        <button
+                          className="cc-btn"
+                          onClick={() =>
+                            setExpanded((prev) => ({
+                              ...prev,
+                              [r.patient_id]: !prev[r.patient_id],
+                            }))
+                          }
+                          aria-expanded={isExpanded}
+                        >
+                          {isExpanded ? "Less" : "More"}
+                        </button>
+
+                        {tourOn ? (
+                          <button
+                            className="cc-btn"
+                            onClick={() => {
+                              setTourPid(r.patient_id);
+                              setOk(`Tour patient selected: ${r.display_name}`);
+                            }}
+                            title="Use this patient for tour next steps"
+                          >
+                            🎯 Tour
+                          </button>
+                        ) : null}
                       </div>
                     </div>
 
-                    <div className="cc-row" id={idx === 0 ? "tour-first-patient-actions" : undefined}>
-                      <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${p.patient_id}`}>
-                        Open
-                      </Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=meds`}>
-                        💊 Meds
-                      </Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=journals`}>
-                        📝 Journals
-                      </Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=appointments`}>
-                        📅 Appointments
-                      </Link>
+                    {/* ✅ Compact “at-a-glance” chips */}
+                    <div
+                      className="cc-row"
+                      style={{
+                        marginTop: 10,
+                        gap: 8,
+                        flexWrap: "wrap",
+                      } as any}
+                    >
+                      <span className="cc-pill">
+                        📅 {r.next_appt_title ? `${r.next_appt_title} • ` : ""}
+                        {apptLabel}
+                      </span>
 
-                      {/* If we’re in tour mode, set pid for “Next” continuity */}
-                      {tourOn ? (
-                        <button
-                          className="cc-btn"
-                          onClick={() => {
-                            setTourPid(p.patient_id);
-                            setOk(`Tour patient selected: ${p.patient.display_name}`);
-                          }}
-                          title="Use this patient for tour next steps"
-                        >
-                          🎯 Tour
-                        </button>
-                      ) : null}
+                      <span className={["cc-pill", medsOk ? "cc-pill-primary" : ""].join(" ")}>
+                        💊 {medsLabel}
+                      </span>
+
+                      <span className="cc-pill">📝 {journalLabel}</span>
                     </div>
+
+                    {/* ✅ Expandable details (still minimal scrolling) */}
+                    {isExpanded ? (
+                      <div className="cc-panel" style={{ marginTop: 12 } as any}>
+                        <div
+                          className="cc-row"
+                          style={{
+                            gap: 8,
+                            flexWrap: "wrap",
+                          } as any}
+                        >
+                          <Link className="cc-btn" href={`${base}/patients/${r.patient_id}?tab=meds`}>
+                            💊 Meds
+                          </Link>
+                          <Link className="cc-btn" href={`${base}/patients/${r.patient_id}?tab=journals`}>
+                            📝 Journals
+                          </Link>
+                          <Link className="cc-btn" href={`${base}/patients/${r.patient_id}?tab=appointments`}>
+                            📅 Appointments
+                          </Link>
+                          <Link className="cc-btn" href={`${base}/patients/${r.patient_id}?tab=overview`}>
+                            🧭 Overview
+                          </Link>
+                        </div>
+
+                        <div className="cc-small" style={{ marginTop: 10 } as any}>
+                          This expanded section is purely for quick navigation — the card above is the “glance view”.
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -378,7 +534,7 @@ export default function TodayPage() {
           </div>
         </div>
 
-        {/* Tour footer controls (only when tour=1) */}
+        {/* Tour footer controls */}
         {tourOn ? (
           <div className="cc-card cc-card-pad">
             <div className="cc-row-between">
@@ -413,8 +569,7 @@ export default function TodayPage() {
         <BubbleTour
           steps={tourSteps}
           onDone={() => {
-            // Don’t auto-mark done here; we only mark done when they end tour explicitly.
-            // This keeps it easy to re-run with ?tour=1.
+            // we only mark done when they explicitly end tour
           }}
           onClose={endTour}
         />
@@ -425,11 +580,7 @@ export default function TodayPage() {
 
 /* ---------------- Bubble Tour (inline, no import headaches) ---------------- */
 
-function BubbleTour(props: {
-  steps: TourStep[];
-  onClose: () => void;
-  onDone: () => void;
-}) {
+function BubbleTour(props: { steps: TourStep[]; onClose: () => void; onDone: () => void }) {
   const { steps } = props;
   const [i, setI] = useState(0);
   const step = steps[i];
@@ -488,7 +639,6 @@ function BubbleTour(props: {
 
   const isLast = i === steps.length - 1;
 
-  // bubble positioning
   const bubbleW = 340;
   const bubblePad = 12;
 
@@ -513,12 +663,10 @@ function BubbleTour(props: {
       bubbleTop = pos.top;
       bubbleLeft = rightOf;
     } else {
-      // bottom
       bubbleTop = below;
       bubbleLeft = pos.left;
     }
 
-    // keep on-screen
     const maxLeft = window.scrollX + window.innerWidth - bubbleW - 12;
     const minLeft = window.scrollX + 12;
     bubbleLeft = clamp(bubbleLeft, minLeft, maxLeft);
@@ -530,7 +678,6 @@ function BubbleTour(props: {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         style={{
           position: "fixed",
@@ -541,7 +688,6 @@ function BubbleTour(props: {
         onClick={props.onClose}
       />
 
-      {/* Highlight */}
       {pos ? (
         <div
           style={{
@@ -558,7 +704,6 @@ function BubbleTour(props: {
         />
       ) : null}
 
-      {/* Bubble */}
       <div
         style={{
           position: "absolute",

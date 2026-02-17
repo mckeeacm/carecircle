@@ -11,7 +11,12 @@ type Status =
   | { kind: "ok"; msg: string }
   | { kind: "error"; msg: string };
 
-type Member = { user_id: string; role: string; is_controller: boolean };
+type Member = {
+  user_id: string;
+  email: string | null;
+  role: string | null;
+  nickname: string | null;
+};
 
 type RolePerm = { role: string; feature_key: string; allowed: boolean };
 type MemberPerm = { user_id: string; feature_key: string; allowed: boolean };
@@ -37,6 +42,23 @@ function humanRole(role: string | null | undefined) {
   if (r === "patient") return "Patient";
   return role!;
 }
+
+function isControllerRole(role: string | null | undefined) {
+  const r = (role ?? "").toLowerCase();
+  return ["owner", "patient", "guardian", "legal_guardian"].includes(r);
+}
+
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "family", label: "Family" },
+  { value: "carer", label: "Carer / support" },
+  { value: "professional", label: "Professional support" },
+  { value: "clinician", label: "Clinician" },
+  // Controller roles (only visible for completeness; generally you won't assign these to others)
+  { value: "guardian", label: "Legal guardian" },
+  { value: "legal_guardian", label: "Legal guardian (alt key)" },
+  { value: "patient", label: "Patient" },
+  { value: "owner", label: "Owner" },
+];
 
 const FEATURES: { key: string; label: string; desc: string }[] = [
   { key: "profile_view", label: "View care profile", desc: "See communication, allergies, safety notes." },
@@ -75,6 +97,9 @@ export default function PatientPermissionsPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [rolePerms, setRolePerms] = useState<RolePerm[]>([]);
   const [memberPerms, setMemberPerms] = useState<MemberPerm[]>([]);
+
+  // local editing state for member meta
+  const [memberEdits, setMemberEdits] = useState<Record<string, { role: string; nickname: string; dirty: boolean }>>({});
 
   const rolePermMap = useMemo(() => {
     const m = new Map<string, boolean>();
@@ -116,6 +141,20 @@ export default function PatientPermissionsPage() {
     setPatientName(q.data.display_name);
   }
 
+  function upsertMemberEdit(m: Member) {
+    setMemberEdits((prev) => {
+      if (prev[m.user_id]) return prev;
+      return {
+        ...prev,
+        [m.user_id]: {
+          role: (m.role ?? "carer").toLowerCase(),
+          nickname: m.nickname ?? "",
+          dirty: false,
+        },
+      };
+    });
+  }
+
   async function loadAll() {
     setError(null);
     const user = await requireAuth();
@@ -125,15 +164,24 @@ export default function PatientPermissionsPage() {
 
     await loadPatientName();
 
+    // expects your SQL to provide: roles, members, role_perms, member_perms
     const r = await supabase.rpc("permissions_get", { pid: patientId });
     if (r.error) return setPageError(r.error.message);
 
     const data = r.data as any;
 
-    setRoles((data?.roles ?? []).map((x: any) => String(x)));
-    setMembers((data?.members ?? []) as Member[]);
-    setRolePerms((data?.role_perms ?? []) as RolePerm[]);
-    setMemberPerms((data?.member_perms ?? []) as MemberPerm[]);
+    const loadedRoles = (data?.roles ?? []).map((x: any) => String(x));
+    const loadedMembers = (data?.members ?? []) as Member[];
+    const loadedRolePerms = (data?.role_perms ?? []) as RolePerm[];
+    const loadedMemberPerms = (data?.member_perms ?? []) as MemberPerm[];
+
+    setRoles(loadedRoles);
+    setMembers(loadedMembers);
+    setRolePerms(loadedRolePerms);
+    setMemberPerms(loadedMemberPerms);
+
+    // initialise edit state
+    for (const m of loadedMembers) upsertMemberEdit(m);
 
     setOk("Up to date.");
   }
@@ -186,6 +234,28 @@ export default function PatientPermissionsPage() {
     if (r.error) return setPageError(r.error.message);
     await loadAll();
     setOk("Override cleared ✅");
+  }
+
+  async function saveMemberMeta(user_id: string) {
+    const edit = memberEdits[user_id];
+    if (!edit) return;
+
+    setError(null);
+    setLoading("Saving member…");
+    const r = await supabase.rpc("permissions_member_set_meta", {
+      pid: patientId,
+      member_uid: user_id,
+      p_role: edit.role,
+      p_nickname: edit.nickname,
+    });
+    if (r.error) return setPageError(r.error.message);
+
+    await loadAll();
+    setMemberEdits((prev) => ({
+      ...prev,
+      [user_id]: { ...prev[user_id], dirty: false },
+    }));
+    setOk("Saved ✅");
   }
 
   useEffect(() => {
@@ -245,10 +315,10 @@ export default function PatientPermissionsPage() {
                 status.kind === "ok"
                   ? "cc-status-ok"
                   : status.kind === "loading"
-                    ? "cc-status-loading"
-                    : status.kind === "error"
-                      ? "cc-status-error"
-                      : "",
+                  ? "cc-status-loading"
+                  : status.kind === "error"
+                  ? "cc-status-error"
+                  : "",
               ].join(" ")}
               style={{ marginTop: 12 } as any}
             >
@@ -328,11 +398,12 @@ export default function PatientPermissionsPage() {
           </div>
         </div>
 
-        {/* Member overrides */}
+        {/* Member management + overrides */}
         <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Per-user overrides</h2>
+          <h2 className="cc-h2">Circle members</h2>
           <div className="cc-subtle">
-            Overrides take priority over the role template for that specific person.
+            Set role + nickname for each member, then apply overrides if needed. Overrides take priority over the role
+            template for that specific person.
           </div>
 
           {members.length === 0 ? (
@@ -341,97 +412,166 @@ export default function PatientPermissionsPage() {
             </p>
           ) : (
             <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {members.map((m) => (
-                <div key={m.user_id} className="cc-panel-green">
-                  <div className="cc-row-between">
-                    <div style={{ minWidth: 280 } as any}>
-                      <div className="cc-strong">
-                        {humanRole(m.role)}
-                        {m.is_controller ? " • controller" : ""}
+              {members.map((m) => {
+                const edit = memberEdits[m.user_id] ?? {
+                  role: (m.role ?? "carer").toLowerCase(),
+                  nickname: m.nickname ?? "",
+                  dirty: false,
+                };
+                const controller = isControllerRole(m.role);
+
+                return (
+                  <div key={m.user_id} className="cc-panel-green">
+                    <div className="cc-row-between">
+                      <div style={{ minWidth: 280 } as any}>
+                        <div className="cc-strong">
+                          {humanRole(m.role)}
+                          {controller ? " • controller" : ""}
+                          {m.nickname ? ` • ${m.nickname}` : ""}
+                        </div>
+
+                        <div className="cc-small" style={{ marginTop: 4 } as any}>
+                          Email: {m.email ?? "(unknown)"} • ID: {m.user_id}
+                        </div>
                       </div>
-                      <div className="cc-small" style={{ marginTop: 4 } as any}>
-                        User: {m.user_id}
+
+                      <div className="cc-small">
+                        {controller
+                          ? "Controller members can’t be restricted here (they’re always allowed)."
+                          : "Non-controller members follow role template unless overridden."}
                       </div>
                     </div>
 
-                    <div className="cc-small">
-                      Controller members can’t be restricted here (they’re always allowed).
-                    </div>
-                  </div>
-
-                  {!m.is_controller && (
+                    {/* Role + Nickname editor */}
                     <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
-                      <div style={{ overflowX: "auto" } as any}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 } as any}>
-                          <thead>
-                            <tr>
-                              <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
-                              <th style={{ textAlign: "left", padding: 10 } as any}>Override</th>
-                              <th style={{ textAlign: "left", padding: 10 } as any}>Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {FEATURES.map((f) => {
-                              const key = `${m.user_id}::${f.key}`;
-                              const hasOverride = memberPermMap.has(key);
-                              const val = memberPermMap.get(key);
+                      <div className="cc-row" style={{ alignItems: "flex-end" } as any}>
+                        <div style={{ minWidth: 240 } as any}>
+                          <div className="cc-label">Role</div>
+                          <select
+                            className="cc-input"
+                            value={edit.role}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setMemberEdits((prev) => ({
+                                ...prev,
+                                [m.user_id]: { ...edit, role: v, dirty: true },
+                              }));
+                            }}
+                            disabled={controller} // don’t edit controller roles here
+                          >
+                            {ROLE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                              return (
-                                <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
-                                  <td style={{ padding: 10 } as any}>
-                                    <div className="cc-strong">{f.label}</div>
-                                    <div className="cc-small">{f.key}</div>
-                                  </td>
+                        <div style={{ minWidth: 280 } as any}>
+                          <div className="cc-label">Nickname</div>
+                          <input
+                            className="cc-input"
+                            value={edit.nickname}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setMemberEdits((prev) => ({
+                                ...prev,
+                                [m.user_id]: { ...edit, nickname: v, dirty: true },
+                              }));
+                            }}
+                            placeholder="e.g. Mum, Support worker, Dr. Khan…"
+                            disabled={controller}
+                          />
+                        </div>
 
-                                  <td style={{ padding: 10 } as any}>
-                                    {!hasOverride ? (
-                                      <div className="cc-small">No override (uses role template)</div>
-                                    ) : (
-                                      <label className="cc-check">
-                                        <input
-                                          type="checkbox"
-                                          checked={!!val}
-                                          onChange={(e) => setMemberOverride(m.user_id, f.key, e.target.checked)}
-                                        />
-                                        Allowed
-                                      </label>
-                                    )}
-                                  </td>
-
-                                  <td style={{ padding: 10 } as any}>
-                                    {!hasOverride ? (
-                                      <div className="cc-row">
-                                        <button
-                                          className="cc-btn cc-btn-primary"
-                                          onClick={() => setMemberOverride(m.user_id, f.key, true)}
-                                        >
-                                          Override: allow
-                                        </button>
-                                        <button
-                                          className="cc-btn"
-                                          onClick={() => setMemberOverride(m.user_id, f.key, false)}
-                                        >
-                                          Override: deny
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <div className="cc-row">
-                                        <button className="cc-btn" onClick={() => clearMemberOverride(m.user_id, f.key)}>
-                                          Clear override
-                                        </button>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                        <button
+                          className="cc-btn cc-btn-primary"
+                          onClick={() => saveMemberMeta(m.user_id)}
+                          disabled={controller || !edit.dirty}
+                        >
+                          Save member
+                        </button>
                       </div>
+
+                      {controller ? (
+                        <div className="cc-small" style={{ marginTop: 8 } as any}>
+                          This member is a controller; role/nickname editing is disabled here.
+                        </div>
+                      ) : null}
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {/* Overrides */}
+                    {!controller && (
+                      <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
+                        <div style={{ overflowX: "auto" } as any}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 } as any}>
+                            <thead>
+                              <tr>
+                                <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
+                                <th style={{ textAlign: "left", padding: 10 } as any}>Override</th>
+                                <th style={{ textAlign: "left", padding: 10 } as any}>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {FEATURES.map((f) => {
+                                const key = `${m.user_id}::${f.key}`;
+                                const hasOverride = memberPermMap.has(key);
+                                const val = memberPermMap.get(key);
+
+                                return (
+                                  <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
+                                    <td style={{ padding: 10 } as any}>
+                                      <div className="cc-strong">{f.label}</div>
+                                      <div className="cc-small">{f.key}</div>
+                                    </td>
+
+                                    <td style={{ padding: 10 } as any}>
+                                      {!hasOverride ? (
+                                        <div className="cc-small">No override (uses role template)</div>
+                                      ) : (
+                                        <label className="cc-check">
+                                          <input
+                                            type="checkbox"
+                                            checked={!!val}
+                                            onChange={(e) => setMemberOverride(m.user_id, f.key, e.target.checked)}
+                                          />
+                                          Allowed
+                                        </label>
+                                      )}
+                                    </td>
+
+                                    <td style={{ padding: 10 } as any}>
+                                      {!hasOverride ? (
+                                        <div className="cc-row">
+                                          <button
+                                            className="cc-btn cc-btn-primary"
+                                            onClick={() => setMemberOverride(m.user_id, f.key, true)}
+                                          >
+                                            Override: allow
+                                          </button>
+                                          <button className="cc-btn" onClick={() => setMemberOverride(m.user_id, f.key, false)}>
+                                            Override: deny
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className="cc-row">
+                                          <button className="cc-btn" onClick={() => clearMemberOverride(m.user_id, f.key)}>
+                                            Clear override
+                                          </button>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
