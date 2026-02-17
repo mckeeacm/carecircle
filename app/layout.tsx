@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,7 +15,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "CareCircle",
   description: "Shared meds, appointments, and care notes - without confusion.",
-  themeColor: "f8fafc",
+};
+
+/**
+ * Next.js recommends putting themeColor in `viewport`, not `metadata`.
+ * Also: force LIGHT mode so mobile browsers don't auto-darken your UI.
+ */
+export const viewport: Viewport = {
+  themeColor: "#f8fafc",
+  colorScheme: "light",
 };
 
 export default function RootLayout({
@@ -25,9 +33,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <head>
+        {/* Explicitly prevent forced dark mode on mobile */}
+        <meta name="color-scheme" content="light only" />
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>
     </html>
