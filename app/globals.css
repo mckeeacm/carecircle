@@ -12,6 +12,14 @@ html, body {
   color: #0f172a;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+input, textarea, select, button {
+  color-scheme: light;
+}
+
 :root {
   --cc-bg: #f6f9fb;
   --cc-card: #ffffff;
