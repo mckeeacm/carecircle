@@ -16,43 +16,20 @@ function appBaseFromPathname(pathname: string) {
   return "";
 }
 
-function humanRole(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase();
-  if (r === "family") return "Family";
-  if (r === "carer") return "Carer / support";
-  if (r === "professional") return "Professional support";
-  if (r === "clinician") return "Clinician";
-  if (r === "legal_guardian") return "Legal guardian";
-  if (r === "patient") return "Patient";
-  return role || "Circle member";
-}
-
-function fmtWhen(iso: string | null) {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }).format(new Date(iso));
-}
-
-type TodayPatientCard = {
-  patient_id: string;
-  display_name: string;
-  role: string;
-  meds_active: number;
-  meds_taken_today: number;
-  next_appt_at: string | null;
-};
-
 type TodayOverview = {
   circles: number;
-  upcoming_appts: number;
-  meds_taken_today: number;
-  meds_expected_today: number;
-  patients: TodayPatientCard[];
+  upcoming_appt_circles: number;
+  active_meds: number;
+  taken_today: number;
+  journals_today_total: number;
+  journals_today_shared: number;
+  error?: string;
 };
 
 export default function TodayPage() {
   const base = useMemo(() => {
-    if (typeof window === "undefined") return "/app/app";
-    return appBaseFromPathname(window.location.pathname) || "/app/app";
+    if (typeof window === "undefined") return "/app";
+    return appBaseFromPathname(window.location.pathname);
   }, []);
 
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -82,31 +59,46 @@ export default function TodayPage() {
     return data.user;
   }
 
-  async function load() {
-    setError(null);
+  async function loadToday() {
+    setLoading("Loading Today…");
     const user = await requireAuth();
     if (!user) return;
-
-    setLoading("Loading Today…");
 
     const r = await supabase.rpc("today_overview");
     if (r.error) return setPageError(r.error.message);
 
-    setOverview(r.data as TodayOverview);
+    const data = (r.data ?? {}) as TodayOverview;
+    if (data.error) return setPageError(data.error);
+
+    setOverview({
+      circles: data.circles ?? 0,
+      upcoming_appt_circles: data.upcoming_appt_circles ?? 0,
+      active_meds: data.active_meds ?? 0,
+      taken_today: data.taken_today ?? 0,
+      journals_today_total: data.journals_today_total ?? 0,
+      journals_today_shared: data.journals_today_shared ?? 0,
+    });
+
     setOk("Up to date.");
   }
 
   useEffect(() => {
-    load();
+    loadToday();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const totals = overview ?? { circles: 0, upcoming_appts: 0, meds_taken_today: 0, meds_expected_today: 0, patients: [] };
+  const pills = overview
+    ? [
+        { label: `Circles: ${overview.circles}` },
+        { label: `With upcoming appt: ${overview.upcoming_appt_circles}` },
+        { label: `Meds taken today: ${overview.taken_today}/${overview.active_meds}` },
+        { label: `Journals today: ${overview.journals_today_total} (shared ${overview.journals_today_shared})` },
+      ]
+    : [];
 
   return (
     <main className="cc-page">
       <div className="cc-container cc-stack">
-        {/* Header */}
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
             <div>
@@ -116,10 +108,7 @@ export default function TodayPage() {
             </div>
 
             <div className="cc-row">
-              <Link className="cc-btn" href={`${base}/account`}>
-                ⚙️ Account
-              </Link>
-
+              <Link className="cc-btn" href={`${base}/account`}>⚙️ Account</Link>
               <button
                 className="cc-btn"
                 onClick={async () => {
@@ -132,7 +121,6 @@ export default function TodayPage() {
             </div>
           </div>
 
-          {/* Status */}
           {status.kind !== "idle" && (
             <div
               className={[
@@ -159,18 +147,13 @@ export default function TodayPage() {
             </div>
           )}
 
-          {/* Compact summary row */}
           <div className="cc-panel" style={{ marginTop: 12 } as any}>
-            <div className="cc-row-between" style={{ gap: 10 } as any}>
-              <span className="cc-pill">Circles: <b>{totals.circles}</b></span>
-              <span className="cc-pill">With upcoming appt: <b>{totals.upcoming_appts}</b></span>
-              <span className="cc-pill">Meds today: <b>{totals.meds_taken_today}/{totals.meds_expected_today}</b></span>
-
+            <div className="cc-row" style={{ flexWrap: "wrap" } as any}>
+              {pills.map((p, i) => (
+                <span key={i} className="cc-pill">{p.label}</span>
+              ))}
               <div style={{ flex: 1 } as any} />
-
-              <button className="cc-btn" onClick={load}>
-                ↻ Refresh
-              </button>
+              <button className="cc-btn" onClick={loadToday}>↻ Refresh</button>
             </div>
 
             <div className="cc-small" style={{ marginTop: 10 } as any}>
@@ -179,53 +162,111 @@ export default function TodayPage() {
           </div>
         </div>
 
-        {/* Patient cards (compact, minimal scrolling) */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">Your patients</h2>
-              <div className="cc-subtle">Most important info first — without opening each circle.</div>
-            </div>
-            <button className="cc-btn" onClick={load}>↻ Refresh</button>
-          </div>
-
-          {!overview || overview.patients.length === 0 ? (
-            <div className="cc-panel" style={{ marginTop: 12 } as any}>
-              <div className="cc-strong">No patients yet.</div>
-              <div className="cc-subtle" style={{ marginTop: 6 } as any}>
-                You’ll see circles here once you’re added as a member.
-              </div>
-            </div>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {overview.patients.map((p) => (
-                <div key={p.patient_id} className="cc-panel-soft">
-                  <div className="cc-row-between" style={{ gap: 12 } as any}>
-                    <div style={{ minWidth: 0 } as any}>
-                      <div className="cc-strong" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } as any}>
-                        {p.display_name}
-                      </div>
-                      <div className="cc-small">You: <b>{humanRole(p.role)}</b></div>
-                    </div>
-
-                    <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: 8 } as any}>
-                      <span className="cc-pill">Meds: <b>{p.meds_taken_today}/{p.meds_active}</b></span>
-                      <span className="cc-pill">Next appt: <b>{fmtWhen(p.next_appt_at)}</b></span>
-
-                      <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${p.patient_id}`}>Open</Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=meds`}>💊</Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=journals`}>📝</Link>
-                      <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=appointments`}>📅</Link>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
+        {/* Patient list (simple + reliable; your existing patient_members query is fine) */}
+        <PatientList base={base} setPageError={setPageError} setLoading={setLoading} setOk={setOk} />
         <div className="cc-spacer-24" />
       </div>
     </main>
+  );
+}
+
+function humanRole(role: string | null | undefined) {
+  const r = (role ?? "").toLowerCase();
+  if (!r) return "Circle member";
+  if (r === "family") return "Family";
+  if (r === "carer") return "Carer / support";
+  if (r === "support_worker") return "Carer / support";
+  if (r === "professional") return "Professional support";
+  if (r === "professional_support") return "Professional support";
+  if (r === "clinician") return "Clinician";
+  if (r === "owner") return "Patient / Guardian";
+  if (r === "guardian" || r === "legal_guardian") return "Legal guardian";
+  if (r === "patient") return "Patient";
+  return role!;
+}
+
+function PatientList(props: {
+  base: string;
+  setPageError: (msg: string) => void;
+  setLoading: (msg: string) => void;
+  setOk: (msg: string) => void;
+}) {
+  const { base } = props;
+  const [patients, setPatients] = useState<Array<{ patient_id: string; role: string; nickname: string | null; display_name: string }>>([]);
+
+  useEffect(() => {
+    (async () => {
+      props.setLoading("Loading your circles…");
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) {
+        window.location.href = "/";
+        return;
+      }
+
+      const q = await supabase
+        .from("patient_members")
+        .select("patient_id,role,nickname,patients:patients(id,display_name)")
+        .eq("user_id", data.user.id)
+        .order("created_at", { ascending: false });
+
+      if (q.error) return props.setPageError(q.error.message);
+
+      const mapped =
+        (q.data ?? [])
+          .filter((r: any) => r.patients?.id)
+          .map((r: any) => ({
+            patient_id: r.patient_id,
+            role: r.role,
+            nickname: r.nickname ?? null,
+            display_name: r.patients.display_name,
+          })) ?? [];
+
+      setPatients(mapped);
+      props.setOk("Up to date.");
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="cc-card cc-card-pad">
+      <div className="cc-row-between">
+        <div>
+          <h2 className="cc-h2">Your patients</h2>
+          <div className="cc-subtle">Most important info first — open to manage journals, meds, DMs and permissions.</div>
+        </div>
+      </div>
+
+      {patients.length === 0 ? (
+        <div className="cc-panel" style={{ marginTop: 12 } as any}>
+          <div className="cc-strong">No patients yet.</div>
+          <div className="cc-subtle" style={{ marginTop: 6 } as any}>
+            You’ll see circles here once you’re added as a member.
+          </div>
+        </div>
+      ) : (
+        <div className="cc-stack" style={{ marginTop: 12 } as any}>
+          {patients.map((p) => (
+            <div key={p.patient_id} className="cc-panel-soft">
+              <div className="cc-row-between">
+                <div>
+                  <div className="cc-strong">
+                    {p.nickname ? `${p.nickname} — ` : ""}{p.display_name}
+                  </div>
+                  <div className="cc-small">
+                    You: <b>{humanRole(p.role)}</b>
+                  </div>
+                </div>
+
+                <div className="cc-row">
+                  <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${p.patient_id}`}>Open</Link>
+                  <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=journals`}>📝 Journals</Link>
+                  <Link className="cc-btn" href={`${base}/patients/${p.patient_id}?tab=dm`}>💬 DMs</Link>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
