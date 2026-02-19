@@ -1,12 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "@/lib/supabase";
+
+/* ================= TYPES ================= */
 
 type PatientRow = {
   id: string;
   display_name: string;
   created_at: string;
+};
+
+type MemberRow = {
+  patient_id: string;
+  role: string | null;
+  created_at?: string | null;
+  patients: PatientRow | null;
 };
 
 type UserProfile = {
@@ -15,22 +25,88 @@ type UserProfile = {
   created_at: string;
 };
 
+type Status =
+  | { kind: "idle" }
+  | { kind: "loading"; msg: string }
+  | { kind: "ok"; msg: string }
+  | { kind: "error"; msg: string };
+
+/* ================= HELPERS ================= */
+
+function appBaseFromPathname(pathname: string) {
+  if (pathname.startsWith("/app/app/") || pathname === "/app/app") return "/app/app";
+  if (pathname.startsWith("/app/") || pathname === "/app") return "/app";
+  return "/app";
+}
+
+function humanMode(m: "patient" | "support" | null) {
+  if (m === "patient") return "Patient";
+  if (m === "support") return "Support";
+  return "Not set";
+}
+
+function humanRole(role: string | null | undefined) {
+  const r = (role ?? "").toLowerCase();
+  if (!r) return "Circle member";
+  if (r === "family") return "Family";
+  if (r === "carer") return "Carer / support";
+  if (r === "support_worker") return "Carer / support";
+  if (r === "professional") return "Professional support";
+  if (r === "professional_support") return "Professional support";
+  if (r === "clinician") return "Clinician";
+  if (r === "owner") return "Patient / Guardian";
+  if (r === "guardian" || r === "legal_guardian") return "Legal guardian";
+  if (r === "patient") return "Patient";
+  return role!;
+}
+
+function fmtDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+  } catch {
+    return "—";
+  }
+}
+
+/* ================= PAGE ================= */
+
 export default function AppHubPage() {
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
+
+  const [busy, setBusy] = useState(false);
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
   const [mode, setMode] = useState<"patient" | "support" | null>(null);
-  const [patients, setPatients] = useState<PatientRow[]>([]);
 
-  // Support mode only: create circle for someone else
+  // IMPORTANT: match the “new DB”: circles come via patient_members join.
+  const [circles, setCircles] = useState<Array<{ patient_id: string; role: string | null; patient: PatientRow }>>([]);
+
+  // Support mode only
   const [newPatientName, setNewPatientName] = useState("");
 
-  // Patient mode only: create my own circle (one-time)
+  // Patient mode only
   const [myDisplayName, setMyDisplayName] = useState("");
+
+  const base = useMemo(() => {
+    if (typeof window === "undefined") return "/app";
+    return appBaseFromPathname(window.location.pathname);
+  }, []);
+
+  function setPageError(msg: string) {
+    setError(msg);
+    setStatus({ kind: "error", msg });
+  }
+  function setOk(msg: string) {
+    setError(null);
+    setStatus({ kind: "ok", msg });
+  }
+  function setLoading(msg: string) {
+    setError(null);
+    setStatus({ kind: "loading", msg });
+  }
 
   async function requireAuth() {
     const { data } = await supabase.auth.getUser();
@@ -44,104 +120,115 @@ export default function AppHubPage() {
   }
 
   async function loadMode() {
-    setError(null);
-    const { data, error } = await supabase
-      .from("user_profiles")
-      .select("user_id,account_mode,created_at")
-      .maybeSingle();
+    const q = await supabase.from("user_profiles").select("user_id,account_mode,created_at").maybeSingle();
+    if (q.error) return setPageError(q.error.message);
 
-    if (error) return setError(error.message);
-
-    const p = (data ?? null) as UserProfile | null;
+    const p = (q.data ?? null) as UserProfile | null;
     setMode(p?.account_mode ?? null);
   }
 
-  async function loadPatients() {
-    setError(null);
+  async function loadCircles() {
+    const user = await requireAuth();
+    if (!user) return;
 
-    // RLS should ensure this returns only circles the user is a member of.
-    const { data, error } = await supabase
-      .from("patients")
-      .select("id,display_name,created_at")
+    // New DB pattern: patient_members joins to patients
+    const q = await supabase
+      .from("patient_members")
+      .select("patient_id,role,patients:patients(id,display_name,created_at)")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    if (error) return setError(error.message);
-    setPatients((data ?? []) as PatientRow[]);
+    if (q.error) return setPageError(q.error.message);
+
+    const rows = (q.data ?? []) as unknown as MemberRow[];
+    const mapped = rows
+      .filter((r) => r.patients?.id)
+      .map((r) => ({
+        patient_id: r.patient_id,
+        role: r.role ?? null,
+        patient: r.patients as PatientRow,
+      }));
+
+    setCircles(mapped);
   }
 
   async function setAccountMode(next: "patient" | "support") {
-    setError(null);
     setBusy(true);
+    setLoading("Saving account type…");
 
-    const { error } = await supabase.rpc("set_account_mode", { p_mode: next });
-    if (error) {
+    const r = await supabase.rpc("set_account_mode", { p_mode: next });
+    if (r.error) {
       setBusy(false);
-      return setError(error.message);
+      return setPageError(r.error.message);
     }
 
     setMode(next);
-    await loadPatients();
+    await loadCircles();
+
     setBusy(false);
+    setOk("Up to date.");
   }
 
   async function createPatientAsSupport() {
-    setError(null);
     const name = newPatientName.trim();
     if (!name) return;
 
-    if (mode !== "support") {
-      setError("Only support accounts can create a new patient circle.");
-      return;
-    }
+    if (mode !== "support") return setPageError("Only support accounts can create a new patient circle.");
 
     setBusy(true);
-    const { data, error } = await supabase.rpc("create_patient", { p_display_name: name });
-    if (error) {
+    setLoading("Creating patient circle…");
+
+    // Keep your existing RPC name (you already used this earlier)
+    const r = await supabase.rpc("create_patient", { p_display_name: name });
+    if (r.error) {
       setBusy(false);
-      return setError(error.message);
+      return setPageError(r.error.message);
     }
 
-    setNewPatientName("");
-    await loadPatients();
+    const newId = r.data ? String(r.data) : null;
 
-    const newId = data ? String(data) : null;
-    if (newId) window.location.href = `/app/patients/${newId}`;
+    setNewPatientName("");
+    await loadCircles();
+
     setBusy(false);
+    setOk("Created ✅");
+
+    if (newId) window.location.href = `${base}/patients/${newId}`;
   }
 
   async function createMyCircle() {
-    setError(null);
+    if (mode !== "patient") return setPageError("This is only for patient accounts.");
 
-    if (mode !== "patient") {
-      setError("This is only for patient accounts.");
-      return;
-    }
-
-    if (patients.length > 0) {
-      setError("You already have a circle. If you need another, ask a guardian/supporter to invite you.");
-      return;
+    if (circles.length > 0) {
+      return setPageError("You already have a circle. If you need another, ask a guardian/supporter to invite you.");
     }
 
     setBusy(true);
-    const display = myDisplayName.trim() || "Me";
-    const { data, error } = await supabase.rpc("create_my_patient_circle", { p_display_name: display });
+    setLoading("Creating your circle…");
 
-    if (error) {
+    const display = myDisplayName.trim() || "Me";
+    const r = await supabase.rpc("create_my_patient_circle", { p_display_name: display });
+
+    if (r.error) {
       setBusy(false);
-      if (String(error.message || "").toLowerCase().includes("already_in_circle")) {
-        await loadPatients();
+      // keep your existing behaviour
+      if (String(r.error.message || "").toLowerCase().includes("already_in_circle")) {
+        await loadCircles();
         setBusy(false);
-        return;
+        return setOk("Up to date.");
       }
-      return setError(error.message);
+      return setPageError(r.error.message);
     }
 
-    const newId = data ? String(data) : null;
-    setMyDisplayName("");
-    await loadPatients();
+    const newId = r.data ? String(r.data) : null;
 
-    if (newId) window.location.href = `/app/patients/${newId}`;
+    setMyDisplayName("");
+    await loadCircles();
+
     setBusy(false);
+    setOk("Created ✅");
+
+    if (newId) window.location.href = `${base}/patients/${newId}`;
   }
 
   async function signOut() {
@@ -149,220 +236,244 @@ export default function AppHubPage() {
     window.location.href = "/";
   }
 
-  const patientCount = patients.length;
+  const circleCount = circles.length;
 
   const helperText = useMemo(() => {
     if (mode === "patient") {
-      return "Patient accounts usually have one circle (your own). Share entries to the circle when you want others to see them.";
+      return "Patient accounts usually have one circle (your own). Share entries when you want others to see them.";
     }
     if (mode === "support") {
-      return "Support accounts can join multiple circles (patients) and post updates to the shared timeline.";
+      return "Support accounts can join multiple circles (patients) and help with meds, journals, and appointments.";
     }
     return "Choose how you’ll use CareCircle.";
   }, [mode]);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
+      setLoading("Loading…");
       const u = await requireAuth();
       if (!u) return;
 
       await loadMode();
-      await loadPatients();
+      await loadCircles();
 
-      setLoading(false);
+      setOk("Up to date.");
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <main style={{ padding: 24, maxWidth: 920, margin: "0 auto" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "start",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0 }}>CareCircle</h1>
-          <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 14 }}>
-            Signed in as {userEmail ?? "…"}
-          </p>
-          <p style={{ margin: "6px 0 0", opacity: 0.7, fontSize: 13 }}>{helperText}</p>
-        </div>
+    <main className="cc-page">
+      <div className="cc-container cc-stack">
+        {/* Header */}
+        <div className="cc-card cc-card-pad">
+          <div className="cc-row-between">
+            <div>
+              <div className="cc-kicker">CareCircle</div>
+              <h1 className="cc-h1">Hub</h1>
+              <div className="cc-subtle" style={{ marginTop: 6 }}>
+                Signed in as <b>{userEmail ?? "…"}</b> • Mode: <b>{humanMode(mode)}</b>
+              </div>
+              <div className="cc-subtle" style={{ marginTop: 6 }}>
+                {helperText}
+              </div>
+            </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "end" }}>
-          <a
-            href="/app/today"
-            style={{
-              display: "inline-block",
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              textDecoration: "none",
-            }}
-          >
-            Today
-          </a>
-
-          <button onClick={signOut} disabled={busy}>
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      {error && (
-        <p style={{ color: "crimson", marginTop: 12, whiteSpace: "pre-wrap" }}>{error}</p>
-      )}
-
-      {/* Mode picker */}
-      {mode === null && !loading && (
-        <section style={{ marginTop: 18, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>How are you using CareCircle?</h2>
-          <p style={{ marginTop: -6, opacity: 0.75, fontSize: 13 }}>
-            This controls what you can create. You can change it later.
-          </p>
-
-          <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            <button
-              onClick={() => setAccountMode("patient")}
-              disabled={busy}
-              style={{ padding: 12, borderRadius: 10, border: "1px solid #ddd" }}
-            >
-              I’m the patient
-            </button>
-
-            <button
-              onClick={() => setAccountMode("support")}
-              disabled={busy}
-              style={{ padding: 12, borderRadius: 10, border: "1px solid #ddd" }}
-            >
-              I’m supporting someone (family / carer / clinician)
-            </button>
-          </div>
-        </section>
-      )}
-
-      {/* Your circles */}
-      <section style={{ marginTop: 18, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 12 }}>
-          <div>
-            <h2 style={{ marginTop: 0, marginBottom: 6 }}>Your circles</h2>
-            <p style={{ margin: 0, opacity: 0.7, fontSize: 13 }}>
-              {patientCount === 0 ? "No circles yet." : `You’re in ${patientCount} circle${patientCount === 1 ? "" : "s"}.`}
-            </p>
+            <div className="cc-row">
+              <Link className="cc-btn cc-btn-primary" href={`${base}/today`}>
+                🧭 Today
+              </Link>
+              <button className="cc-btn" onClick={signOut} disabled={busy}>
+                🚪 Sign out
+              </button>
+            </div>
           </div>
 
-          <button onClick={loadPatients} disabled={busy}>
-            Refresh
-          </button>
-        </div>
-
-        {patients.length === 0 ? (
-          <p style={{ marginTop: 12, opacity: 0.7 }}>
-            {mode === "support"
-              ? "Create a patient circle below, or join one via an invite link."
-              : mode === "patient"
-              ? "If this is your first time, create your circle below, or ask a guardian to set it up and invite you."
-              : "Choose your account type above to continue."}
-          </p>
-        ) : (
-          <ul style={{ marginTop: 12, paddingLeft: 18 }}>
-            {patients.map((p) => (
-              <li key={p.id} style={{ marginBottom: 10 }}>
-                <a href={`/app/patients/${p.id}`} style={{ textDecoration: "underline", fontWeight: 700 }}>
-                  {p.display_name}
-                </a>
-                <div style={{ marginTop: 4, opacity: 0.65, fontSize: 12 }}>
-                  Created {new Date(p.created_at).toLocaleDateString()} •{" "}
-                  <a href={`/app/patients/${p.id}?tab=meds`} style={{ textDecoration: "underline" }}>
-                    meds
-                  </a>{" "}
-                  •{" "}
-                  <a href={`/app/patients/${p.id}?tab=appointments`} style={{ textDecoration: "underline" }}>
-                    appointments
-                  </a>{" "}
-                  •{" "}
-                  <a href={`/app/patients/${p.id}?tab=journals`} style={{ textDecoration: "underline" }}>
-                    journals
-                  </a>{" "}
-                  •{" "}
-                  <a href={`/app/patients/${p.id}/summary`} style={{ textDecoration: "underline" }}>
-                    summary
-                  </a>
+          {/* Status */}
+          {status.kind !== "idle" && (
+            <div
+              className={[
+                "cc-status",
+                status.kind === "ok"
+                  ? "cc-status-ok"
+                  : status.kind === "loading"
+                    ? "cc-status-loading"
+                    : status.kind === "error"
+                      ? "cc-status-error"
+                      : "",
+              ].join(" ")}
+              style={{ marginTop: 12 } as any}
+            >
+              <div>
+                {status.kind === "error" ? (
+                  <span className="cc-status-error-title">Something needs attention: </span>
+                ) : null}
+                {status.msg}
+              </div>
+              {error ? (
+                <div className="cc-small" style={{ color: "crimson", whiteSpace: "pre-wrap" } as any}>
+                  {error}
                 </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+              ) : null}
+            </div>
+          )}
+        </div>
 
-      {/* Patient-only: create my circle (only if 0 circles) */}
-      {mode === "patient" && patients.length === 0 && (
-        <section style={{ marginTop: 18, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Create my circle</h2>
-          <p style={{ marginTop: -6, opacity: 0.75, fontSize: 13 }}>
-            This creates your own circle (one-time). You can invite family/clinicians from inside your patient page.
-          </p>
+        {/* Mode picker */}
+        {mode === null ? (
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Choose your account type</h2>
+            <div className="cc-subtle" style={{ marginTop: 6 }}>
+              This only affects what you can <i>create</i>. You can change it later.
+            </div>
 
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              value={myDisplayName}
-              onChange={(e) => setMyDisplayName(e.target.value)}
-              placeholder="Your name (optional, e.g. Alex)"
-              style={{ flex: 1, padding: 10 }}
-            />
-            <button onClick={createMyCircle} disabled={busy}>
-              Create
+            <div className="cc-stack" style={{ marginTop: 12 }}>
+              <button className="cc-btn cc-btn-primary" onClick={() => setAccountMode("patient")} disabled={busy}>
+                I’m the patient
+              </button>
+              <button className="cc-btn" onClick={() => setAccountMode("support")} disabled={busy}>
+                I’m supporting someone (family / carer / clinician)
+              </button>
+            </div>
+
+            {userId ? (
+              <div className="cc-small" style={{ marginTop: 12 }}>
+                Account: {userId}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* At-a-glance */}
+        <div className="cc-card cc-card-pad">
+          <div className="cc-row-between">
+            <div>
+              <h2 className="cc-h2">Your circles</h2>
+              <div className="cc-subtle">
+                {circleCount === 0 ? "No circles yet." : `You’re in ${circleCount} circle${circleCount === 1 ? "" : "s"}.`}
+              </div>
+            </div>
+
+            <button className="cc-btn" onClick={loadCircles} disabled={busy}>
+              ↻ Refresh
             </button>
           </div>
 
-          <p style={{ margin: "10px 0 0", opacity: 0.7, fontSize: 12 }}>
-            If a guardian is setting you up, they can create your circle and invite you instead.
-          </p>
-        </section>
-      )}
+          {circles.length === 0 ? (
+            <div className="cc-panel" style={{ marginTop: 12 } as any}>
+              <div className="cc-strong">No circles yet.</div>
+              <div className="cc-subtle" style={{ marginTop: 6 } as any}>
+                {mode === "support"
+                  ? "Create a patient circle below, or join one via an invite link."
+                  : mode === "patient"
+                    ? "If this is your first time, create your circle below (or ask a guardian to set it up and invite you)."
+                    : "Choose your account type above to continue."}
+              </div>
+            </div>
+          ) : (
+            <div className="cc-stack" style={{ marginTop: 12 } as any}>
+              {circles.map((c) => (
+                <div key={c.patient_id} className="cc-panel-soft">
+                  <div className="cc-row-between">
+                    <div>
+                      <div className="cc-strong">{c.patient.display_name}</div>
+                      <div className="cc-small" style={{ marginTop: 4 } as any}>
+                        You: <b>{humanRole(c.role)}</b> • Created {fmtDate(c.patient.created_at)}
+                      </div>
+                    </div>
 
-      {/* Support-only: create patient */}
-      {mode === "support" && (
-        <section style={{ marginTop: 18, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Set up a new patient (guardian setup)</h2>
-          <p style={{ marginTop: -6, opacity: 0.75, fontSize: 13 }}>
-            Creates a new circle that you own. You can invite the patient and other supporters afterwards.
-          </p>
+                    <div className="cc-row">
+                      <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${c.patient_id}`}>
+                        Open
+                      </Link>
+                      <Link className="cc-btn" href={`${base}/patients/${c.patient_id}?tab=meds`}>
+                        💊 Meds
+                      </Link>
+                      <Link className="cc-btn" href={`${base}/patients/${c.patient_id}?tab=journals`}>
+                        📝 Journals
+                      </Link>
+                      <Link className="cc-btn" href={`${base}/patients/${c.patient_id}?tab=appointments`}>
+                        📅 Appointments
+                      </Link>
+                      <Link className="cc-btn" href={`${base}/patients/${c.patient_id}/summary`}>
+                        🧾 Summary
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              value={newPatientName}
-              onChange={(e) => setNewPatientName(e.target.value)}
-              placeholder="Patient name (e.g. Mum)"
-              style={{ flex: 1, padding: 10 }}
-            />
-            <button onClick={createPatientAsSupport} disabled={busy || !newPatientName.trim()}>
-              Create
-            </button>
+        {/* Patient-only: create my circle (only if 0 circles) */}
+        {mode === "patient" && circles.length === 0 ? (
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Create my circle</h2>
+            <div className="cc-subtle" style={{ marginTop: 6 } as any}>
+              One-time setup. You can invite family/clinicians from inside your patient page.
+            </div>
+
+            <div className="grid gap-2.5 mt-3" style={{ gridTemplateColumns: "2fr auto" } as any}>
+              <input
+                className="cc-input"
+                value={myDisplayName}
+                onChange={(e) => setMyDisplayName(e.target.value)}
+                placeholder="Your name (optional, e.g. Alex)"
+              />
+              <button className="cc-btn cc-btn-secondary" onClick={createMyCircle} disabled={busy}>
+                ➕ Create
+              </button>
+            </div>
+
+            <div className="cc-small" style={{ marginTop: 10 } as any}>
+              If a guardian is setting you up, they can create your circle and invite you instead.
+            </div>
           </div>
-        </section>
-      )}
+        ) : null}
 
-      {/* Patient-mode info */}
-      {mode === "patient" && patients.length > 0 && (
-        <section style={{ marginTop: 18, padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Patient account</h2>
-          <p style={{ marginTop: -6, opacity: 0.75, fontSize: 13 }}>
-            Patient accounts don’t create multiple circles. If you need access to another circle, ask the guardian/supporter to invite you.
-          </p>
-          <p style={{ margin: "10px 0 0", opacity: 0.75, fontSize: 13 }}>
-            Tip: use <a href="/app/today" style={{ textDecoration: "underline" }}>Today</a> for a quick glance at meds and appointments.
-          </p>
-        </section>
-      )}
+        {/* Support-only: create patient */}
+        {mode === "support" ? (
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Set up a new patient</h2>
+            <div className="cc-subtle" style={{ marginTop: 6 } as any}>
+              Creates a new circle that you own. You can invite the patient and other supporters afterwards.
+            </div>
 
-      <footer style={{ marginTop: 24, opacity: 0.6, fontSize: 12 }}>
-        User ID: {userId ?? "…"}
-      </footer>
+            <div className="grid gap-2.5 mt-3" style={{ gridTemplateColumns: "2fr auto" } as any}>
+              <input
+                className="cc-input"
+                value={newPatientName}
+                onChange={(e) => setNewPatientName(e.target.value)}
+                placeholder="Patient name (e.g. Mum)"
+              />
+              <button
+                className="cc-btn cc-btn-secondary"
+                onClick={createPatientAsSupport}
+                disabled={busy || !newPatientName.trim()}
+              >
+                ➕ Create
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Patient-mode info */}
+        {mode === "patient" && circles.length > 0 ? (
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Patient account</h2>
+            <div className="cc-subtle" style={{ marginTop: 6 } as any}>
+              Patient accounts don’t usually create multiple circles. If you need access to another circle, ask the
+              guardian/supporter to invite you.
+            </div>
+            <div className="cc-subtle" style={{ marginTop: 10 } as any}>
+              Tip: use <Link href={`${base}/today`}>Today</Link> for a quick glance at meds and appointments.
+            </div>
+          </div>
+        ) : null}
+
+        <div className="cc-spacer-24" />
+      </div>
     </main>
   );
 }
