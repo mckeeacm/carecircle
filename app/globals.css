@@ -5,22 +5,7 @@
 ===================== */
 :root {
   color-scheme: light;
-}
 
-html, body {
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-html {
-  -webkit-text-size-adjust: 100%;
-}
-
-input, textarea, select, button {
-  color-scheme: light;
-}
-
-:root {
   --cc-bg: #f6f9fb;
   --cc-card: #ffffff;
   --cc-border: rgba(0, 0, 0, 0.08);
@@ -48,6 +33,10 @@ input, textarea, select, button {
    Base
 ===================== */
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 html,
 body {
   height: 100%;
@@ -56,12 +45,19 @@ body {
 body {
   background: var(--cc-bg);
   color: #0f172a;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, Helvetica, Arial, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
 }
 
 a {
   color: inherit;
+}
+
+input,
+textarea,
+select,
+button {
+  color-scheme: light;
 }
 
 /* =====================
@@ -70,6 +66,23 @@ a {
 
 .cc-page {
   padding: 24px;
+
+  /* iOS safe areas */
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 520px) {
+  .cc-page {
+    padding: 14px;
+
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-top: max(14px, env(safe-area-inset-top));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
 }
 
 .cc-container {
@@ -109,9 +122,26 @@ a {
   gap: 16px;
 }
 
+/* Dense “at-a-glance” grid helper */
+.cc-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
 @media (max-width: 900px) {
   .cc-grid-2,
   .cc-grid-2-125 {
+    grid-template-columns: 1fr;
+  }
+
+  .cc-grid-3 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .cc-grid-3 {
     grid-template-columns: 1fr;
   }
 }
@@ -122,6 +152,25 @@ a {
 
 .cc-spacer-24 {
   height: 24px;
+}
+
+/* Sticky helper for “at-a-glance” header cards */
+.cc-sticky {
+  position: sticky;
+  top: 10px;
+  z-index: 5;
+}
+
+/* Table wrapper helper (use on parent around <table/>) */
+.cc-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Long text (UUIDs/emails) wrap helper */
+.cc-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* =====================
@@ -137,6 +186,12 @@ a {
 
 .cc-card-pad {
   padding: 16px;
+}
+
+@media (max-width: 520px) {
+  .cc-card-pad {
+    padding: 14px;
+  }
 }
 
 .cc-panel {
@@ -335,4 +390,22 @@ a {
 .cc-status-error-title {
   color: crimson;
   font-weight: 900;
+}
+
+/* =====================
+   Print (fallback if Tailwind print:hidden not active)
+===================== */
+
+@media print {
+  .print\:hidden {
+    display: none !important;
+  }
+
+  .cc-page {
+    padding: 0 !important;
+  }
+
+  .cc-card {
+    box-shadow: none !important;
+  }
 }

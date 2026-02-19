@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { supabase } from "../../../../../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type Status =
   | { kind: "idle" }
@@ -14,8 +14,9 @@ type Status =
 type Member = {
   user_id: string;
   email: string | null;
-  role: string | null;
+  role: string;
   nickname: string | null;
+  is_controller: boolean;
 };
 
 type RolePerm = { role: string; feature_key: string; allowed: boolean };
@@ -29,52 +30,25 @@ function appBaseFromPathname(pathname: string) {
 
 function humanRole(role: string | null | undefined) {
   const r = (role ?? "").toLowerCase();
-  if (!r) return "Circle member";
   if (r === "family") return "Family";
   if (r === "carer") return "Carer / support";
-  if (r === "support_worker") return "Carer / support";
   if (r === "professional") return "Professional support";
-  if (r === "professional_support") return "Professional support";
   if (r === "clinician") return "Clinician";
-  if (r === "owner") return "Patient / Guardian";
-  if (r === "guardian") return "Legal guardian";
   if (r === "legal_guardian") return "Legal guardian";
   if (r === "patient") return "Patient";
-  return role!;
+  return role || "Circle member";
 }
-
-function isControllerRole(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase();
-  return ["owner", "patient", "guardian", "legal_guardian"].includes(r);
-}
-
-const ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "family", label: "Family" },
-  { value: "carer", label: "Carer / support" },
-  { value: "professional", label: "Professional support" },
-  { value: "clinician", label: "Clinician" },
-  // Controller roles (only visible for completeness; generally you won't assign these to others)
-  { value: "guardian", label: "Legal guardian" },
-  { value: "legal_guardian", label: "Legal guardian (alt key)" },
-  { value: "patient", label: "Patient" },
-  { value: "owner", label: "Owner" },
-];
 
 const FEATURES: { key: string; label: string; desc: string }[] = [
   { key: "profile_view", label: "View care profile", desc: "See communication, allergies, safety notes." },
   { key: "profile_edit", label: "Edit care profile", desc: "Change profile fields." },
-
   { key: "meds_view", label: "View medications", desc: "See med list and logs." },
   { key: "meds_edit", label: "Edit medications", desc: "Add/edit/archive meds, log taken/missed." },
-
-  { key: "journals_view", label: "View journals", desc: "See patient + circle timeline (as allowed by app logic)." },
+  { key: "journals_view", label: "View journals", desc: "See patient + circle timeline." },
   { key: "journals_post_circle", label: "Post circle updates", desc: "Create updates/comments in circle feed." },
-
   { key: "appointments_view", label: "View appointments", desc: "See upcoming/past appointments." },
   { key: "appointments_edit", label: "Edit appointments", desc: "Add/edit/delete appointments." },
-
   { key: "summary_view", label: "View clinician summary", desc: "Open / generate summary page." },
-
   { key: "invites_manage", label: "Manage invites", desc: "Create invites / add members." },
   { key: "permissions_manage", label: "Manage permissions", desc: "Change access templates / overrides." },
 ];
@@ -84,8 +58,8 @@ export default function PatientPermissionsPage() {
   const patientId = String(params?.id ?? "");
 
   const base = useMemo(() => {
-    if (typeof window === "undefined") return "/app";
-    return appBaseFromPathname(window.location.pathname);
+    if (typeof window === "undefined") return "/app/app";
+    return appBaseFromPathname(window.location.pathname) || "/app/app";
   }, []);
 
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -97,9 +71,6 @@ export default function PatientPermissionsPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [rolePerms, setRolePerms] = useState<RolePerm[]>([]);
   const [memberPerms, setMemberPerms] = useState<MemberPerm[]>([]);
-
-  // local editing state for member meta
-  const [memberEdits, setMemberEdits] = useState<Record<string, { role: string; nickname: string; dirty: boolean }>>({});
 
   const rolePermMap = useMemo(() => {
     const m = new Map<string, boolean>();
@@ -141,47 +112,23 @@ export default function PatientPermissionsPage() {
     setPatientName(q.data.display_name);
   }
 
-  function upsertMemberEdit(m: Member) {
-    setMemberEdits((prev) => {
-      if (prev[m.user_id]) return prev;
-      return {
-        ...prev,
-        [m.user_id]: {
-          role: (m.role ?? "carer").toLowerCase(),
-          nickname: m.nickname ?? "",
-          dirty: false,
-        },
-      };
-    });
-  }
-
   async function loadAll() {
     setError(null);
     const user = await requireAuth();
     if (!user) return;
 
     setLoading("Loading permissions…");
-
     await loadPatientName();
 
-    // expects your SQL to provide: roles, members, role_perms, member_perms
     const r = await supabase.rpc("permissions_get", { pid: patientId });
     if (r.error) return setPageError(r.error.message);
 
     const data = r.data as any;
 
-    const loadedRoles = (data?.roles ?? []).map((x: any) => String(x));
-    const loadedMembers = (data?.members ?? []) as Member[];
-    const loadedRolePerms = (data?.role_perms ?? []) as RolePerm[];
-    const loadedMemberPerms = (data?.member_perms ?? []) as MemberPerm[];
-
-    setRoles(loadedRoles);
-    setMembers(loadedMembers);
-    setRolePerms(loadedRolePerms);
-    setMemberPerms(loadedMemberPerms);
-
-    // initialise edit state
-    for (const m of loadedMembers) upsertMemberEdit(m);
+    setRoles((data?.roles ?? []).map((x: any) => String(x)));
+    setMembers((data?.members ?? []) as Member[]);
+    setRolePerms((data?.role_perms ?? []) as RolePerm[]);
+    setMemberPerms((data?.member_perms ?? []) as MemberPerm[]);
 
     setOk("Up to date.");
   }
@@ -236,26 +183,18 @@ export default function PatientPermissionsPage() {
     setOk("Override cleared ✅");
   }
 
-  async function saveMemberMeta(user_id: string) {
-    const edit = memberEdits[user_id];
-    if (!edit) return;
-
+  async function saveMemberRoleNickname(user_id: string, role: string, nickname: string) {
     setError(null);
     setLoading("Saving member…");
-    const r = await supabase.rpc("permissions_member_set_meta", {
+    const r = await supabase.rpc("patient_members_set_role_nickname", {
       pid: patientId,
       member_uid: user_id,
-      p_role: edit.role,
-      p_nickname: edit.nickname,
+      p_role: role,
+      p_nickname: nickname,
     });
     if (r.error) return setPageError(r.error.message);
-
     await loadAll();
-    setMemberEdits((prev) => ({
-      ...prev,
-      [user_id]: { ...prev[user_id], dirty: false },
-    }));
-    setOk("Saved ✅");
+    setOk("Member saved ✅");
   }
 
   useEffect(() => {
@@ -266,6 +205,12 @@ export default function PatientPermissionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
+  const roleColumns = useMemo(() => {
+    const baseRoles = ["family", "carer", "professional", "clinician", "legal_guardian", "patient"];
+    const merged = new Set<string>([...baseRoles, ...roles.map((r) => r.toLowerCase())]);
+    return Array.from(merged);
+  }, [roles]);
+
   if (!patientId || patientId === "undefined") {
     return (
       <main className="cc-page">
@@ -273,13 +218,6 @@ export default function PatientPermissionsPage() {
       </main>
     );
   }
-
-  // Ensure common roles appear even if not currently used, so templates are configurable.
-  const roleColumns = useMemo(() => {
-    const baseRoles = ["family", "carer", "professional", "clinician"];
-    const merged = new Set<string>([...baseRoles, ...roles.map((r) => r.toLowerCase())]);
-    return Array.from(merged);
-  }, [roles]);
 
   return (
     <main className="cc-page">
@@ -291,7 +229,7 @@ export default function PatientPermissionsPage() {
               <div className="cc-kicker">Patient</div>
               <h1 className="cc-h1">Permissions — {patientName}</h1>
               <div className="cc-subtle">
-                Role templates + per-user overrides. Only patient/legal guardian (controller) can change these.
+                Roles + nicknames + permissions. Only controller can change these.
               </div>
             </div>
 
@@ -299,12 +237,8 @@ export default function PatientPermissionsPage() {
               <Link className="cc-btn" href={`${base}/patients/${patientId}`}>
                 ← Back to patient
               </Link>
-              <button className="cc-btn" onClick={loadAll}>
-                Refresh
-              </button>
-              <button className="cc-btn cc-btn-primary" onClick={seedDefaults}>
-                Seed defaults
-              </button>
+              <button className="cc-btn" onClick={loadAll}>Refresh</button>
+              <button className="cc-btn cc-btn-primary" onClick={seedDefaults}>Seed defaults</button>
             </div>
           </div>
 
@@ -315,17 +249,15 @@ export default function PatientPermissionsPage() {
                 status.kind === "ok"
                   ? "cc-status-ok"
                   : status.kind === "loading"
-                  ? "cc-status-loading"
-                  : status.kind === "error"
-                  ? "cc-status-error"
-                  : "",
+                    ? "cc-status-loading"
+                    : status.kind === "error"
+                      ? "cc-status-error"
+                      : "",
               ].join(" ")}
               style={{ marginTop: 12 } as any}
             >
               <div>
-                {status.kind === "error" ? (
-                  <span className="cc-status-error-title">Something needs attention: </span>
-                ) : null}
+                {status.kind === "error" ? <span className="cc-status-error-title">Something needs attention: </span> : null}
                 {status.msg}
               </div>
               {error ? (
@@ -337,17 +269,35 @@ export default function PatientPermissionsPage() {
           )}
         </div>
 
+        {/* Members (role + nickname) */}
+        <div className="cc-card cc-card-pad">
+          <h2 className="cc-h2">Circle members</h2>
+          <div className="cc-subtle">Set role + nickname. Email shown where available.</div>
+
+          {members.length === 0 ? (
+            <div className="cc-panel" style={{ marginTop: 12 } as any}>
+              <div className="cc-subtle">No members found.</div>
+            </div>
+          ) : (
+            <div className="cc-stack" style={{ marginTop: 12 } as any}>
+              {members.map((m) => (
+                <MemberEditor
+                  key={m.user_id}
+                  m={m}
+                  onSave={(role, nickname) => saveMemberRoleNickname(m.user_id, role, nickname)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Role templates */}
         <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">Role templates</h2>
-              <div className="cc-subtle">These are the defaults for members with a given role.</div>
-            </div>
-          </div>
+          <h2 className="cc-h2">Role templates</h2>
+          <div className="cc-subtle">Defaults for members with each role.</div>
 
           <div className="cc-panel" style={{ marginTop: 12, overflowX: "auto" } as any}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 } as any}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 } as any}>
               <thead>
                 <tr>
                   <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
@@ -394,184 +344,100 @@ export default function PatientPermissionsPage() {
           </div>
 
           <div className="cc-small" style={{ marginTop: 10 } as any}>
-            Note: patient/legal guardian always has access regardless of templates.
+            Controllers always have access regardless of templates.
           </div>
         </div>
 
-        {/* Member management + overrides */}
+        {/* Per-user overrides */}
         <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Circle members</h2>
-          <div className="cc-subtle">
-            Set role + nickname for each member, then apply overrides if needed. Overrides take priority over the role
-            template for that specific person.
-          </div>
+          <h2 className="cc-h2">Per-user overrides</h2>
+          <div className="cc-subtle">Overrides beat role templates for that person.</div>
 
-          {members.length === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 12 } as any}>
-              No members found.
-            </p>
-          ) : (
+          {members.length === 0 ? null : (
             <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {members.map((m) => {
-                const edit = memberEdits[m.user_id] ?? {
-                  role: (m.role ?? "carer").toLowerCase(),
-                  nickname: m.nickname ?? "",
-                  dirty: false,
-                };
-                const controller = isControllerRole(m.role);
-
-                return (
-                  <div key={m.user_id} className="cc-panel-green">
-                    <div className="cc-row-between">
-                      <div style={{ minWidth: 280 } as any}>
-                        <div className="cc-strong">
-                          {humanRole(m.role)}
-                          {controller ? " • controller" : ""}
-                          {m.nickname ? ` • ${m.nickname}` : ""}
-                        </div>
-
-                        <div className="cc-small" style={{ marginTop: 4 } as any}>
-                          Email: {m.email ?? "(unknown)"} • ID: {m.user_id}
-                        </div>
+              {members.map((m) => (
+                <div key={m.user_id} className="cc-panel-green">
+                  <div className="cc-row-between">
+                    <div style={{ minWidth: 280 } as any}>
+                      <div className="cc-strong">
+                        {m.nickname ? `${m.nickname} • ` : ""}{humanRole(m.role)}
+                        {m.is_controller ? " • controller" : ""}
                       </div>
-
-                      <div className="cc-small">
-                        {controller
-                          ? "Controller members can’t be restricted here (they’re always allowed)."
-                          : "Non-controller members follow role template unless overridden."}
+                      <div className="cc-small" style={{ marginTop: 4 } as any}>
+                        {m.email ? `Email: ${m.email}` : `User: ${m.user_id}`}
                       </div>
                     </div>
 
-                    {/* Role + Nickname editor */}
-                    <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
-                      <div className="cc-row" style={{ alignItems: "flex-end" } as any}>
-                        <div style={{ minWidth: 240 } as any}>
-                          <div className="cc-label">Role</div>
-                          <select
-                            className="cc-input"
-                            value={edit.role}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setMemberEdits((prev) => ({
-                                ...prev,
-                                [m.user_id]: { ...edit, role: v, dirty: true },
-                              }));
-                            }}
-                            disabled={controller} // don’t edit controller roles here
-                          >
-                            {ROLE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div style={{ minWidth: 280 } as any}>
-                          <div className="cc-label">Nickname</div>
-                          <input
-                            className="cc-input"
-                            value={edit.nickname}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setMemberEdits((prev) => ({
-                                ...prev,
-                                [m.user_id]: { ...edit, nickname: v, dirty: true },
-                              }));
-                            }}
-                            placeholder="e.g. Mum, Support worker, Dr. Khan…"
-                            disabled={controller}
-                          />
-                        </div>
-
-                        <button
-                          className="cc-btn cc-btn-primary"
-                          onClick={() => saveMemberMeta(m.user_id)}
-                          disabled={controller || !edit.dirty}
-                        >
-                          Save member
-                        </button>
-                      </div>
-
-                      {controller ? (
-                        <div className="cc-small" style={{ marginTop: 8 } as any}>
-                          This member is a controller; role/nickname editing is disabled here.
-                        </div>
-                      ) : null}
+                    <div className="cc-small">
+                      {m.is_controller ? "Controllers can’t be restricted." : "Overrides are optional."}
                     </div>
-
-                    {/* Overrides */}
-                    {!controller && (
-                      <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
-                        <div style={{ overflowX: "auto" } as any}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 } as any}>
-                            <thead>
-                              <tr>
-                                <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
-                                <th style={{ textAlign: "left", padding: 10 } as any}>Override</th>
-                                <th style={{ textAlign: "left", padding: 10 } as any}>Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {FEATURES.map((f) => {
-                                const key = `${m.user_id}::${f.key}`;
-                                const hasOverride = memberPermMap.has(key);
-                                const val = memberPermMap.get(key);
-
-                                return (
-                                  <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
-                                    <td style={{ padding: 10 } as any}>
-                                      <div className="cc-strong">{f.label}</div>
-                                      <div className="cc-small">{f.key}</div>
-                                    </td>
-
-                                    <td style={{ padding: 10 } as any}>
-                                      {!hasOverride ? (
-                                        <div className="cc-small">No override (uses role template)</div>
-                                      ) : (
-                                        <label className="cc-check">
-                                          <input
-                                            type="checkbox"
-                                            checked={!!val}
-                                            onChange={(e) => setMemberOverride(m.user_id, f.key, e.target.checked)}
-                                          />
-                                          Allowed
-                                        </label>
-                                      )}
-                                    </td>
-
-                                    <td style={{ padding: 10 } as any}>
-                                      {!hasOverride ? (
-                                        <div className="cc-row">
-                                          <button
-                                            className="cc-btn cc-btn-primary"
-                                            onClick={() => setMemberOverride(m.user_id, f.key, true)}
-                                          >
-                                            Override: allow
-                                          </button>
-                                          <button className="cc-btn" onClick={() => setMemberOverride(m.user_id, f.key, false)}>
-                                            Override: deny
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <div className="cc-row">
-                                          <button className="cc-btn" onClick={() => clearMemberOverride(m.user_id, f.key)}>
-                                            Clear override
-                                          </button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+
+                  {!m.is_controller && (
+                    <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
+                      <div style={{ overflowX: "auto" } as any}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 } as any}>
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
+                              <th style={{ textAlign: "left", padding: 10 } as any}>Override</th>
+                              <th style={{ textAlign: "left", padding: 10 } as any}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {FEATURES.map((f) => {
+                              const key = `${m.user_id}::${f.key}`;
+                              const hasOverride = memberPermMap.has(key);
+                              const val = memberPermMap.get(key);
+
+                              return (
+                                <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
+                                  <td style={{ padding: 10 } as any}>
+                                    <div className="cc-strong">{f.label}</div>
+                                    <div className="cc-small">{f.key}</div>
+                                  </td>
+
+                                  <td style={{ padding: 10 } as any}>
+                                    {!hasOverride ? (
+                                      <div className="cc-small">No override (uses role template)</div>
+                                    ) : (
+                                      <label className="cc-check">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!val}
+                                          onChange={(e) => setMemberOverride(m.user_id, f.key, e.target.checked)}
+                                        />
+                                        Allowed
+                                      </label>
+                                    )}
+                                  </td>
+
+                                  <td style={{ padding: 10 } as any}>
+                                    {!hasOverride ? (
+                                      <div className="cc-row">
+                                        <button className="cc-btn cc-btn-primary" onClick={() => setMemberOverride(m.user_id, f.key, true)}>
+                                          Override: allow
+                                        </button>
+                                        <button className="cc-btn" onClick={() => setMemberOverride(m.user_id, f.key, false)}>
+                                          Override: deny
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button className="cc-btn" onClick={() => clearMemberOverride(m.user_id, f.key)}>
+                                        Clear override
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -579,5 +445,63 @@ export default function PatientPermissionsPage() {
         <div className="cc-spacer-24" />
       </div>
     </main>
+  );
+}
+
+function MemberEditor(props: {
+  m: Member;
+  onSave: (role: string, nickname: string) => void;
+}) {
+  const [role, setRole] = useState(props.m.role ?? "carer");
+  const [nick, setNick] = useState(props.m.nickname ?? "");
+
+  useEffect(() => {
+    setRole(props.m.role ?? "carer");
+    setNick(props.m.nickname ?? "");
+  }, [props.m.role, props.m.nickname]);
+
+  return (
+    <div className="cc-panel">
+      <div className="cc-row-between" style={{ gap: 12 } as any}>
+        <div style={{ minWidth: 0 } as any}>
+          <div className="cc-strong">
+            {props.m.email ? props.m.email : props.m.user_id}
+            {props.m.is_controller ? " • controller" : ""}
+          </div>
+          <div className="cc-small" style={{ marginTop: 4 } as any}>
+            Current: <b>{humanRole(props.m.role)}</b>{props.m.nickname ? ` • Nickname: ${props.m.nickname}` : ""}
+          </div>
+        </div>
+
+        <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: 8 } as any}>
+          <select className="cc-input" value={role} onChange={(e) => setRole(e.target.value)} disabled={props.m.is_controller}>
+            <option value="patient">Patient</option>
+            <option value="legal_guardian">Legal guardian</option>
+            <option value="family">Family</option>
+            <option value="carer">Carer</option>
+            <option value="professional">Professional</option>
+            <option value="clinician">Clinician</option>
+          </select>
+
+          <input
+            className="cc-input"
+            value={nick}
+            onChange={(e) => setNick(e.target.value)}
+            placeholder="Nickname (optional)"
+            style={{ minWidth: 220 } as any}
+            disabled={props.m.is_controller}
+          />
+
+          <button
+            className="cc-btn cc-btn-primary"
+            onClick={() => props.onSave(role, nick)}
+            disabled={props.m.is_controller}
+            title={props.m.is_controller ? "Controllers cannot be edited here" : "Save role + nickname"}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
