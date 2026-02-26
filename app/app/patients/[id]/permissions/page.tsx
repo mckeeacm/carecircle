@@ -1,823 +1,536 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
-/* ================= TYPES ================= */
+type PatientRow = { id: string; display_name: string | null };
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "loading"; msg: string }
-  | { kind: "ok"; msg: string }
-  | { kind: "error"; msg: string };
-
-type Member = {
-  user_id: string;
-  role: string | null;
-  nickname: string | null;
-};
-
-type UserProfile = {
-  id: string;
-  email: string | null;
-  display_name: string | null;
-};
-
-type FeatureKey = {
+type FeatureKeyRow = {
   key: string;
   label: string | null;
-  desc: string | null;
+  description: string | null;
 };
 
-/* ================= HELPERS ================= */
+type PermGet = {
+  roles: string[];
+  members: {
+    user_id: string;
+    role: string | null;
+    nickname: string | null;
+    is_controller: boolean | null;
+    email: string | null;
+  }[];
+  role_perms: {
+    patient_id: string;
+    role: string;
+    feature_key: string;
+    allowed: boolean;
+  }[];
+  member_perms: {
+    patient_id: string;
+    user_id: string;
+    feature_key: string;
+    allowed: boolean;
+  }[];
+};
 
-function appBaseFromPathname(pathname: string) {
-  if (pathname.startsWith("/app/app/") || pathname === "/app/app") return "/app/app";
-  if (pathname.startsWith("/app/") || pathname === "/app") return "/app";
-  return "";
+function truthy(v: unknown): boolean {
+  return v === true;
 }
 
-function safeStr(v: any): string | null {
-  if (v === null || v === undefined) return null;
-  const s = String(v).trim();
-  return s.length ? s : null;
-}
+export default function AccountPermissionsPage() {
+  const supabase = useMemo(() => supabaseBrowser(), []);
+  const [msg, setMsg] = useState<string | null>(null);
 
-function humanRole(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase();
-  if (!r) return "Circle member";
-  if (r === "family") return "Family";
-  if (r === "carer") return "Carer / support";
-  if (r === "supporter") return "Carer / support";
-  if (r === "support_worker") return "Carer / support";
-  if (r === "professional") return "Professional support";
-  if (r === "professional_support") return "Professional support";
-  if (r === "clinician") return "Clinician";
-  if (r === "owner") return "Patient / Guardian";
-  if (r === "patient") return "Patient";
-  if (r === "guardian") return "Legal guardian";
-  if (r === "legal_guardian") return "Legal guardian";
-  return role!;
-}
+  const [patients, setPatients] = useState<PatientRow[]>([]);
+  const [patientId, setPatientId] = useState<string>("");
 
-// These are the only roles we allow the UI to set.
-// If your DB check constraint is different, the update will fail and the error will show.
-const ROLE_OPTIONS = [
-  { value: "family", label: "Family" },
-  { value: "carer", label: "Carer / support" },
-  { value: "professional", label: "Professional support" },
-  { value: "clinician", label: "Clinician" },
-  { value: "guardian", label: "Legal guardian" },
-  { value: "patient", label: "Patient" },
-];
+  const [features, setFeatures] = useState<FeatureKeyRow[]>([]);
+  const [data, setData] = useState<PermGet | null>(null);
 
-// Treat these roles as “controller” (always allowed to manage permissions).
-function isControllerRole(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase();
-  return r === "patient" || r === "guardian" || r === "legal_guardian" || r === "owner";
-}
+  const [loading, setLoading] = useState(false);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
-// Try multiple select lists until one works (because your schema has drifted before).
-async function selectWithFallback<T>(
-  table: string,
-  selects: string[],
-  build?: (q: any) => any
-): Promise<{ data: T[] | null; error: string | null; usedSelect: string | null }> {
-  for (const sel of selects) {
-    const q0 = supabase.from(table).select(sel);
-    const q = build ? build(q0) : q0;
-    const res = await q;
-    if (!res.error) return { data: (res.data ?? []) as any, error: null, usedSelect: sel };
-  }
-  // last attempt to surface error detail
-  const last = await (build ? build(supabase.from(table).select(selects[0])) : supabase.from(table).select(selects[0]));
-  return { data: null, error: last.error?.message ?? `Failed to select from ${table}`, usedSelect: null };
-}
-
-/* ================= PAGE ================= */
-
-export default function PatientPermissionsPage() {
-  const params = useParams();
-  const patientId = String(params?.id ?? "");
-
-  const base = useMemo(() => {
-    if (typeof window === "undefined") return "/app";
-    return appBaseFromPathname(window.location.pathname);
-  }, []);
-
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [error, setError] = useState<string | null>(null);
-
-  const [patientName, setPatientName] = useState("…");
-
-  const [features, setFeatures] = useState<FeatureKey[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [profilesById, setProfilesById] = useState<Record<string, UserProfile>>({});
-
-  // role templates + overrides
-  const [roleDefaults, setRoleDefaults] = useState<Array<{ role: string; feature_key: string; allowed: boolean }>>([]);
-  const [memberOverrides, setMemberOverrides] = useState<Array<{ user_id: string; feature_key: string; allowed: boolean }>>(
-    []
-  );
-
-  // figure out if current authed user is controller for this patient (from patient_members table)
-  const [viewerRole, setViewerRole] = useState<string | null>(null);
-
-  function setPageError(msg: string) {
-    setError(msg);
-    setStatus({ kind: "error", msg });
-  }
-  function setOk(msg: string) {
-    setError(null);
-    setStatus({ kind: "ok", msg });
-  }
-  function setLoading(msg: string) {
-    setError(null);
-    setStatus({ kind: "loading", msg });
-  }
-
-  async function requireAuth() {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
-      window.location.href = "/";
-      return null;
-    }
-    return data.user;
-  }
-
-  async function loadPatientName() {
-    const q = await supabase.from("patients").select("display_name").eq("id", patientId).single();
-    if (q.error) return setPageError(q.error.message);
-    setPatientName(q.data.display_name);
-  }
-
-  async function loadFeatures() {
-    // Prefer your DB feature_keys table if present.
-    const res = await selectWithFallback<any>(
-      "feature_keys",
-      ["key,label,desc", "key,label,description", "key,name,description", "key"],
-      (q) => q.order("key", { ascending: true })
-    );
-
-    if (res.error) {
-      // fallback hardcoded (so the page still works even if feature_keys is empty/missing)
-      setFeatures([
-        { key: "profile_view", label: "View care profile", desc: "See communication, allergies, safety notes." },
-        { key: "profile_edit", label: "Edit care profile", desc: "Change profile fields." },
-        { key: "meds_view", label: "View medications", desc: "See med list and logs." },
-        { key: "meds_edit", label: "Edit medications", desc: "Add/edit/archive meds, log taken/missed." },
-        { key: "journals_view", label: "View journals", desc: "See patient + circle timeline." },
-        { key: "journals_post_circle", label: "Post circle updates", desc: "Create updates/comments in circle feed." },
-        { key: "appointments_view", label: "View appointments", desc: "See upcoming/past appointments." },
-        { key: "appointments_edit", label: "Edit appointments", desc: "Add/edit/delete appointments." },
-        { key: "summary_view", label: "View clinician summary", desc: "Open / generate summary page." },
-        { key: "invites_manage", label: "Manage invites", desc: "Create invites / add members." },
-        { key: "permissions_manage", label: "Manage permissions", desc: "Change access templates / overrides." },
-      ]);
-      return;
-    }
-
-    const mapped: FeatureKey[] = (res.data ?? []).map((r: any) => ({
-      key: String(r.key),
-      label: safeStr(r.label ?? r.name ?? null),
-      desc: safeStr(r.desc ?? r.description ?? null),
-    }));
-    setFeatures(mapped.length ? mapped : []);
-  }
-
-  async function loadMembersAndViewerRole() {
-    const user = await requireAuth();
-    if (!user) return;
-
-    // patient_members: we’ll try to read nickname if it exists
-    const mRes = await selectWithFallback<any>(
-      "patient_members",
-      ["user_id,role,nickname", "user_id,role,member_nickname", "user_id,role"],
-      (q) => q.eq("patient_id", patientId).order("created_at", { ascending: false })
-    );
-
-    if (mRes.error) return setPageError(mRes.error);
-
-    const raw = mRes.data ?? [];
-    const mapped: Member[] = raw.map((r: any) => ({
-      user_id: String(r.user_id),
-      role: safeStr(r.role),
-      nickname: safeStr(r.nickname ?? r.member_nickname ?? null),
-    }));
-    setMembers(mapped);
-
-    // viewer role
-    const mine = mapped.find((x) => x.user_id === user.id);
-    setViewerRole(mine?.role ?? null);
-
-    // load emails from user_profiles
-    const ids = Array.from(new Set(mapped.map((x) => x.user_id)));
-    if (!ids.length) {
-      setProfilesById({});
-      return;
-    }
-
-    // user_profiles could be id,email,display_name (your table list includes it)
-    const up = await supabase.from("user_profiles").select("id,email,display_name").in("id", ids);
-    if (!up.error) {
-      const by: Record<string, UserProfile> = {};
-      for (const r of up.data ?? []) {
-        by[String((r as any).id)] = {
-          id: String((r as any).id),
-          email: safeStr((r as any).email),
-          display_name: safeStr((r as any).display_name),
-        };
-      }
-      setProfilesById(by);
-    } else {
-      setProfilesById({});
-    }
-  }
-
-  async function loadRoleDefaults() {
-    // canonical in your schema list: patient_role_feature_defaults
-    const res = await selectWithFallback<any>(
-      "patient_role_feature_defaults",
-      ["role,feature_key,allowed", "role,feature_key,is_allowed", "role,feature_key"],
-      (q) => q.eq("patient_id", patientId)
-    );
-
-    if (res.error) {
-      // fallback to other tables you said exist
-      const alt = await selectWithFallback<any>(
-        "permissions_role_templates",
-        ["role,feature_key,allowed", "role,feature_key,is_allowed", "role,feature_key"],
-        (q) => q.eq("patient_id", patientId)
-      );
-      if (alt.error) return setPageError(`Role templates missing: ${alt.error}`);
-      setRoleDefaults((alt.data ?? []).map((r: any) => ({ role: String(r.role), feature_key: String(r.feature_key), allowed: !!(r.allowed ?? r.is_allowed) })));
-      return;
-    }
-
-    setRoleDefaults(
-      (res.data ?? []).map((r: any) => ({
-        role: String(r.role),
-        feature_key: String(r.feature_key),
-        allowed: !!(r.allowed ?? r.is_allowed),
-      }))
-    );
-  }
-
-  async function loadMemberOverrides() {
-    const res = await selectWithFallback<any>(
-      "patient_member_feature_overrides",
-      ["user_id,feature_key,allowed", "member_uid,feature_key,allowed", "user_id,feature_key,is_allowed", "user_id,feature_key"],
-      (q) => q.eq("patient_id", patientId)
-    );
-
-    if (res.error) {
-      const alt = await selectWithFallback<any>(
-        "permissions_member_overrides",
-        ["user_id,feature_key,allowed", "member_uid,feature_key,allowed", "user_id,feature_key,is_allowed", "user_id,feature_key"],
-        (q) => q.eq("patient_id", patientId)
-      );
-      if (alt.error) {
-        // Don’t hard fail; overrides just won’t show.
-        setMemberOverrides([]);
+  // Load controller patients
+  useEffect(() => {
+    (async () => {
+      setMsg(null);
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth.user) {
+        setMsg("not_authenticated");
         return;
       }
-      setMemberOverrides(
-        (alt.data ?? []).map((r: any) => ({
-          user_id: String(r.user_id ?? r.member_uid),
-          feature_key: String(r.feature_key),
-          allowed: !!(r.allowed ?? r.is_allowed),
-        }))
-      );
-      return;
-    }
 
-    setMemberOverrides(
-      (res.data ?? []).map((r: any) => ({
-        user_id: String(r.user_id ?? r.member_uid),
-        feature_key: String(r.feature_key),
-        allowed: !!(r.allowed ?? r.is_allowed),
-      }))
-    );
-  }
-
-  async function loadAll() {
-    setError(null);
-    setLoading("Loading permissions…");
-
-    await loadPatientName();
-    await loadFeatures();
-    await loadMembersAndViewerRole();
-    await loadRoleDefaults();
-    await loadMemberOverrides();
-
-    setOk("Up to date.");
-  }
-
-  const canManage = useMemo(() => isControllerRole(viewerRole), [viewerRole]);
-
-  const rolePermMap = useMemo(() => {
-    const m = new Map<string, boolean>();
-    for (const rp of roleDefaults) m.set(`${String(rp.role).toLowerCase()}::${rp.feature_key}`, !!rp.allowed);
-    return m;
-  }, [roleDefaults]);
-
-  const memberPermMap = useMemo(() => {
-    const m = new Map<string, boolean>();
-    for (const mp of memberOverrides) m.set(`${mp.user_id}::${mp.feature_key}`, !!mp.allowed);
-    return m;
-  }, [memberOverrides]);
-
-  // Ensure common roles appear even if not currently used
-  const roleColumns = useMemo(() => {
-    const baseRoles = ["family", "carer", "professional", "clinician", "guardian", "patient"];
-    const merged = new Set<string>([
-      ...baseRoles,
-      ...members.map((m) => (m.role ?? "").toLowerCase()).filter(Boolean),
-    ]);
-    return Array.from(merged);
-  }, [members]);
-
-  async function setRolePermission(role: string, feature_key: string, allowed: boolean) {
-    if (!canManage) return setPageError("Only patient / legal guardian can change permissions.");
-
-    setLoading("Saving role template…");
-
-    // Try primary table first; fallback to permissions_role_templates
-    const payload = { patient_id: patientId, role, feature_key, allowed };
-
-    let r = await supabase
-      .from("patient_role_feature_defaults")
-      .upsert(payload as any, { onConflict: "patient_id,role,feature_key" });
-
-    if (r.error) {
-      r = await supabase
-        .from("permissions_role_templates")
-        .upsert(payload as any, { onConflict: "patient_id,role,feature_key" });
-    }
-
-    if (r.error) return setPageError(r.error.message);
-
-    await loadAll();
-    setOk("Saved ✅");
-  }
-
-  async function setMemberOverride(user_id: string, feature_key: string, allowed: boolean) {
-    if (!canManage) return setPageError("Only patient / legal guardian can change permissions.");
-
-    setLoading("Saving member override…");
-
-    const payload = { patient_id: patientId, user_id, feature_key, allowed };
-
-    let r = await supabase
-      .from("patient_member_feature_overrides")
-      .upsert(payload as any, { onConflict: "patient_id,user_id,feature_key" });
-
-    if (r.error) {
-      r = await supabase
-        .from("permissions_member_overrides")
-        .upsert(payload as any, { onConflict: "patient_id,user_id,feature_key" });
-    }
-
-    if (r.error) return setPageError(r.error.message);
-
-    await loadAll();
-    setOk("Saved ✅");
-  }
-
-  async function clearMemberOverride(user_id: string, feature_key: string) {
-    if (!canManage) return setPageError("Only patient / legal guardian can change permissions.");
-
-    setLoading("Clearing override…");
-
-    let r = await supabase
-      .from("patient_member_feature_overrides")
-      .delete()
-      .eq("patient_id", patientId)
-      .eq("user_id", user_id)
-      .eq("feature_key", feature_key);
-
-    if (r.error) {
-      r = await supabase
-        .from("permissions_member_overrides")
-        .delete()
-        .eq("patient_id", patientId)
-        .eq("user_id", user_id)
-        .eq("feature_key", feature_key);
-    }
-
-    if (r.error) return setPageError(r.error.message);
-
-    await loadAll();
-    setOk("Override cleared ✅");
-  }
-
-  async function updateMemberRoleAndNickname(user_id: string, role: string, nickname: string) {
-    if (!canManage) return setPageError("Only patient / legal guardian can edit members.");
-
-    setLoading("Saving member…");
-
-    // nickname column may be nickname or member_nickname; try both
-    const nick = nickname.trim();
-
-    // 1) try update with nickname
-    let r = await supabase
-      .from("patient_members")
-      .update({ role, nickname: nick || null } as any)
-      .eq("patient_id", patientId)
-      .eq("user_id", user_id);
-
-    // 2) fallback to member_nickname
-    if (r.error) {
-      r = await supabase
+      const { data: pm, error: pmErr } = await supabase
         .from("patient_members")
-        .update({ role, member_nickname: nick || null } as any)
-        .eq("patient_id", patientId)
-        .eq("user_id", user_id);
+        .select("patient_id")
+        .eq("user_id", auth.user.id)
+        .eq("is_controller", true);
+
+      if (pmErr) {
+        setMsg(pmErr.message);
+        return;
+      }
+
+      const ids = Array.from(new Set((pm ?? []).map((r: any) => r.patient_id as string)));
+      if (ids.length === 0) {
+        setPatients([]);
+        setMsg("You are not a controller for any patients.");
+        return;
+      }
+
+      const { data: pts, error: pErr } = await supabase
+        .from("patients")
+        .select("id, display_name")
+        .in("id", ids)
+        .order("created_at", { ascending: false });
+
+      if (pErr) {
+        setMsg(pErr.message);
+        return;
+      }
+
+      setPatients((pts ?? []) as PatientRow[]);
+      if (!patientId && pts?.[0]?.id) setPatientId(pts[0].id);
+    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_patients"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load features list
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("feature_keys")
+        .select("key, label, description")
+        .order("key", { ascending: true });
+
+      if (error) {
+        setMsg(error.message);
+        return;
+      }
+      setFeatures((data ?? []) as FeatureKeyRow[]);
+    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_features"));
+  }, [supabase]);
+
+  async function refresh() {
+    if (!patientId) return;
+    setLoading(true);
+    setMsg(null);
+    try {
+      const { data, error } = await supabase.rpc("permissions_get", { pid: patientId });
+      if (error) throw error;
+
+      // Supabase may return json as object already
+      setData(data as PermGet);
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_load_permissions");
+      setData(null);
+    } finally {
+      setLoading(false);
     }
-
-    if (r.error) return setPageError(r.error.message);
-
-    await loadAll();
-    setOk("Member updated ✅");
   }
 
   useEffect(() => {
-    (async () => {
-      if (!patientId || patientId === "undefined") return setPageError("Missing patient id.");
-      await loadAll();
-    })();
+    refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
-  if (!patientId || patientId === "undefined") {
-    return (
-      <main className="cc-page">
-        <div className="cc-container">Missing patient id.</div>
-      </main>
-    );
+  // Helpers
+  function roleAllowed(role: string, featureKey: string): boolean {
+    const rp = data?.role_perms?.find((r) => r.role === role && r.feature_key === featureKey);
+    return rp ? truthy(rp.allowed) : false;
   }
 
-  return (
-    <main className="cc-page">
-      <div className="cc-container cc-stack">
-        {/* Header */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <div className="cc-kicker">Patient</div>
-              <h1 className="cc-h1">Permissions — {patientName}</h1>
-              <div className="cc-subtle">
-                Role templates + per-user overrides.{" "}
-                {canManage ? "You can manage these." : "You don’t have permission to edit these."}
-              </div>
-            </div>
+  function memberOverride(memberUid: string, featureKey: string): boolean | null {
+    const mp = data?.member_perms?.find((m) => m.user_id === memberUid && m.feature_key === featureKey);
+    return mp ? truthy(mp.allowed) : null;
+  }
 
-            <div className="cc-row">
-              <Link className="cc-btn" href={`${base}/patients/${patientId}`}>
-                ← Back to patient
-              </Link>
-              <button className="cc-btn" onClick={loadAll}>
-                Refresh
-              </button>
-            </div>
-          </div>
+  async function seedDefaults() {
+    if (!patientId) return;
+    setMsg(null);
+    setSavingKey("seed");
+    try {
+      const { error } = await supabase.rpc("permissions_seed_defaults", { pid: patientId });
+      if (error) throw error;
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_seed_defaults");
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
-          {/* Status */}
-          {status.kind !== "idle" && (
-            <div
-              className={[
-                "cc-status",
-                status.kind === "ok"
-                  ? "cc-status-ok"
-                  : status.kind === "loading"
-                    ? "cc-status-loading"
-                    : status.kind === "error"
-                      ? "cc-status-error"
-                      : "",
-              ].join(" ")}
-              style={{ marginTop: 12 } as any}
-            >
-              <div>
-                {status.kind === "error" ? (
-                  <span className="cc-status-error-title">Something needs attention: </span>
-                ) : null}
-                {status.msg}
-              </div>
-              {error ? (
-                <div className="cc-small" style={{ color: "crimson", whiteSpace: "pre-wrap" } as any}>
-                  {error}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
+  async function setRolePerm(role: string, featureKey: string, allowed: boolean) {
+    if (!patientId) return;
+    setMsg(null);
+    setSavingKey(`role:${role}:${featureKey}`);
+    try {
+      const { error } = await supabase.rpc("permissions_set_role", {
+        pid: patientId,
+        p_role: role,
+        p_feature_key: featureKey,
+        p_allowed: allowed,
+      });
+      if (error) throw error;
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_set_role_perm");
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
-        {/* Circle members (role + nickname) */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">Circle members</h2>
-              <div className="cc-subtle">Set role + nickname per member. Email comes from user_profiles.</div>
-            </div>
-          </div>
+  async function setMemberOverride(memberUid: string, featureKey: string, allowed: boolean) {
+    if (!patientId) return;
+    setMsg(null);
+    setSavingKey(`member:${memberUid}:${featureKey}`);
+    try {
+      const { error } = await supabase.rpc("permissions_set_member", {
+        pid: patientId,
+        member_uid: memberUid,
+        p_feature_key: featureKey,
+        p_allowed: allowed,
+      });
+      if (error) throw error;
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_set_member_override");
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
-          {members.length === 0 ? (
-            <div className="cc-panel" style={{ marginTop: 12 } as any}>
-              <div className="cc-subtle">No members found.</div>
-            </div>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {members.map((m) => {
-                const prof = profilesById[m.user_id];
-                const email = prof?.email ?? m.user_id;
-                const display = prof?.display_name ?? null;
-                const controller = isControllerRole(m.role);
+  async function clearMemberOverride(memberUid: string, featureKey: string) {
+    if (!patientId) return;
+    setMsg(null);
+    setSavingKey(`clear:${memberUid}:${featureKey}`);
+    try {
+      const { error } = await supabase.rpc("permissions_clear_member_override", {
+        pid: patientId,
+        member_uid: memberUid,
+        p_feature_key: featureKey,
+      });
+      if (error) throw error;
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_clear_override");
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
-                return (
-                  <MemberCard
-                    key={m.user_id}
-                    member={m}
-                    email={email}
-                    displayName={display}
-                    isController={controller}
-                    canManage={canManage}
-                    onSave={updateMemberRoleAndNickname}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </div>
+  async function saveMemberRoleNickname(memberUid: string, role: string, nickname: string) {
+    if (!patientId) return;
+    setMsg(null);
+    setSavingKey(`membermeta:${memberUid}`);
+    try {
+      const { error } = await supabase.rpc("patient_members_set_role_nickname", {
+        pid: patientId,
+        member_uid: memberUid,
+        p_role: role,
+        p_nickname: nickname,
+      });
+      if (error) throw error;
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_update_member");
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
-        {/* Role templates */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">Role templates</h2>
-              <div className="cc-subtle">Defaults for members with a given role.</div>
-            </div>
-          </div>
-
-          <div className="cc-panel" style={{ marginTop: 12, overflowX: "auto" } as any}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 } as any}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
-                  {roleColumns.map((role) => (
-                    <th key={role} style={{ textAlign: "left", padding: 10 } as any}>
-                      {humanRole(role)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(features.length ? features : []).map((f) => (
-                  <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
-                    <td style={{ padding: 10 } as any}>
-                      <div className="cc-strong">{f.label ?? f.key}</div>
-                      {f.desc ? <div className="cc-small">{f.desc}</div> : null}
-                      <div className="cc-small">Key: {f.key}</div>
-                    </td>
-
-                    {roleColumns.map((role) => {
-                      const k = `${role.toLowerCase()}::${f.key}`;
-                      const allowed = rolePermMap.get(k) ?? false;
-
-                      return (
-                        <td key={k} style={{ padding: 10, verticalAlign: "top" } as any}>
-                          <label className="cc-check">
-                            <input
-                              type="checkbox"
-                              checked={allowed}
-                              disabled={!canManage}
-                              onChange={(e) => setRolePermission(role, f.key, e.target.checked)}
-                            />
-                            Allowed
-                          </label>
-                          <div className="cc-small" style={{ marginTop: 6 } as any}>
-                            {allowed ? "✅ enabled" : "— default off"}
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="cc-small" style={{ marginTop: 10 } as any}>
-            Note: Patient / guardian roles are treated as controllers in the UI.
-          </div>
-        </div>
-
-        {/* Member overrides */}
-        <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Per-user overrides</h2>
-          <div className="cc-subtle">Overrides take priority over the role template for that person.</div>
-
-          {members.length === 0 ? (
-            <p className="cc-subtle" style={{ marginTop: 12 } as any}>
-              No members found.
-            </p>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {members.map((m) => {
-                const prof = profilesById[m.user_id];
-                const email = prof?.email ?? m.user_id;
-                const controller = isControllerRole(m.role);
-
-                return (
-                  <div key={m.user_id} className="cc-panel-green">
-                    <div className="cc-row-between">
-                      <div style={{ minWidth: 280 } as any}>
-                        <div className="cc-strong">
-                          {humanRole(m.role)}
-                          {controller ? " • controller" : ""}
-                        </div>
-                        <div className="cc-small" style={{ marginTop: 4 } as any}>
-                          {email}
-                        </div>
-                      </div>
-
-                      <div className="cc-small">
-                        {controller
-                          ? "Controller members aren’t restricted here (treated as always allowed)."
-                          : canManage
-                            ? "You can add overrides below."
-                            : "You can view only."}
-                      </div>
-                    </div>
-
-                    {!controller ? (
-                      <div className="cc-panel-soft" style={{ marginTop: 12 } as any}>
-                        <div style={{ overflowX: "auto" } as any}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 } as any}>
-                            <thead>
-                              <tr>
-                                <th style={{ textAlign: "left", padding: 10, width: 320 } as any}>Feature</th>
-                                <th style={{ textAlign: "left", padding: 10 } as any}>Override</th>
-                                <th style={{ textAlign: "left", padding: 10 } as any}>Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(features.length ? features : []).map((f) => {
-                                const key = `${m.user_id}::${f.key}`;
-                                const hasOverride = memberPermMap.has(key);
-                                const val = memberPermMap.get(key);
-
-                                return (
-                                  <tr key={f.key} style={{ borderTop: "1px solid rgba(0,0,0,0.06)" } as any}>
-                                    <td style={{ padding: 10 } as any}>
-                                      <div className="cc-strong">{f.label ?? f.key}</div>
-                                      <div className="cc-small">{f.key}</div>
-                                    </td>
-
-                                    <td style={{ padding: 10 } as any}>
-                                      {!hasOverride ? (
-                                        <div className="cc-small">No override (uses role template)</div>
-                                      ) : (
-                                        <label className="cc-check">
-                                          <input
-                                            type="checkbox"
-                                            checked={!!val}
-                                            disabled={!canManage}
-                                            onChange={(e) => setMemberOverride(m.user_id, f.key, e.target.checked)}
-                                          />
-                                          Allowed
-                                        </label>
-                                      )}
-                                    </td>
-
-                                    <td style={{ padding: 10 } as any}>
-                                      {!hasOverride ? (
-                                        <div className="cc-row">
-                                          <button
-                                            className="cc-btn cc-btn-primary"
-                                            disabled={!canManage}
-                                            onClick={() => setMemberOverride(m.user_id, f.key, true)}
-                                          >
-                                            Override: allow
-                                          </button>
-                                          <button
-                                            className="cc-btn"
-                                            disabled={!canManage}
-                                            onClick={() => setMemberOverride(m.user_id, f.key, false)}
-                                          >
-                                            Override: deny
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <div className="cc-row">
-                                          <button
-                                            className="cc-btn"
-                                            disabled={!canManage}
-                                            onClick={() => clearMemberOverride(m.user_id, f.key)}
-                                          >
-                                            Clear override
-                                          </button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="cc-spacer-24" />
-      </div>
-    </main>
-  );
-}
-
-/* ================= MEMBER CARD ================= */
-
-function MemberCard(props: {
-  member: Member;
-  email: string;
-  displayName: string | null;
-  isController: boolean;
-  canManage: boolean;
-  onSave: (user_id: string, role: string, nickname: string) => Promise<void>;
-}) {
-  const m = props.member;
-
-  const [role, setRole] = useState<string>(m.role ?? "family");
-  const [nickname, setNickname] = useState<string>(m.nickname ?? "");
-
-  useEffect(() => {
-    setRole(m.role ?? "family");
-    setNickname(m.nickname ?? "");
-  }, [m.role, m.nickname]);
+  const roles = data?.roles ?? [];
+  const members = data?.members ?? [];
 
   return (
-    <div className="cc-panel-soft">
-      <div className="cc-row-between">
-        <div>
-          <div className="cc-strong">{props.displayName ?? props.email}</div>
-          <div className="cc-small" style={{ marginTop: 4 } as any}>
-            {props.email}
-          </div>
-          <div className="cc-small" style={{ marginTop: 6 } as any}>
-            Current role: <b>{humanRole(m.role)}</b>
-            {props.isController ? " • controller" : ""}
-          </div>
-        </div>
+    <div style={{ padding: 16 }}>
+      <h2>Account • Permissions</h2>
 
-        <div className="cc-row">
-          <button
-            className="cc-btn cc-btn-primary"
-            disabled={!props.canManage}
-            onClick={() => props.onSave(m.user_id, role, nickname)}
-          >
-            Save
-          </button>
+      {msg && (
+        <div style={{ border: "1px solid #c33", padding: 10, borderRadius: 10, marginBottom: 12 }}>
+          {msg}
         </div>
-      </div>
+      )}
 
-      <div className="cc-grid-2" style={{ marginTop: 12 } as any}>
-        <div className="cc-field">
-          <div className="cc-label">Role</div>
-          <select
-            className="cc-input"
-            value={role}
-            disabled={!props.canManage}
-            onChange={(e) => setRole(e.target.value)}
-          >
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          Patient
+          <select value={patientId} onChange={(e) => setPatientId(e.target.value)} style={{ padding: 6 }}>
+            {patients.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.display_name ?? p.id}
               </option>
             ))}
           </select>
-          <div className="cc-small" style={{ marginTop: 6 } as any}>
-            If your DB role constraint rejects this, you’ll see the exact error.
+        </label>
+
+        <button
+          onClick={seedDefaults}
+          disabled={!patientId || savingKey === "seed"}
+          style={{ padding: "8px 10px", borderRadius: 10 }}
+        >
+          {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
+        </button>
+
+        <button
+          onClick={refresh}
+          disabled={!patientId || loading}
+          style={{ padding: "8px 10px", borderRadius: 10 }}
+        >
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
+
+      {!patientId ? (
+        <div style={{ opacity: 0.7 }}>Select a patient.</div>
+      ) : !data ? (
+        <div style={{ opacity: 0.7 }}>No permissions data.</div>
+      ) : (
+        <>
+          {/* Members */}
+          <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+            <h3 style={{ marginTop: 0 }}>Circle members</h3>
+            <div style={{ display: "grid", gap: 10 }}>
+              {members.map((m) => (
+                <MemberEditor
+                  key={m.user_id}
+                  member={m}
+                  roles={roles}
+                  saving={savingKey === `membermeta:${m.user_id}`}
+                  onSave={(role, nick) => saveMemberRoleNickname(m.user_id, role, nick)}
+                />
+              ))}
+            </div>
+          </section>
+
+          {/* Role permissions matrix */}
+          <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+            <h3 style={{ marginTop: 0 }}>Role permissions</h3>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Feature</th>
+                    {roles.map((r) => (
+                      <th key={r} style={thStyle}>
+                        {r}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {features.map((f) => (
+                    <tr key={f.key}>
+                      <td style={tdStyle}>
+                        <div style={{ fontWeight: 600 }}>{f.label ?? f.key}</div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{f.description ?? f.key}</div>
+                        <div style={{ fontSize: 12, opacity: 0.65 }}>key: {f.key}</div>
+                      </td>
+                      {roles.map((role) => {
+                        const allowed = roleAllowed(role, f.key);
+                        const busy = savingKey === `role:${role}:${f.key}`;
+                        return (
+                          <td key={`${role}:${f.key}`} style={tdStyleCenter}>
+                            <button
+                              onClick={() => setRolePerm(role, f.key, !allowed)}
+                              disabled={busy}
+                              style={{
+                                padding: "6px 10px",
+                                borderRadius: 10,
+                                border: "1px solid #ddd",
+                                background: allowed ? "#e7ffe7" : "#fff",
+                              }}
+                              title="Toggle role permission"
+                            >
+                              {busy ? "…" : allowed ? "Allowed" : "Denied"}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Member overrides matrix */}
+          <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
+            <h3 style={{ marginTop: 0 }}>Member overrides</h3>
+            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 10 }}>
+              Overrides apply on top of role permissions. Controllers cannot be overridden (your RPC enforces this).
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Feature</th>
+                    {members.map((m) => (
+                      <th key={m.user_id} style={thStyle}>
+                        {m.nickname ?? m.email ?? m.user_id}
+                        {m.is_controller ? " (controller)" : ""}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {features.map((f) => (
+                    <tr key={f.key}>
+                      <td style={tdStyle}>
+                        <div style={{ fontWeight: 600 }}>{f.label ?? f.key}</div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{f.description ?? f.key}</div>
+                        <div style={{ fontSize: 12, opacity: 0.65 }}>key: {f.key}</div>
+                      </td>
+
+                      {members.map((m) => {
+                        const ov = memberOverride(m.user_id, f.key); // null means no override
+                        const busySet = savingKey === `member:${m.user_id}:${f.key}`;
+                        const busyClear = savingKey === `clear:${m.user_id}:${f.key}`;
+
+                        return (
+                          <td key={`${m.user_id}:${f.key}`} style={tdStyleCenter}>
+                            {m.is_controller ? (
+                              <span style={{ fontSize: 12, opacity: 0.6 }}>—</span>
+                            ) : (
+                              <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                                <button
+                                  onClick={() => setMemberOverride(m.user_id, f.key, true)}
+                                  disabled={busySet}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #ddd",
+                                    background: ov === true ? "#e7ffe7" : "#fff",
+                                  }}
+                                  title="Set override: allowed"
+                                >
+                                  {busySet && ov !== true ? "…" : "Allow"}
+                                </button>
+
+                                <button
+                                  onClick={() => setMemberOverride(m.user_id, f.key, false)}
+                                  disabled={busySet}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #ddd",
+                                    background: ov === false ? "#ffe7e7" : "#fff",
+                                  }}
+                                  title="Set override: denied"
+                                >
+                                  {busySet && ov !== false ? "…" : "Deny"}
+                                </button>
+
+                                <button
+                                  onClick={() => clearMemberOverride(m.user_id, f.key)}
+                                  disabled={ov === null || busyClear}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid #ddd",
+                                    opacity: ov === null ? 0.4 : 1,
+                                  }}
+                                  title="Clear override"
+                                >
+                                  {busyClear ? "…" : "Clear"}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MemberEditor({
+  member,
+  roles,
+  saving,
+  onSave,
+}: {
+  member: PermGet["members"][number];
+  roles: string[];
+  saving: boolean;
+  onSave: (role: string, nickname: string) => void;
+}) {
+  const [role, setRole] = useState(member.role ?? "");
+  const [nickname, setNickname] = useState(member.nickname ?? "");
+
+  useEffect(() => {
+    setRole(member.role ?? "");
+    setNickname(member.nickname ?? "");
+  }, [member.user_id, member.role, member.nickname]);
+
+  return (
+    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 700 }}>
+            {member.nickname ?? member.email ?? member.user_id} {member.is_controller ? "(controller)" : ""}
           </div>
+          <div style={{ fontSize: 12, opacity: 0.75 }}>{member.email ?? member.user_id}</div>
         </div>
 
-        <div className="cc-field">
-          <div className="cc-label">Nickname</div>
-          <input
-            className="cc-input"
-            value={nickname}
-            disabled={!props.canManage}
-            onChange={(e) => setNickname(e.target.value)}
-            placeholder="e.g. Mum, Support worker, Dr. A"
-          />
+        <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+            Role
+            <input
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              placeholder={roles[0] ?? "family"}
+              disabled={!!member.is_controller}
+              style={{ padding: 6 }}
+              title={member.is_controller ? "Controllers keep their role management access" : "Role (lowercased by RPC)"}
+            />
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+            Nickname
+            <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Optional" style={{ padding: 6 }} />
+          </label>
+
+          <button
+            onClick={() => onSave(role || (member.role ?? "family"), nickname)}
+            disabled={saving}
+            style={{ padding: "8px 10px", borderRadius: 10 }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: 10,
+  borderBottom: "1px solid #eee",
+  whiteSpace: "nowrap",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: 10,
+  borderBottom: "1px solid #f3f3f3",
+  verticalAlign: "top",
+  minWidth: 240,
+};
+
+const tdStyleCenter: React.CSSProperties = {
+  padding: 10,
+  borderBottom: "1px solid #f3f3f3",
+  verticalAlign: "top",
+  textAlign: "center",
+  minWidth: 180,
+};

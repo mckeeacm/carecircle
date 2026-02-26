@@ -1,244 +1,207 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useParams, useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabase/browser";
+import { BubbleTour } from "@/app/_components/BubbleTour";
+import { patientControllerSteps, patientMemberSteps } from "@/lib/tours";
+import { restartAllTours } from "@/lib/tourReset";
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "loading"; msg: string }
-  | { kind: "ok"; msg: string }
-  | { kind: "error"; msg: string };
-
-type PatientRow = {
-  id: string;
-  display_name: string;
-  created_at: string | null;
-};
-
-type MemberRow = {
+type Membership = {
   patient_id: string;
-  user_id: string;
   role: string | null;
   nickname: string | null;
   is_controller: boolean | null;
-  created_at: string | null;
-  patients: PatientRow | null;
 };
 
-function appBaseFromPathname(pathname: string) {
-  if (pathname.startsWith("/app/app/") || pathname === "/app/app") return "/app/app";
-  if (pathname.startsWith("/app/") || pathname === "/app") return "/app";
-  return "";
+type PatientRow = {
+  id: string;
+  display_name: string | null;
+  created_at: string;
+};
+
+function safeBool(v: unknown) {
+  return v === true;
 }
 
-function humanRole(role: string | null | undefined) {
-  const r = (role ?? "").toLowerCase();
-  if (!r) return "Circle member";
-  if (r === "family") return "Family";
-  if (r === "carer") return "Carer / support";
-  if (r === "support_worker") return "Carer / support";
-  if (r === "professional") return "Professional support";
-  if (r === "professional_support") return "Professional support";
-  if (r === "clinician") return "Clinician";
-  if (r === "owner") return "Patient / Guardian";
-  if (r === "guardian") return "Legal guardian";
-  if (r === "legal_guardian") return "Legal guardian";
-  if (r === "patient") return "Patient";
-  return role!;
-}
+export default function PatientDashboardPage() {
+  const supabase = useMemo(() => supabaseBrowser(), []);
+  const router = useRouter();
+  const params = useParams();
+  const patientId = params?.id as string;
 
-function fmt(iso: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  }).format(new Date(iso));
-}
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<string | null>(null);
 
-export default function PatientsPage() {
-  const base = useMemo(() => {
-    if (typeof window === "undefined") return "/app";
-    return appBaseFromPathname(window.location.pathname);
-  }, []);
-
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [error, setError] = useState<string | null>(null);
-
-  const [rows, setRows] = useState<MemberRow[]>([]);
-  const [email, setEmail] = useState<string>("…");
-
-  function setPageError(msg: string) {
-    setError(msg);
-    setStatus({ kind: "error", msg });
-  }
-  function setOk(msg: string) {
-    setError(null);
-    setStatus({ kind: "ok", msg });
-  }
-  function setLoading(msg: string) {
-    setError(null);
-    setStatus({ kind: "loading", msg });
-  }
-
-  async function requireAuth() {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
-      window.location.href = "/";
-      return null;
-    }
-    setEmail(data.user.email ?? data.user.id);
-    return data.user;
-  }
+  const [membership, setMembership] = useState<Membership | null>(null);
+  const [patient, setPatient] = useState<PatientRow | null>(null);
 
   async function load() {
-    const user = await requireAuth();
-    if (!user) return;
+    if (!patientId) return;
 
-    setLoading("Loading your circles…");
+    setLoading(true);
+    setMsg(null);
 
-    const q = await supabase
-      .from("patient_members")
-      .select("patient_id,user_id,role,nickname,is_controller,created_at,patients:patients(id,display_name,created_at)")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id;
 
-    if (q.error) return setPageError(q.error.message);
+      if (!uid) {
+        router.push("/login");
+        return;
+      }
 
-    const data = (q.data ?? []) as unknown as MemberRow[];
-    setRows(data.filter((r) => !!r.patients?.id));
-    setOk("Up to date.");
+      const { data: mem, error: memErr } = await supabase
+        .from("patient_members")
+        .select("patient_id, role, nickname, is_controller")
+        .eq("patient_id", patientId)
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (memErr) throw memErr;
+      if (!mem) {
+        setMsg("You do not have access to this circle.");
+        return;
+      }
+
+      setMembership(mem as Membership);
+
+      const { data: p, error: pErr } = await supabase
+        .from("patients")
+        .select("id, display_name, created_at")
+        .eq("id", patientId)
+        .maybeSingle();
+
+      if (pErr) throw pErr;
+      setPatient(p as PatientRow);
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_load_patient");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [patientId]);
+
+  if (loading) {
+    return (
+      <div style={page}>
+        <div style={shell}>
+          <div style={card}>Loading patient dashboard…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (msg) {
+    return (
+      <div style={page}>
+        <div style={shell}>
+          <div style={errorBox}>{msg}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const isController = safeBool(membership?.is_controller);
 
   return (
-    <main className="cc-page">
-      <div className="cc-container cc-stack">
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <div className="cc-kicker">CareCircle</div>
-              <h1 className="cc-h1">Patients</h1>
-              <div className="cc-subtle">Signed in as <b>{email}</b></div>
+    <div style={page}>
+      <div style={shell}>
+        <div style={header}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>CareCircle</div>
+            <div id="patient-name" style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.2 }}>
+              {patient?.display_name ?? patientId}
             </div>
 
-            <div className="cc-row">
-              <Link className="cc-btn" href={`${base}/today`}>🗓️ Today</Link>
-              <button className="cc-btn" onClick={load}>↻ Refresh</button>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={pill}>Role: <b>{membership?.role ?? "—"}</b></span>
+              {membership?.nickname ? <span style={pill}>Nickname: <b>{membership.nickname}</b></span> : null}
+              {isController ? <span style={pillController}>Controller</span> : null}
             </div>
           </div>
 
-          {status.kind !== "idle" && (
-            <div
-              className={[
-                "cc-status",
-                status.kind === "ok"
-                  ? "cc-status-ok"
-                  : status.kind === "loading"
-                    ? "cc-status-loading"
-                    : status.kind === "error"
-                      ? "cc-status-error"
-                      : "",
-              ].join(" ")}
-              style={{ marginTop: 12 } as any}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button style={secondaryBtn} onClick={() => router.push("/hub")}>Back to Hub</button>
+            <button
+              style={secondaryBtn}
+              onClick={() => {
+                restartAllTours();
+                location.reload();
+              }}
             >
-              <div>
-                {status.kind === "error" ? <span className="cc-status-error-title">Something needs attention: </span> : null}
-                {status.msg}
-              </div>
-              {error ? (
-                <div className="cc-small" style={{ color: "crimson", whiteSpace: "pre-wrap" } as any}>
-                  {error}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        {/* At-a-glance summary (compact, no new colours) */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">At a glance</h2>
-              <div className="cc-subtle">Your circles, with role + nickname.</div>
-            </div>
-            <div className="cc-row">
-              <span className="cc-pill">Circles: <b>{rows.length}</b></span>
-              <span className="cc-pill">Controllers: <b>{rows.filter((r) => !!r.is_controller).length}</b></span>
-            </div>
+              Restart tour
+            </button>
           </div>
         </div>
 
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">Your circles</h2>
-              <div className="cc-subtle">Open a circle to view Overview, Meds, Journals, Appointments, Permissions.</div>
-            </div>
-          </div>
+        <div style={grid}>
+          <button id="nav-journals" style={cardBtn} onClick={() => router.push(`/patients/${patientId}/journals`)}>
+            <div style={btnTitle}>Journals</div>
+            <div style={btnDesc}>Encrypted journal entries, mood and pain tracking.</div>
+          </button>
 
-          {rows.length === 0 ? (
-            <div className="cc-panel" style={{ marginTop: 12 } as any}>
-              <div className="cc-strong">No circles yet.</div>
-              <div className="cc-subtle" style={{ marginTop: 6 } as any}>
-                You’ll see circles here once you’re added as a member.
-              </div>
-            </div>
-          ) : (
-            <div className="cc-stack" style={{ marginTop: 12 } as any}>
-              {rows.map((m) => {
-                const p = m.patients!;
-                const nick = (m.nickname ?? "").trim();
+          <button id="nav-dm" style={cardBtn} onClick={() => router.push(`/patients/${patientId}/dm`)}>
+            <div style={btnTitle}>Direct Messages</div>
+            <div style={btnDesc}>1-to-1 encrypted messaging within this circle.</div>
+          </button>
 
-                return (
-                  <div key={`${m.patient_id}:${m.user_id}`} className="cc-panel-soft">
-                    <div className="cc-row-between" style={{ alignItems: "flex-start" } as any}>
-                      <div>
-                        <div className="cc-strong" style={{ display: "flex", gap: 10, alignItems: "center" } as any}>
-                          <span>{p.display_name}</span>
-                          {m.is_controller ? <span className="cc-pill">controller</span> : null}
-                        </div>
+          <button id="nav-meds" style={cardBtn} onClick={() => router.push(`/patients/${patientId}/medication-logs`)}>
+            <div style={btnTitle}>Medications</div>
+            <div style={btnDesc}>Due and overdue doses, taken logs, secure notes.</div>
+          </button>
 
-                        <div className="cc-small" style={{ marginTop: 6 } as any}>
-                          You: <b>{humanRole(m.role)}</b>
-                          {nick ? <> • Nickname: <b>{nick}</b></> : null}
-                        </div>
+          <button id="nav-appointments" style={cardBtn} onClick={() => router.push(`/patients/${patientId}/appointments`)}>
+            <div style={btnTitle}>Appointments</div>
+            <div style={btnDesc}>Upcoming and past appointments.</div>
+          </button>
 
-                        {p.created_at ? (
-                          <div className="cc-small" style={{ marginTop: 4 } as any}>
-                            Created: {fmt(p.created_at)}
-                          </div>
-                        ) : null}
-                      </div>
+          <button id="nav-summary" style={cardBtn} onClick={() => router.push(`/patients/${patientId}/summary`)}>
+            <div style={btnTitle}>Clinician Summary</div>
+            <div style={btnDesc}>Structured overview designed for professional review.</div>
+          </button>
 
-                      <div className="cc-row">
-                        <Link className="cc-btn cc-btn-primary" href={`${base}/patients/${m.patient_id}`}>
-                          Open
-                        </Link>
-                        <Link className="cc-btn" href={`${base}/patients/${m.patient_id}?tab=meds`}>
-                          💊
-                        </Link>
-                        <Link className="cc-btn" href={`${base}/patients/${m.patient_id}?tab=journals`}>
-                          📝
-                        </Link>
-                        <Link className="cc-btn" href={`${base}/patients/${m.patient_id}?tab=appointments`}>
-                          📅
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {isController ? (
+            <button id="nav-permissions" style={cardBtnStrong} onClick={() => router.push(`/patients/${patientId}/permissions`)}>
+              <div style={btnTitle}>Permissions</div>
+              <div style={btnDesc}>Manage roles and per-member overrides.</div>
+            </button>
+          ) : null}
         </div>
 
-        <div className="cc-spacer-24" />
+        <BubbleTour
+          tourId={isController ? "patient-dashboard-controller-v1" : "patient-dashboard-member-v1"}
+          steps={isController ? patientControllerSteps : patientMemberSteps}
+          autoStart
+        />
       </div>
-    </main>
+    </div>
   );
 }
+
+/* styles */
+const page: React.CSSProperties = { minHeight: "100vh", background: "linear-gradient(180deg, #fbfbfb 0%, #f6f6f6 100%)" };
+const shell: React.CSSProperties = { maxWidth: 1040, margin: "0 auto", padding: 18 };
+
+const header: React.CSSProperties = { display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 16 };
+
+const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 };
+
+const card: React.CSSProperties = { border: "1px solid #eaeaea", borderRadius: 16, padding: 16, background: "#fff", boxShadow: "0 6px 24px rgba(0,0,0,0.04)" };
+
+const cardBtn: React.CSSProperties = { ...card, textAlign: "left", cursor: "pointer" };
+const cardBtnStrong: React.CSSProperties = { ...cardBtn, border: "1px solid #111" };
+
+const btnTitle: React.CSSProperties = { fontWeight: 900, fontSize: 16 };
+const btnDesc: React.CSSProperties = { fontSize: 13, opacity: 0.8, marginTop: 6 };
+
+const pill: React.CSSProperties = { fontSize: 12, padding: "4px 10px", borderRadius: 999, border: "1px solid #ddd", background: "#fafafa" };
+const pillController: React.CSSProperties = { ...pill, background: "#e7ffe7", border: "1px solid #cfe9cf", fontWeight: 900 };
+
+const secondaryBtn: React.CSSProperties = { padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", fontWeight: 900, cursor: "pointer" };
+
+const errorBox: React.CSSProperties = { border: "1px solid #c33", borderRadius: 14, padding: 12, background: "#fff5f5", color: "#900", fontWeight: 700 };

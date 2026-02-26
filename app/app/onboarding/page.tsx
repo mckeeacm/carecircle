@@ -1,443 +1,615 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "loading"; msg: string }
-  | { kind: "ok"; msg: string }
-  | { kind: "error"; msg: string };
-
-type WhoAmI = {
-  uid: string | null;
-  email?: string | null;
-  account_mode?: string | null;
-};
-
-type CircleRow = {
+type CircleMembership = {
   patient_id: string;
-  patient_name?: string | null;
-  role?: string | null;
+  role: string | null;
+  nickname: string | null;
+  is_controller: boolean | null;
+  created_at: string;
 };
 
-function appBaseFromPathname(pathname: string) {
-  if (pathname.startsWith("/app/app/") || pathname === "/app/app") return "/app/app";
-  if (pathname.startsWith("/app/") || pathname === "/app") return "/app";
-  return "";
+type PatientRow = {
+  id: string;
+  display_name: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+type StepId = "circle" | "vault" | "permissions" | "finish";
+
+function safeBool(v: unknown) {
+  return v === true;
 }
 
-const TOUR_STEPS = [
-  {
-    key: "today",
-    title: "Today",
-    body: "Your home screen: quick view of meds, appointments, and recent updates.",
-  },
-  {
-    key: "profile",
-    title: "Care profile",
-    body: "Add allergies, triggers, calming methods, and key notes so everyone supports consistently.",
-  },
-  {
-    key: "journals",
-    title: "Journals",
-    body: "Patient journal is private by default. The circle journal is shared. Patient can selectively share entries.",
-  },
-  {
-    key: "permissions",
-    title: "Permissions",
-    body: "Only the patient/legal guardian can change what each person can see or do.",
-  },
-  {
-    key: "summary",
-    title: "Clinician summary",
-    body: "A clean view for clinicians: diagnoses, meds, and entries marked for summary — with an audit trail.",
-  },
-];
-
 export default function OnboardingPage() {
-  const base = useMemo(() => {
-    if (typeof window === "undefined") return "/app";
-    return appBaseFromPathname(window.location.pathname);
-  }, []);
+  const supabase = useMemo(() => supabaseBrowser(), []);
+  const router = useRouter();
 
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [error, setError] = useState<string | null>(null);
+  const [uid, setUid] = useState<string | null>(null);
 
-  const [authedUid, setAuthedUid] = useState<string | null>(null);
-  const [whoami, setWhoami] = useState<WhoAmI | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  // Single patient first run
-  const [circles, setCircles] = useState<CircleRow[]>([]);
-  const [patientId, setPatientId] = useState<string | null>(null);
-  const [patientName, setPatientName] = useState<string>("");
+  const [memberships, setMemberships] = useState<CircleMembership[]>([]);
+  const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
 
-  // Mode selection
-  const [mode, setMode] = useState<"patient" | "legal_guardian">("patient");
+  const [selectedPatientId, setSelectedPatientId] = useState<string>("");
 
-  // Tour
-  const [tourOn, setTourOn] = useState(true);
-  const [tourStep, setTourStep] = useState(0);
+  const [hasVaultShare, setHasVaultShare] = useState<boolean>(false);
 
-  function setPageError(msg: string) {
-    setError(msg);
-    setStatus({ kind: "error", msg });
-  }
-  function setOk(msg: string) {
-    setError(null);
-    setStatus({ kind: "ok", msg });
-  }
-  function setLoading(msg: string) {
-    setError(null);
-    setStatus({ kind: "loading", msg });
-  }
+  // Create circle form
+  const [newCircleName, setNewCircleName] = useState<string>("");
 
-  async function requireAuth() {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
-      window.location.href = "/";
-      return null;
+  const currentStep: StepId = useMemo(() => {
+    if (!selectedPatientId) return "circle";
+    if (!hasVaultShare) return "vault";
+
+    // If controller, we want them to seed/review permissions as part of onboarding.
+    const me = memberships.find((m) => m.patient_id === selectedPatientId);
+    if (me?.is_controller) return "permissions";
+
+    return "finish";
+  }, [selectedPatientId, hasVaultShare, memberships]);
+
+  async function refresh() {
+    setLoading(true);
+    setMsg(null);
+
+    try {
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+
+      const me = auth.user;
+      if (!me) {
+        router.push("/login");
+        return;
+      }
+
+      setUid(me.id);
+
+      // memberships
+      const { data: mem, error: memErr } = await supabase
+        .from("patient_members")
+        .select("patient_id, role, nickname, is_controller, created_at")
+        .eq("user_id", me.id)
+        .order("created_at", { ascending: true });
+
+      if (memErr) throw memErr;
+
+      const ms = (mem ?? []) as CircleMembership[];
+      setMemberships(ms);
+
+      const ids = Array.from(new Set(ms.map((m) => m.patient_id)));
+
+      if (ids.length === 0) {
+        setPatientsById({});
+        setSelectedPatientId("");
+        setHasVaultShare(false);
+        return;
+      }
+
+      // patients
+      const { data: pts, error: pErr } = await supabase
+        .from("patients")
+        .select("id, display_name, created_by, created_at")
+        .in("id", ids);
+
+      if (pErr) throw pErr;
+
+      const map: Record<string, PatientRow> = {};
+      (pts ?? []).forEach((p: any) => (map[p.id] = p as PatientRow));
+      setPatientsById(map);
+
+      // choose a default circle:
+      // prefer controller circle, else first
+      if (!selectedPatientId) {
+        const controller = ms.find((m) => safeBool(m.is_controller));
+        setSelectedPatientId(controller?.patient_id ?? ms[0].patient_id);
+      }
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_load_onboarding");
+    } finally {
+      setLoading(false);
     }
-    setAuthedUid(data.user.id);
-    return data.user;
   }
 
-  async function loadWhoami() {
-    const r = await supabase.rpc("whoami");
-    if (r.error) return setPageError(r.error.message);
+  async function refreshVaultShare(patientId: string, userId: string) {
+    setHasVaultShare(false);
+    try {
+      const { data, error } = await supabase
+        .from("patient_vault_shares")
+        .select("id")
+        .eq("patient_id", patientId)
+        .eq("user_id", userId)
+        .limit(1);
 
-    const val: any = r.data;
-    const w: WhoAmI = {
-      uid: val?.uid ?? val?.user_id ?? null,
-      email: val?.email ?? null,
-      account_mode: val?.account_mode ?? val?.mode ?? null,
-    };
-    setWhoami(w);
-  }
-
-  async function loadMyCircles() {
-    const r = await supabase.rpc("my_circles");
-    if (r.error) return setPageError(r.error.message);
-
-    const rows = (r.data ?? []) as any[];
-    const mapped: CircleRow[] = rows.map((x) => ({
-      patient_id: x.patient_id ?? x.id ?? x.pid,
-      patient_name: x.patient_name ?? x.display_name ?? x.name ?? null,
-      role: x.role ?? null,
-    }));
-
-    setCircles(mapped);
-
-    // single patient first: auto-select if exactly one
-    if (mapped.length === 1) {
-      setPatientId(mapped[0].patient_id);
-      setPatientName(mapped[0].patient_name ?? "");
+      if (error) throw error;
+      setHasVaultShare((data ?? []).length > 0);
+    } catch {
+      // Don’t hard-fail onboarding just because we can’t read shares (RLS configs vary).
+      // We'll treat it as "not yet" and let the user click through vault-init.
+      setHasVaultShare(false);
     }
-  }
-
-  async function setAccountMode(nextMode: "patient" | "legal_guardian") {
-    setLoading("Saving your account mode…");
-    const r = await supabase.rpc("set_account_mode", { p_mode: nextMode });
-    if (r.error) return setPageError(r.error.message);
-    setMode(nextMode);
-    await loadWhoami();
-    setOk("Account mode saved ✅");
-  }
-
-  async function createMyCircle() {
-    const user = await requireAuth();
-    if (!user) return;
-
-    const name = patientName.trim();
-    if (!name) return setPageError("Enter the patient’s name.");
-
-    setLoading("Creating your CareCircle…");
-
-    const r = await supabase.rpc("create_my_patient_circle", { p_display_name: name });
-    if (r.error) return setPageError(r.error.message);
-
-    const pid =
-      typeof r.data === "string"
-        ? r.data
-        : (r.data?.patient_id ?? r.data?.id ?? null);
-
-    if (pid) {
-      setPatientId(pid);
-
-      const seed = await supabase.rpc("permissions_seed_defaults", { pid });
-      if (seed.error) return setPageError(seed.error.message);
-
-      // audit (writes to public.audit_events)
-      await supabase.rpc("log_audit_event", {
-        p_patient_id: pid,
-        p_action: "create",
-        p_resource: "onboarding",
-        p_meta: { mode },
-      });
-    }
-
-    await loadMyCircles();
-    setOk("Circle created + defaults applied ✅");
-  }
-
-  function nextTour() {
-    setTourStep((s) => Math.min(s + 1, TOUR_STEPS.length - 1));
-  }
-  function prevTour() {
-    setTourStep((s) => Math.max(s - 1, 0));
   }
 
   useEffect(() => {
-    (async () => {
-      const user = await requireAuth();
-      if (!user) return;
-
-      setLoading("Preparing your setup…");
-      await loadWhoami();
-      await loadMyCircles();
-      setOk("Ready.");
-    })();
+    refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasCircle = circles.length > 0;
-  const canContinue = !!patientId;
+  useEffect(() => {
+    if (!uid || !selectedPatientId) return;
+    refreshVaultShare(selectedPatientId, uid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, selectedPatientId]);
 
-  return (
-    <main className="cc-page">
-      <div className="cc-container cc-stack">
-        {/* Header */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <div className="cc-kicker">Welcome</div>
-              <h1 className="cc-h1">Let’s set up your CareCircle</h1>
-              <div className="cc-subtle" style={{ marginTop: 6 }}>
-                First-time setup for patient / legal guardian — then we’ll give you a quick tour.
-              </div>
+  async function createCircle() {
+    if (!uid) return;
+    const name = newCircleName.trim();
+    if (!name) return setMsg("Please enter a circle name.");
 
-              <div className="cc-row" style={{ marginTop: 10 }}>
-                <span className="cc-pill cc-pill-primary">
-                  Signed in: <b>{whoami?.email ?? authedUid ?? "—"}</b>
-                </span>
-                {whoami?.account_mode ? <span className="cc-pill">Mode: {whoami.account_mode}</span> : null}
-              </div>
-            </div>
+    setBusy("create-circle");
+    setMsg(null);
 
-            <div className="cc-row">
-              <button className="cc-btn" onClick={() => window.location.reload()}>
-                Refresh
-              </button>
+    try {
+      const pid = crypto.randomUUID();
+      const now = new Date().toISOString();
 
-              {canContinue ? (
-                <Link className="cc-btn cc-btn-primary" href={`${base}/today`}>
-                  Go to Today →
-                </Link>
-              ) : null}
-            </div>
+      // 1) patients
+      const { error: pErr } = await supabase.from("patients").insert({
+        id: pid,
+        display_name: name,
+        created_by: uid,
+        created_at: now,
+      });
+
+      if (pErr) throw pErr;
+
+      // 2) patient_members (make creator the controller)
+      const { error: mErr } = await supabase.from("patient_members").insert({
+        patient_id: pid,
+        user_id: uid,
+        role: "controller",
+        nickname: null,
+        is_controller: true,
+        created_at: now,
+      });
+
+      if (mErr) throw mErr;
+
+      // 3) seed defaults (idempotent)
+      const { error: seedErr } = await supabase.rpc("permissions_seed_defaults", { pid });
+      if (seedErr) throw seedErr;
+
+      // move forward
+      setNewCircleName("");
+      await refresh();
+      setSelectedPatientId(pid);
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_create_circle");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function seedDefaults() {
+    if (!selectedPatientId) return;
+    setBusy("seed");
+    setMsg(null);
+    try {
+      const { error } = await supabase.rpc("permissions_seed_defaults", { pid: selectedPatientId });
+      if (error) throw error;
+      // nothing else to refresh here; permissions UI lives elsewhere
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_seed_defaults");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
+  const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
+  const isController = safeBool(selectedMembership?.is_controller);
+
+  if (loading) {
+    return (
+      <div style={page}>
+        <div style={shell}>
+          <Header />
+          <div style={card}>
+            <div style={{ opacity: 0.8 }}>Loading onboarding…</div>
           </div>
-
-          {/* Status */}
-          {status.kind !== "idle" ? (
-            <div
-              className={[
-                "cc-status",
-                status.kind === "error"
-                  ? "cc-status-error"
-                  : status.kind === "ok"
-                    ? "cc-status-ok"
-                    : status.kind === "loading"
-                      ? "cc-status-loading"
-                      : "",
-              ].join(" ")}
-              style={{ marginTop: 12 }}
-            >
-              <div>
-                {status.kind === "error" ? <span className="cc-status-error-title">Something needs attention: </span> : null}
-                {status.msg}
-              </div>
-
-              {error ? (
-                <div className="cc-small" style={{ color: "crimson", whiteSpace: "pre-wrap" }}>
-                  {error}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        {/* Step 1 */}
-        <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">1) Choose your setup mode</h2>
-          <div className="cc-subtle">
-            This controls what you can manage. Only patient/legal guardian can edit permissions.
-          </div>
-
-          <div className="cc-row" style={{ marginTop: 12 }}>
-            <button
-              className={["cc-btn", mode === "patient" ? "cc-btn-primary" : ""].join(" ")}
-              onClick={() => setAccountMode("patient")}
-            >
-              🧑 Patient
-            </button>
-
-            <button
-              className={["cc-btn", mode === "legal_guardian" ? "cc-btn-primary" : ""].join(" ")}
-              onClick={() => setAccountMode("legal_guardian")}
-            >
-              🛡️ Legal guardian
-            </button>
-          </div>
-        </div>
-
-        {/* Step 2 */}
-        <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">2) Create your first patient</h2>
-          <div className="cc-subtle">
-            Single patient for now. Later we can support multiple wards per guardian.
-          </div>
-
-          {!hasCircle ? (
-            <div className="cc-panel" style={{ marginTop: 12 }}>
-              <div className="cc-field">
-                <div className="cc-label">Patient display name</div>
-                <input
-                  className="cc-input"
-                  value={patientName}
-                  onChange={(e) => setPatientName(e.target.value)}
-                  placeholder="e.g. Amina Khan"
-                />
-              </div>
-
-              <div className="cc-row" style={{ marginTop: 10 }}>
-                <button className="cc-btn cc-btn-primary" onClick={createMyCircle} disabled={!patientName.trim()}>
-                  Create CareCircle
-                </button>
-              </div>
-
-              <div className="cc-small" style={{ marginTop: 10 }}>
-                This will: create the patient + add you as owner + seed default permissions.
-              </div>
-            </div>
-          ) : (
-            <div className="cc-panel" style={{ marginTop: 12 }}>
-              <div className="cc-strong">You already have {circles.length} circle(s)</div>
-
-              <div className="cc-stack" style={{ marginTop: 10 }}>
-                {circles.map((c) => {
-                  const active = patientId === c.patient_id;
-                  return (
-                    <button
-                      key={c.patient_id}
-                      className={["cc-btn", active ? "cc-btn-secondary" : ""].join(" ")}
-                      onClick={() => {
-                        setPatientId(c.patient_id);
-                        setPatientName(c.patient_name ?? "");
-                        setOk("Selected ✅");
-                      }}
-                    >
-                      {active ? "✅ " : ""}
-                      {c.patient_name ?? c.patient_id} — {c.role ?? "member"}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Step 3 */}
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <div>
-              <h2 className="cc-h2">3) Quick tour</h2>
-              <div className="cc-subtle">A simple walkthrough of how the app works.</div>
-            </div>
-
-            <label className="cc-check">
-              <input type="checkbox" checked={tourOn} onChange={(e) => setTourOn(e.target.checked)} />
-              Show tour
-            </label>
-          </div>
-
-          {tourOn ? (
-            <div className="cc-panel-soft" style={{ marginTop: 12 }}>
-              <div className="cc-kicker">
-                Step {tourStep + 1} of {TOUR_STEPS.length}
-              </div>
-
-              <div className="cc-strong" style={{ fontSize: 16 }}>
-                {TOUR_STEPS[tourStep].title}
-              </div>
-
-              <div className="cc-subtle" style={{ marginTop: 6 }}>
-                {TOUR_STEPS[tourStep].body}
-              </div>
-
-              <div className="cc-row" style={{ marginTop: 12 }}>
-                <button className="cc-btn" onClick={prevTour} disabled={tourStep === 0}>
-                  Back
-                </button>
-
-                <button className="cc-btn cc-btn-primary" onClick={nextTour} disabled={tourStep === TOUR_STEPS.length - 1}>
-                  Next
-                </button>
-
-                {patientId ? (
-                  <>
-                    <Link className="cc-btn" href={`${base}/patients/${patientId}?tab=overview`}>
-                      Open patient
-                    </Link>
-                    <Link className="cc-btn" href={`${base}/patients/${patientId}/permissions`}>
-                      Permissions
-                    </Link>
-                    <Link className="cc-btn" href={`${base}/patients/${patientId}/summary`}>
-                      Clinician summary
-                    </Link>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <div className="cc-panel" style={{ marginTop: 12 }}>
-              <div className="cc-subtle" style={{ margin: 0 }}>
-                Tour hidden. You can turn it back on anytime.
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Finish */}
-        <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Finish</h2>
-          <div className="cc-subtle">Once you’ve created (or selected) a patient, you can start using the app.</div>
-
-          <div className="cc-row" style={{ marginTop: 12 }}>
-            {canContinue ? (
-              <Link className="cc-btn cc-btn-primary" href={`${base}/today`}>
-                Go to Today →
-              </Link>
-            ) : (
-              <button className="cc-btn" disabled>
-                Go to Today →
-              </button>
-            )}
-
-            {patientId ? (
-              <Link className="cc-btn" href={`${base}/patients/${patientId}?tab=overview`}>
-                Open patient →
-              </Link>
-            ) : null}
-          </div>
-
-          {!canContinue ? (
-            <div className="cc-small" style={{ marginTop: 10 }}>
-              Create/select a patient first to continue.
-            </div>
-          ) : null}
         </div>
       </div>
-    </main>
+    );
+  }
+
+  return (
+    <div style={page}>
+      <div style={shell}>
+        <Header />
+
+        {msg && <div style={errorBox}>{msg}</div>}
+
+        <div style={grid}>
+          {/* Left: Stepper */}
+          <div style={sideCard}>
+            <div style={{ fontWeight: 800, marginBottom: 10 }}>Getting started</div>
+            <Step label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
+            <Step label="Set up vault access (E2EE)" active={currentStep === "vault"} done={!!selectedPatientId && hasVaultShare} />
+            <Step label="Permissions & roles" active={currentStep === "permissions"} done={!!selectedPatientId && hasVaultShare && !isController ? true : false} />
+            <Step label="Finish" active={currentStep === "finish"} done={false} />
+
+            {selectedPatientId && (
+              <div style={{ marginTop: 14, fontSize: 12, opacity: 0.8 }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Selected circle</div>
+                <div>{selectedPatient?.display_name ?? selectedPatientId}</div>
+                <div style={{ marginTop: 6 }}>
+                  Role: <b>{selectedMembership?.role ?? "—"}</b>
+                  {isController ? " • controller" : ""}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Active step content */}
+          <div style={card}>
+            {currentStep === "circle" && (
+              <>
+                <h2 style={h2}>Welcome to CareCircle</h2>
+                <p style={p}>
+                  Let’s get you set up with a care circle. A circle is the patient context where journals, meds, appointments,
+                  and secure notes live.
+                </p>
+
+                {memberships.length > 0 ? (
+                  <>
+                    <div style={sectionTitle}>Select an existing circle</div>
+                    <select
+                      value={selectedPatientId}
+                      onChange={(e) => setSelectedPatientId(e.target.value)}
+                      style={select}
+                    >
+                      <option value="" disabled>
+                        Select…
+                      </option>
+                      {memberships.map((m) => (
+                        <option key={m.patient_id} value={m.patient_id}>
+                          {(patientsById[m.patient_id]?.display_name ?? m.patient_id) +
+                            (safeBool(m.is_controller) ? " (controller)" : "")}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div style={{ height: 18 }} />
+
+                    <div style={sectionTitle}>Or create a new circle</div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <input
+                        value={newCircleName}
+                        onChange={(e) => setNewCircleName(e.target.value)}
+                        placeholder="Circle name (e.g. Aisha’s Care)"
+                        style={input}
+                      />
+                      <button onClick={createCircle} disabled={busy === "create-circle"} style={primaryBtn}>
+                        {busy === "create-circle" ? "Creating…" : "Create circle"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={sectionTitle}>Create your first circle</div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <input
+                        value={newCircleName}
+                        onChange={(e) => setNewCircleName(e.target.value)}
+                        placeholder="Circle name (e.g. Mum’s Care)"
+                        style={input}
+                      />
+                      <button onClick={createCircle} disabled={busy === "create-circle"} style={primaryBtn}>
+                        {busy === "create-circle" ? "Creating…" : "Create circle"}
+                      </button>
+                    </div>
+                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                      You’ll be set as the controller for this circle.
+                    </div>
+                  </>
+                )}
+
+                {!!selectedPatientId && (
+                  <div style={{ marginTop: 18 }}>
+                    <button
+                      onClick={() => {
+                        // advance to vault step
+                        // (currentStep is derived, so just keep patient selected)
+                        if (!uid) return;
+                        refreshVaultShare(selectedPatientId, uid);
+                      }}
+                      style={secondaryBtn}
+                    >
+                      Continue
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {currentStep === "vault" && (
+              <>
+                <h2 style={h2}>Secure vault (end-to-end encryption)</h2>
+                <p style={p}>
+                  CareCircle stores sensitive content as encrypted jsonb ciphertext. This device needs a vault share to decrypt
+                  and create secure content.
+                </p>
+
+                <div style={infoBox}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>What happens here?</div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                    You’ll initialise this device’s E2EE access for the selected circle. After that, journals, DM, sobriety notes,
+                    appointment notes and profile sensitive fields can decrypt locally.
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  <button
+                    onClick={() => router.push(`/patients/${selectedPatientId}/vault-init`)}
+                    style={primaryBtn}
+                    disabled={!selectedPatientId}
+                  >
+                    Initialise vault for this circle
+                  </button>
+
+                  <button
+                    onClick={() => uid && selectedPatientId && refreshVaultShare(selectedPatientId, uid)}
+                    style={secondaryBtn}
+                    disabled={!selectedPatientId}
+                  >
+                    I’ve done it — recheck
+                  </button>
+                </div>
+
+                {hasVaultShare ? (
+                  <div style={{ marginTop: 12, ...okBox }}>
+                    Vault share detected for this circle on this account.
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
+                    No vault share detected yet (or access is blocked by RLS). After vault init, click “recheck”.
+                  </div>
+                )}
+              </>
+            )}
+
+            {currentStep === "permissions" && (
+              <>
+                <h2 style={h2}>Permissions & roles</h2>
+                <p style={p}>
+                  As the controller, you can set role defaults and member overrides. We’ll seed clean defaults, then you can
+                  fine-tune access.
+                </p>
+
+                <div style={infoBox}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>Recommended next step</div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                    Seed defaults (safe + idempotent), then open Permissions.
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  <button onClick={seedDefaults} disabled={busy === "seed"} style={primaryBtn}>
+                    {busy === "seed" ? "Seeding…" : "Seed defaults"}
+                  </button>
+
+                  <button onClick={() => router.push("/account/permissions")} style={secondaryBtn}>
+                    Open permissions
+                  </button>
+
+                  <button onClick={() => router.push("/hub")} style={secondaryBtn}>
+                    Skip for now
+                  </button>
+                </div>
+
+                <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
+                  Tip: Roles are applied first, then per-member overrides.
+                </div>
+              </>
+            )}
+
+            {currentStep === "finish" && (
+              <>
+                <h2 style={h2}>All set</h2>
+                <p style={p}>
+                  You’re ready to use CareCircle. You can manage journals, meds, appointments, direct messages, and secure notes
+                  within each circle.
+                </p>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  <button onClick={() => router.push("/hub")} style={primaryBtn}>
+                    Go to Hub
+                  </button>
+                  <button onClick={() => router.push("/today")} style={secondaryBtn}>
+                    Go to Today
+                  </button>
+                </div>
+
+                {!isController && (
+                  <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
+                    You’re not a controller in this circle, so permissions are managed by the controller.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: 12, opacity: 0.65 }}>
+          Onboarding is guided but reversible — you can always revisit permissions or vault init later.
+        </div>
+      </div>
+    </div>
   );
 }
+
+/* ---------- UI helpers ---------- */
+
+function Header() {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>CareCircle</div>
+      <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.2 }}>Onboarding</div>
+    </div>
+  );
+}
+
+function Step({ label, active, done }: { label: string; active: boolean; done: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 10px",
+        borderRadius: 12,
+        border: active ? "1px solid #222" : "1px solid #eee",
+        background: active ? "#fff" : "#fafafa",
+        marginBottom: 10,
+      }}
+    >
+      <div
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          border: "1px solid #ddd",
+          fontWeight: 900,
+          background: done ? "#e7ffe7" : "#fff",
+        }}
+      >
+        {done ? "✓" : "•"}
+      </div>
+      <div style={{ fontWeight: active ? 800 : 650, opacity: done ? 0.9 : 0.85 }}>{label}</div>
+    </div>
+  );
+}
+
+/* ---------- Styles ---------- */
+
+const page: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #fbfbfb 0%, #f6f6f6 100%)",
+};
+
+const shell: React.CSSProperties = {
+  maxWidth: 1040,
+  margin: "0 auto",
+  padding: 18,
+};
+
+const grid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "320px 1fr",
+  gap: 14,
+};
+
+const card: React.CSSProperties = {
+  border: "1px solid #eaeaea",
+  borderRadius: 16,
+  padding: 16,
+  background: "#fff",
+  boxShadow: "0 6px 24px rgba(0,0,0,0.04)",
+};
+
+const sideCard: React.CSSProperties = {
+  ...card,
+  background: "linear-gradient(180deg, #ffffff 0%, #fbfbfb 100%)",
+};
+
+const h2: React.CSSProperties = {
+  margin: "0 0 8px 0",
+  fontSize: 20,
+  fontWeight: 900,
+  letterSpacing: -0.2,
+};
+
+const p: React.CSSProperties = {
+  margin: "0 0 14px 0",
+  opacity: 0.85,
+  lineHeight: 1.45,
+};
+
+const sectionTitle: React.CSSProperties = {
+  fontSize: 12,
+  opacity: 0.75,
+  fontWeight: 800,
+  marginBottom: 8,
+  textTransform: "uppercase",
+  letterSpacing: 0.8,
+};
+
+const input: React.CSSProperties = {
+  flex: "1 1 260px",
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  outline: "none",
+};
+
+const select: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  outline: "none",
+};
+
+const primaryBtn: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #111",
+  background: "#111",
+  color: "#fff",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  background: "#fff",
+  color: "#111",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const infoBox: React.CSSProperties = {
+  border: "1px solid #eee",
+  borderRadius: 14,
+  padding: 12,
+  background: "#fafafa",
+};
+
+const okBox: React.CSSProperties = {
+  border: "1px solid #cfe9cf",
+  borderRadius: 14,
+  padding: 12,
+  background: "#e7ffe7",
+  fontWeight: 800,
+};
+
+const errorBox: React.CSSProperties = {
+  border: "1px solid #c33",
+  borderRadius: 14,
+  padding: 12,
+  background: "#fff5f5",
+  color: "#900",
+  marginBottom: 12,
+  fontWeight: 700,
+};
