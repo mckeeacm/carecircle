@@ -66,7 +66,8 @@ export default function OnboardingPage() {
 
       const me = auth.user;
       if (!me) {
-        router.push("/login");
+        // Your login page is "/", not "/login"
+        router.push("/");
         return;
       }
 
@@ -132,7 +133,6 @@ export default function OnboardingPage() {
       setHasVaultShare((data ?? []).length > 0);
     } catch {
       // Don’t hard-fail onboarding just because we can’t read shares (RLS configs vary).
-      // We'll treat it as "not yet" and let the user click through vault-init.
       setHasVaultShare(false);
     }
   }
@@ -167,26 +167,25 @@ export default function OnboardingPage() {
         created_by: uid,
         created_at: now,
       });
-
       if (pErr) throw pErr;
 
       // 2) patient_members (make creator the controller)
+      // NOTE: role MUST satisfy patient_members_role_check.
+      // Until you add 'owner' to the constraint, use an allowed role label.
       const { error: mErr } = await supabase.from("patient_members").insert({
         patient_id: pid,
         user_id: uid,
-        role: "patient",
+        role: "family", // change to "owner" AFTER you update the DB constraint
         nickname: null,
         is_controller: true,
         created_at: now,
       });
-
       if (mErr) throw mErr;
 
       // 3) seed defaults (idempotent)
       const { error: seedErr } = await supabase.rpc("permissions_seed_defaults", { pid });
       if (seedErr) throw seedErr;
 
-      // move forward
       setNewCircleName("");
       await refresh();
       setSelectedPatientId(pid);
@@ -204,7 +203,6 @@ export default function OnboardingPage() {
     try {
       const { error } = await supabase.rpc("permissions_seed_defaults", { pid: selectedPatientId });
       if (error) throw error;
-      // nothing else to refresh here; permissions UI lives elsewhere
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_seed_defaults");
     } finally {
@@ -241,8 +239,17 @@ export default function OnboardingPage() {
           <div style={sideCard}>
             <div style={{ fontWeight: 800, marginBottom: 10 }}>Getting started</div>
             <Step label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
-            <Step label="Set up vault access (E2EE)" active={currentStep === "vault"} done={!!selectedPatientId && hasVaultShare} />
-            <Step label="Permissions & roles" active={currentStep === "permissions"} done={!!selectedPatientId && hasVaultShare && !isController ? true : false} />
+            <Step
+              label="Set up vault access (E2EE)"
+              active={currentStep === "vault"}
+              done={!!selectedPatientId && hasVaultShare}
+            />
+            <Step
+              label="Permissions & roles"
+              active={currentStep === "permissions"}
+              // Controller finishes this step by visiting account perms, so “done” is visual only
+              done={!!selectedPatientId && hasVaultShare && !isController ? true : false}
+            />
             <Step label="Finish" active={currentStep === "finish"} done={false} />
 
             {selectedPatientId && (
@@ -270,11 +277,7 @@ export default function OnboardingPage() {
                 {memberships.length > 0 ? (
                   <>
                     <div style={sectionTitle}>Select an existing circle</div>
-                    <select
-                      value={selectedPatientId}
-                      onChange={(e) => setSelectedPatientId(e.target.value)}
-                      style={select}
-                    >
+                    <select value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)} style={select}>
                       <option value="" disabled>
                         Select…
                       </option>
@@ -325,8 +328,6 @@ export default function OnboardingPage() {
                   <div style={{ marginTop: 18 }}>
                     <button
                       onClick={() => {
-                        // advance to vault step
-                        // (currentStep is derived, so just keep patient selected)
                         if (!uid) return;
                         refreshVaultShare(selectedPatientId, uid);
                       }}
@@ -357,7 +358,7 @@ export default function OnboardingPage() {
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                   <button
-                    onClick={() => router.push(`/patients/${selectedPatientId}/vault-init`)}
+                    onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
                     style={primaryBtn}
                     disabled={!selectedPatientId}
                   >
@@ -374,9 +375,7 @@ export default function OnboardingPage() {
                 </div>
 
                 {hasVaultShare ? (
-                  <div style={{ marginTop: 12, ...okBox }}>
-                    Vault share detected for this circle on this account.
-                  </div>
+                  <div style={{ marginTop: 12, ...okBox }}>Vault share detected for this circle on this account.</div>
                 ) : (
                   <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
                     No vault share detected yet (or access is blocked by RLS). After vault init, click “recheck”.
@@ -389,15 +388,12 @@ export default function OnboardingPage() {
               <>
                 <h2 style={h2}>Permissions & roles</h2>
                 <p style={p}>
-                  As the controller, you can set role defaults and member overrides. We’ll seed clean defaults, then you can
-                  fine-tune access.
+                  As the controller, you can set role defaults and member overrides. We’ll seed clean defaults, then you can fine-tune access.
                 </p>
 
                 <div style={infoBox}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>Recommended next step</div>
-                  <div style={{ fontSize: 13, opacity: 0.9 }}>
-                    Seed defaults (safe + idempotent), then open Permissions.
-                  </div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>Seed defaults (safe + idempotent), then open Account to edit permissions.</div>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
@@ -405,18 +401,16 @@ export default function OnboardingPage() {
                     {busy === "seed" ? "Seeding…" : "Seed defaults"}
                   </button>
 
-                  <button onClick={() => router.push("/account/permissions")} style={secondaryBtn}>
-                    Open permissions
+                  <button onClick={() => router.push("/app/account")} style={secondaryBtn}>
+                    Open Account (permissions)
                   </button>
 
-                  <button onClick={() => router.push("/hub")} style={secondaryBtn}>
+                  <button onClick={() => router.push("/app/hub")} style={secondaryBtn}>
                     Skip for now
                   </button>
                 </div>
 
-                <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
-                  Tip: Roles are applied first, then per-member overrides.
-                </div>
+                <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>Tip: Roles are applied first, then per-member overrides.</div>
               </>
             )}
 
@@ -424,15 +418,14 @@ export default function OnboardingPage() {
               <>
                 <h2 style={h2}>All set</h2>
                 <p style={p}>
-                  You’re ready to use CareCircle. You can manage journals, meds, appointments, direct messages, and secure notes
-                  within each circle.
+                  You’re ready to use CareCircle. You can manage journals, meds, appointments, direct messages, and secure notes within each circle.
                 </p>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                  <button onClick={() => router.push("/hub")} style={primaryBtn}>
+                  <button onClick={() => router.push("/app/hub")} style={primaryBtn}>
                     Go to Hub
                   </button>
-                  <button onClick={() => router.push("/today")} style={secondaryBtn}>
+                  <button onClick={() => router.push("/app/today")} style={secondaryBtn}>
                     Go to Today
                   </button>
                 </div>
