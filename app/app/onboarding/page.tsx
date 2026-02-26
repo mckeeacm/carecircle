@@ -174,7 +174,7 @@ export default function OnboardingPage() {
       const { error: mErr } = await supabase.from("patient_members").insert({
         patient_id: pid,
         user_id: uid,
-        role: "controller",
+        role: "patient",
         nickname: null,
         is_controller: true,
         created_at: now,
