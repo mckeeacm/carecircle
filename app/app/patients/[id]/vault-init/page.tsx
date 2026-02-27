@@ -21,7 +21,7 @@ export default function VaultInitButton({ patientId }: Props) {
     try {
       // 1) Must be controller
       const { data: isCtl, error: ctlErr } = await supabase.rpc("is_patient_controller", {
-        patient_id: patientId,
+        pid: patientId,
       });
       if (ctlErr) throw ctlErr;
       if (!isCtl) throw new Error("not_controller");
