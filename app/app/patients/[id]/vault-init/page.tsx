@@ -11,135 +11,145 @@ type PageProps = {
 };
 
 export default function VaultInitPage({ params }: PageProps) {
-  // Route is /patients/[id]/vault-init, and [id] is your circle context id.
-  // We keep DB column names as-is (patient_id) but RPC payload key MUST match SQL param name (pid).
   const pid = useMemo(() => params?.id ?? "", [params?.id]);
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [debug, setDebug] = useState<string[]>([]);
+  const [clicks, setClicks] = useState(0);
 
   function debugLog(line: string) {
     setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   }
 
-  async function initVault() {
-    setBusy(true);
-    setMsg(null);
-    setDebug([]);
-
+  async function initVaultCore() {
     const supabase = supabaseBrowser();
 
-    try {
-      if (!pid) throw new Error("missing_pid_from_route");
-      debugLog(`Starting vault init for pid=${pid}`);
+    if (!pid) throw new Error("missing_pid_from_route");
 
-      // 1) Must be controller (RPC key MUST be "pid" to match SQL param name exactly)
-      debugLog(`RPC is_patient_controller payload: {"pid":"${pid}"}`);
-      const { data: isCtl, error: ctlErr } = await supabase.rpc("is_patient_controller", {
-        pid, // ✅ DO NOT change this key. This must match the SQL function parameter name.
-      });
+    // 1) Must be controller — RPC payload key MUST be "pid"
+    debugLog(`RPC is_patient_controller payload: {"pid":"${pid}"}`);
+    const { data: isCtl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid });
 
-      if (ctlErr) {
-        debugLog(`Controller check error: ${ctlErr.message}`);
-        // Helpful details if available
-        // ts-expect-error Supabase error often has details/hint/code
-        debugLog(`Controller check meta: code=${ctlErr.code ?? "n/a"} details=${ctlErr.details ?? "n/a"} hint=${ctlErr.hint ?? "n/a"}`);
-        throw ctlErr;
-      }
-
-      debugLog(`Controller check result: ${String(isCtl)}`);
-      if (!isCtl) throw new Error("not_controller");
-
-      // 2) Fetch members in this circle
-      debugLog("Fetching patient_members...");
-      const { data: members, error: memErr } = await supabase
-        .from("patient_members")
-        .select("user_id")
-        .eq("patient_id", pid);
-
-      if (memErr) {
-        debugLog(`patient_members error: ${memErr.message}`);
-        throw memErr;
-      }
-
-      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
-      debugLog(`Found members: ${userIds.length}`);
-
-      if (userIds.length === 0) throw new Error("no_members_found");
-
-      // 3) Fetch public keys for members
-      debugLog("Fetching user_public_keys...");
-      const { data: pubKeys, error: pkErr } = await supabase
-        .from("user_public_keys")
-        .select("user_id, public_key, algorithm")
-        .in("user_id", userIds);
-
-      if (pkErr) {
-        debugLog(`user_public_keys error: ${pkErr.message}`);
-        throw pkErr;
-      }
-
-      const pubKeyRows = pubKeys ?? [];
-      debugLog(`Found public keys: ${pubKeyRows.length}`);
-
-      // Ensure everyone has a pubkey
-      const missing = userIds.filter((uid) => !pubKeyRows.some((p: any) => p.user_id === uid));
-      if (missing.length > 0) {
-        debugLog(`Missing public keys for ${missing.length} member(s)`);
-        throw new Error(`missing_public_keys_for_${missing.length}_members`);
-      }
-
-      // 4) Create vault key (32 bytes)
-      debugLog("Generating vault key (32 bytes)...");
-      const sodium = await getSodium();
-      const vaultKey = sodium.randombytes_buf(32);
-
-      // 5) Wrap vault key for each member and write shares
-      // NOTE: This delete+insert is your current behaviour. It’s stable but destructive.
-      // If you later want a safer approach (upsert per member / only if no shares), do it deliberately.
-      debugLog("Deleting existing patient_vault_shares for these users...");
-      const { error: delErr } = await supabase
-        .from("patient_vault_shares")
-        .delete()
-        .eq("patient_id", pid)
-        .in("user_id", userIds);
-
-      if (delErr) {
-        debugLog(`Delete shares error: ${delErr.message}`);
-        throw delErr;
-      }
-
-      debugLog("Wrapping vault key for each member...");
-      const rows = await Promise.all(
-        pubKeyRows.map(async (p: any) => {
-          // public_key stored base64 -> Uint8Array
-          const recipientPk = Uint8Array.from(atob(p.public_key), (c) => c.charCodeAt(0));
-
-          const wrapped = await wrapVaultKeyForRecipient({
-            vaultKey,
-            recipientPublicKey: recipientPk,
-          });
-
-          return {
-            patient_id: pid, // DB column stays patient_id (no drift)
-            user_id: p.user_id,
-            wrapped_key: wrapped, // jsonb envelope (your existing shape)
-          };
-        })
+    if (ctlErr) {
+      debugLog(`Controller check error: ${ctlErr.message}`);
+      // ts-expect-error supabase error may have extra fields
+      debugLog(
+        `Controller meta: code=${ctlErr.code ?? "n/a"} details=${ctlErr.details ?? "n/a"} hint=${ctlErr.hint ?? "n/a"}`
       );
+      throw ctlErr;
+    }
 
-      debugLog(`Inserting ${rows.length} vault share row(s)...`);
-      const { error: insErr } = await supabase.from("patient_vault_shares").insert(rows);
-      if (insErr) {
-        debugLog(`Insert shares error: ${insErr.message}`);
-        throw insErr;
-      }
+    debugLog(`Controller check result: ${String(isCtl)}`);
+    if (!isCtl) throw new Error("not_controller");
 
+    // 2) Fetch members
+    debugLog("Fetching patient_members...");
+    const { data: members, error: memErr } = await supabase
+      .from("patient_members")
+      .select("user_id")
+      .eq("patient_id", pid);
+
+    if (memErr) {
+      debugLog(`patient_members error: ${memErr.message}`);
+      throw memErr;
+    }
+
+    const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+    debugLog(`Found members: ${userIds.length}`);
+    if (userIds.length === 0) throw new Error("no_members_found");
+
+    // 3) Fetch public keys
+    debugLog("Fetching user_public_keys...");
+    const { data: pubKeys, error: pkErr } = await supabase
+      .from("user_public_keys")
+      .select("user_id, public_key, algorithm")
+      .in("user_id", userIds);
+
+    if (pkErr) {
+      debugLog(`user_public_keys error: ${pkErr.message}`);
+      throw pkErr;
+    }
+
+    const pubKeyRows = pubKeys ?? [];
+    debugLog(`Found public keys: ${pubKeyRows.length}`);
+
+    const missing = userIds.filter((uid) => !pubKeyRows.some((p: any) => p.user_id === uid));
+    if (missing.length > 0) throw new Error(`missing_public_keys_for_${missing.length}_members`);
+
+    // 4) Create vault key
+    debugLog("Generating vault key (32 bytes)...");
+    const sodium = await getSodium();
+    const vaultKey = sodium.randombytes_buf(32);
+
+    // 5) Delete existing shares for these users (your current behaviour)
+    debugLog("Deleting existing patient_vault_shares for these users...");
+    const { error: delErr } = await supabase
+      .from("patient_vault_shares")
+      .delete()
+      .eq("patient_id", pid)
+      .in("user_id", userIds);
+
+    if (delErr) {
+      debugLog(`Delete shares error: ${delErr.message}`);
+      throw delErr;
+    }
+
+    debugLog("Wrapping vault key for each member...");
+    const rows = await Promise.all(
+      pubKeyRows.map(async (p: any) => {
+        const recipientPk = Uint8Array.from(atob(p.public_key), (c) => c.charCodeAt(0));
+        const wrapped = await wrapVaultKeyForRecipient({
+          vaultKey,
+          recipientPublicKey: recipientPk,
+        });
+
+        return {
+          patient_id: pid, // DB column stays patient_id
+          user_id: p.user_id,
+          wrapped_key: wrapped, // jsonb
+        };
+      })
+    );
+
+    debugLog(`Inserting ${rows.length} patient_vault_shares row(s)...`);
+    const { error: insErr } = await supabase.from("patient_vault_shares").insert(rows);
+    if (insErr) {
+      debugLog(`Insert shares error: ${insErr.message}`);
+      throw insErr;
+    }
+
+    debugLog("Vault init complete.");
+  }
+
+  async function onInitClick(e: React.MouseEvent<HTMLButtonElement>) {
+    e.preventDefault(); // protects against accidental form submit contexts
+    setClicks((c) => c + 1);
+
+    // These should appear even if everything else fails
+    setMsg(null);
+    setDebug([]);
+    debugLog("CLICKED initialise button");
+    debugLog(`pid from route params.id = "${pid || ""}"`);
+
+    if (busy) {
+      debugLog("Ignored click: already busy");
+      return;
+    }
+
+    // If pid missing, show it clearly (this is the #1 reason “nothing happens”)
+    if (!pid) {
+      setMsg("missing_pid_from_route (route param [id] not detected)");
+      debugLog("Button would be disabled in normal mode because pid is empty.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await initVaultCore();
       setMsg("Vault initialised. Members can now decrypt encrypted content.");
-      debugLog("Vault init complete.");
-    } catch (e: any) {
-      const message = e?.message ?? "failed_to_initialise_vault";
+    } catch (err: any) {
+      const message = err?.message ?? "failed_to_initialise_vault";
       setMsg(message);
       debugLog(`FAILED: ${message}`);
     } finally {
@@ -147,22 +157,35 @@ export default function VaultInitPage({ params }: PageProps) {
     }
   }
 
+  const disabledReason = busy ? "busy" : !pid ? "missing pid" : null;
+
   return (
-    <div style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
+    <div style={{ padding: 16, maxWidth: 760, margin: "0 auto" }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Vault Initialisation</h1>
 
-      <p style={{ marginBottom: 12, opacity: 0.85 }}>
-        Circle ID (pid): <code>{pid}</code>
-      </p>
+      <div style={{ marginBottom: 12, opacity: 0.9 }}>
+        <div>
+          Route pid: <code>{pid || "(empty)"}</code>
+        </div>
+        <div>
+          Clicks registered: <code>{clicks}</code>
+        </div>
+        <div>
+          Button state:{" "}
+          <code>{disabledReason ? `disabled (${disabledReason})` : "enabled"}</code>
+        </div>
+      </div>
 
       <button
-        onClick={initVault}
-        disabled={busy || !pid}
+        type="button"
+        onClick={onInitClick}
+        disabled={!!disabledReason}
         style={{
           padding: "10px 12px",
           border: "1px solid #ccc",
           borderRadius: 10,
-          cursor: busy ? "not-allowed" : "pointer",
+          cursor: disabledReason ? "not-allowed" : "pointer",
+          opacity: disabledReason ? 0.6 : 1,
         }}
       >
         {busy ? "Initialising…" : "Initialise encrypted vault for this circle"}
@@ -174,7 +197,6 @@ export default function VaultInitPage({ params }: PageProps) {
         </p>
       )}
 
-      {/* Visible debug area (kiosk-friendly) */}
       <div
         id="debug"
         style={{
@@ -185,7 +207,7 @@ export default function VaultInitPage({ params }: PageProps) {
           background: "rgba(0,0,0,0.02)",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 12,
-          maxHeight: 280,
+          maxHeight: 320,
           overflow: "auto",
           whiteSpace: "pre-wrap",
         }}
