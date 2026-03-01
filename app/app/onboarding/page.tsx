@@ -358,7 +358,7 @@ export default function OnboardingPage() {
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                   <button
-                    onClick={() => router.push(`/app/app/patients/${selectedPatientId}/vault-init`)}
+                    onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
                     style={primaryBtn}
                     disabled={!selectedPatientId}
                   >
@@ -401,11 +401,11 @@ export default function OnboardingPage() {
                     {busy === "seed" ? "Seeding…" : "Seed defaults"}
                   </button>
 
-                  <button onClick={() => router.push("/app/app/account")} style={secondaryBtn}>
+                  <button onClick={() => router.push("/app/account")} style={secondaryBtn}>
                     Open Account (permissions)
                   </button>
 
-                  <button onClick={() => router.push("/app/app/hub")} style={secondaryBtn}>
+                  <button onClick={() => router.push("/app/hub")} style={secondaryBtn}>
                     Skip for now
                   </button>
                 </div>
@@ -422,10 +422,10 @@ export default function OnboardingPage() {
                 </p>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                  <button onClick={() => router.push("/app/app/hub")} style={primaryBtn}>
+                  <button onClick={() => router.push("/app/hub")} style={primaryBtn}>
                     Go to Hub
                   </button>
-                  <button onClick={() => router.push("/app/app/today")} style={secondaryBtn}>
+                  <button onClick={() => router.push("/app/today")} style={secondaryBtn}>
                     Go to Today
                   </button>
                 </div>
