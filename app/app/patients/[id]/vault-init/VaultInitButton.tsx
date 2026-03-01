@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
 import { wrapVaultKeyForRecipient } from "@/lib/e2ee/vaultShares";
 import { getSodium } from "@/lib/e2ee/sodium";
 
@@ -19,9 +18,16 @@ export default function VaultInitButton({ patientId }: Props) {
     const supabase = supabaseBrowser();
 
     try {
-      // 1) Must be controller
+      // 0) Auth user (needed for the 2-arg RPC)
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+
+      // 1) Must be controller (explicit signature to avoid overload confusion)
       const { data: isCtl, error: ctlErr } = await supabase.rpc("is_patient_controller", {
         patient_id: patientId,
+        user_id: uid,
       });
       if (ctlErr) throw ctlErr;
       if (!isCtl) throw new Error("not_controller");
@@ -32,8 +38,8 @@ export default function VaultInitButton({ patientId }: Props) {
         .select("user_id")
         .eq("patient_id", patientId);
       if (memErr) throw memErr;
-      const userIds = (members ?? []).map((m: any) => m.user_id);
 
+      const userIds = (members ?? []).map((m: any) => m.user_id);
       if (userIds.length === 0) throw new Error("no_members_found");
 
       // 3) Fetch public keys for members
@@ -44,19 +50,14 @@ export default function VaultInitButton({ patientId }: Props) {
       if (pkErr) throw pkErr;
 
       // Ensure everyone has a pubkey
-      const missing = userIds.filter(
-        (uid) => !(pubKeys ?? []).some((p: any) => p.user_id === uid)
-      );
-      if (missing.length > 0) {
-        throw new Error(`missing_public_keys_for_${missing.length}_members`);
-      }
+      const missing = userIds.filter((id) => !(pubKeys ?? []).some((p: any) => p.user_id === id));
+      if (missing.length > 0) throw new Error(`missing_public_keys_for_${missing.length}_members`);
 
-      // 4) Create vault key
+      // 4) Create vault key (32 bytes)
       const sodium = await getSodium();
       const vaultKey = sodium.randombytes_buf(32);
 
-      // 5) Wrap vault key for each member and write shares
-      // First delete existing shares for these users (clean)
+      // 5) Replace shares for these users (clean slate)
       const { error: delErr } = await supabase
         .from("patient_vault_shares")
         .delete()
@@ -66,8 +67,9 @@ export default function VaultInitButton({ patientId }: Props) {
 
       const rows = await Promise.all(
         (pubKeys ?? []).map(async (p: any) => {
-          // public_key is text (we store base64)
+          // public_key stored as base64 raw
           const recipientPk = Uint8Array.from(atob(p.public_key), (c) => c.charCodeAt(0));
+
           const wrapped = await wrapVaultKeyForRecipient({
             vaultKey,
             recipientPublicKey: recipientPk,
@@ -76,7 +78,7 @@ export default function VaultInitButton({ patientId }: Props) {
           return {
             patient_id: patientId,
             user_id: p.user_id,
-            wrapped_key: wrapped, // jsonb
+            wrapped_key: wrapped, // jsonb ciphertext envelope
           };
         })
       );
@@ -94,11 +96,7 @@ export default function VaultInitButton({ patientId }: Props) {
 
   return (
     <div>
-      <button
-        onClick={initVault}
-        disabled={busy}
-        style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
-      >
+      <button onClick={initVault} disabled={busy} style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}>
         {busy ? "Initialising…" : "Initialise encrypted vault for this patient"}
       </button>
       {msg && <p style={{ marginTop: 8 }}>{msg}</p>}
