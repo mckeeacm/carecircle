@@ -1,5 +1,9 @@
 import JournalsClient from "./JournalsClient";
 
-export default function Page({ params }: { params: { id: string } }) {
+type PageProps = {
+  params: { id: string };
+};
+
+export default function Page({ params }: PageProps) {
   return <JournalsClient patientId={params.id} />;
 }

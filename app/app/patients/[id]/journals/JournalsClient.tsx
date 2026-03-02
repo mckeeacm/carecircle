@@ -22,9 +22,9 @@ type JournalRow = {
   mood_encrypted: CipherEnvelopeV1 | null;
 };
 
-export default function JournalsClient() {
+export default function JournalsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const { patientId, vaultKey } = usePatientVault();
+  const { vaultKey } = usePatientVault();
 
   const [rows, setRows] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,7 +91,7 @@ export default function JournalsClient() {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
+  }, [patientId, supabase]);
 
   async function createEntry() {
     if (!vaultKey) return setMsg("no_vault_share");
@@ -142,7 +142,13 @@ export default function JournalsClient() {
 
       {msg && <p style={{ color: "#a00" }}>{msg}</p>}
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+      {!vaultKey ? (
+        <div style={{ border: "1px solid #c3c", padding: 10, borderRadius: 10, marginBottom: 12 }}>
+          Vault key not available on this device. You can’t decrypt or save encrypted content.
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <button
           onClick={() => setViewMode("all")}
           style={{ padding: "6px 10px", borderRadius: 10, opacity: viewMode === "all" ? 1 : 0.6 }}
@@ -154,6 +160,9 @@ export default function JournalsClient() {
           style={{ padding: "6px 10px", borderRadius: 10, opacity: viewMode === "shared" ? 1 : 0.6 }}
         >
           Circle feed
+        </button>
+        <button onClick={refresh} disabled={loading} style={{ padding: "6px 10px", borderRadius: 10 }}>
+          {loading ? "…" : "Refresh"}
         </button>
       </div>
 
@@ -187,6 +196,7 @@ export default function JournalsClient() {
           placeholder="Journal content (encrypted)"
           rows={4}
           style={{ width: "100%", marginTop: 10 }}
+          disabled={!vaultKey}
         />
 
         <button
@@ -272,7 +282,7 @@ function JournalCard({
           {row.shared_to_circle ? " • shared" : " • private"}
           {row.pain_level != null ? ` • pain:${row.pain_level}` : ""}
         </div>
-        <button onClick={toggle} style={{ padding: "6px 10px", borderRadius: 10 }}>
+        <button onClick={toggle} style={{ padding: "6px 10px", borderRadius: 10 }} disabled={!vaultKey}>
           {open ? "Hide" : "Decrypt"}
         </button>
       </div>
