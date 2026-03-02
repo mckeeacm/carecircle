@@ -25,34 +25,24 @@ export default function HubClient() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [circles, setCircles] = useState<CircleRow[]>([]);
-  const [permsByPid, setPermsByPid] = useState<Record<string, PermissionLookup>>({});
+  const [permsByPid, setPermsByPid] = useState<Record<string, PermissionLookup | null>>({});
+  const [rawPermsByPid, setRawPermsByPid] = useState<Record<string, any>>({});
   const [debug, setDebug] = useState<string[]>([]);
 
   function debugLog(line: string) {
     setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   }
 
-  // ---- Permission normalisation (stable, no label assumptions) ----
   function normalisePermissions(data: any): PermissionLookup {
-    // permissions_get might return:
-    // - string[]: ["journals_read", "dm_read", ...]
-    // - object: { journals_read: true, ... }
-    // - object: { permissions: { ... } }
-    // - object: { allowed: ["..."] }
     const lookup: PermissionLookup = {};
-
     if (!data) return lookup;
 
     if (Array.isArray(data)) {
-      // assume string[]
-      for (const k of data) {
-        if (typeof k === "string") lookup[k] = true;
-      }
+      for (const k of data) if (typeof k === "string") lookup[k] = true;
       return lookup;
     }
 
     if (typeof data === "object") {
-      // unwrap common nests
       const maybe =
         (data.permissions && typeof data.permissions === "object" && data.permissions) ||
         (data.allowed && Array.isArray(data.allowed) && data.allowed) ||
@@ -66,7 +56,6 @@ export default function HubClient() {
       if (typeof maybe === "object") {
         for (const [k, v] of Object.entries(maybe)) {
           if (typeof v === "boolean") lookup[k] = v;
-          // sometimes permissions are 0/1
           if (typeof v === "number") lookup[k] = v === 1;
         }
       }
@@ -75,8 +64,7 @@ export default function HubClient() {
     return lookup;
   }
 
-  // Multiple candidate keys per feature to avoid drift between environments.
-  // SAFE DEFAULT: if none match, feature is hidden.
+  // Candidate keys (we’ll tighten once we see real payload)
   const PERM_KEYS = useMemo(
     () => ({
       today: ["today_read", "view_today", "can_view_today", "today:view", "circle_today_read"],
@@ -95,9 +83,7 @@ export default function HubClient() {
   );
 
   function hasAny(lookup: PermissionLookup, keys: string[]) {
-    for (const k of keys) {
-      if (lookup[k] === true) return true;
-    }
+    for (const k of keys) if (lookup[k] === true) return true;
     return false;
   }
 
@@ -110,17 +96,18 @@ export default function HubClient() {
       setDebug([]);
       setCircles([]);
       setPermsByPid({});
+      setRawPermsByPid({});
 
       try {
         const { data: auth, error: authErr } = await supabase.auth.getUser();
         if (authErr) throw authErr;
+
         const uid = auth.user?.id;
         if (!uid) {
           setMsg("not_authenticated");
           return;
         }
 
-        // memberships
         debugLog("Loading patient_members for current user...");
         const { data: memberships, error: memErr } = await supabase
           .from("patient_members")
@@ -139,7 +126,6 @@ export default function HubClient() {
           return;
         }
 
-        // circles
         debugLog("Loading patients display_name...");
         const { data: patients, error: patErr } = await supabase
           .from("patients")
@@ -150,26 +136,34 @@ export default function HubClient() {
 
         const circleRows = (patients ?? []) as CircleRow[];
 
-        // permissions per circle (RPC must use pid key)
         debugLog("Loading permissions per circle (permissions_get)...");
-        const permsPairs = await Promise.all(
-          circleRows.map(async (c) => {
-            const { data, error } = await supabase.rpc("permissions_get", { pid: c.id });
-            if (error) {
-              // Don’t hard fail hub; just hide gated buttons for this circle
-              debugLog(`permissions_get failed pid=${c.id}: ${error.message}`);
-              return [c.id, {} as PermissionLookup] as const;
-            }
-            return [c.id, normalisePermissions(data)] as const;
-          })
-        );
+        const permsMap: Record<string, PermissionLookup | null> = {};
+        const rawMap: Record<string, any> = {};
 
-        const permsMap: Record<string, PermissionLookup> = {};
-        for (const [id, lookup] of permsPairs) permsMap[id] = lookup;
+        for (const c of circleRows) {
+          // RPC payload key MUST be pid
+          const { data, error } = await supabase.rpc("permissions_get", { pid: c.id });
+
+          rawMap[c.id] = data;
+
+          if (error) {
+            // Don’t break hub; mark perms unknown (null) and log
+            permsMap[c.id] = null;
+            debugLog(`permissions_get ERROR pid=${c.id}: ${error.message}`);
+            // ts-expect-error extra fields
+            debugLog(`meta code=${error.code ?? "n/a"} details=${error.details ?? "n/a"} hint=${error.hint ?? "n/a"}`);
+          } else {
+            const norm = normalisePermissions(data);
+            permsMap[c.id] = norm;
+            debugLog(`permissions_get OK pid=${c.id} keys=${Object.keys(norm).length}`);
+            debugLog(`permissions_get RAW pid=${c.id}: ${JSON.stringify(data)}`);
+          }
+        }
 
         if (!mounted) return;
         setCircles(circleRows);
         setPermsByPid(permsMap);
+        setRawPermsByPid(rawMap);
       } catch (e: any) {
         if (!mounted) return;
         setMsg(e?.message ?? "hub_load_failed");
@@ -203,6 +197,12 @@ export default function HubClient() {
     fontSize: 13,
   };
 
+  const disabledBtnStyle: React.CSSProperties = {
+    ...circleBtnStyle,
+    opacity: 0.5,
+    pointerEvents: "none",
+  };
+
   return (
     <div style={{ padding: 16, maxWidth: 900, margin: "0 auto" }}>
       <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Hub</h1>
@@ -211,7 +211,6 @@ export default function HubClient() {
         <Link href="/app/account" style={topBtnStyle}>
           Account
         </Link>
-
         <Link href="/app/onboarding" style={topBtnStyle}>
           Manage circles
         </Link>
@@ -230,13 +229,18 @@ export default function HubClient() {
       {!busy && !msg && circles.length > 0 && (
         <div style={{ display: "grid", gap: 10 }}>
           {circles.map((c) => {
-            const lookup = permsByPid[c.id] ?? {};
+            const lookupOrNull = permsByPid[c.id];
+            const lookup = lookupOrNull ?? {}; // if null -> unknown
 
-            const canToday = hasAny(lookup, PERM_KEYS.today);
-            const canSummary = hasAny(lookup, PERM_KEYS.summary);
-            const canProfile = hasAny(lookup, PERM_KEYS.profile);
-            const canMeds = hasAny(lookup, PERM_KEYS.medicationLogs);
-            const canJournals = hasAny(lookup, PERM_KEYS.journals);
+            const permsKnown = lookupOrNull !== null;
+
+            // If perms unknown, we still SHOW buttons but disable them (safe, visible, debuggable).
+            // If perms known, we enable only if matching keys.
+            const canToday = permsKnown ? hasAny(lookup, PERM_KEYS.today) : true;
+            const canSummary = permsKnown ? hasAny(lookup, PERM_KEYS.summary) : true;
+            const canProfile = permsKnown ? hasAny(lookup, PERM_KEYS.profile) : true;
+            const canMeds = permsKnown ? hasAny(lookup, PERM_KEYS.medicationLogs) : true;
+            const canJournals = permsKnown ? hasAny(lookup, PERM_KEYS.journals) : true;
 
             return (
               <div
@@ -253,36 +257,45 @@ export default function HubClient() {
                   <code>{c.id}</code>
                 </div>
 
+                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                  Perms: <code>{permsKnown ? "loaded" : "unknown (RPC error) — buttons shown but disabled until fixed"}</code>
+                </div>
+
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-                  {canToday && (
-                    <Link href={`/app/patients/${c.id}/today`} style={circleBtnStyle}>
-                      Today
-                    </Link>
-                  )}
+                  <Link
+                    href={`/app/patients/${c.id}/today`}
+                    style={permsKnown ? (canToday ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                  >
+                    Today
+                  </Link>
 
-                  {canSummary && (
-                    <Link href={`/app/patients/${c.id}/summary`} style={circleBtnStyle}>
-                      Summary
-                    </Link>
-                  )}
+                  <Link
+                    href={`/app/patients/${c.id}/summary`}
+                    style={permsKnown ? (canSummary ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                  >
+                    Summary
+                  </Link>
 
-                  {canProfile && (
-                    <Link href={`/app/patients/${c.id}/profile`} style={circleBtnStyle}>
-                      Profile
-                    </Link>
-                  )}
+                  <Link
+                    href={`/app/patients/${c.id}/profile`}
+                    style={permsKnown ? (canProfile ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                  >
+                    Profile
+                  </Link>
 
-                  {canMeds && (
-                    <Link href={`/app/patients/${c.id}/medication-logs`} style={circleBtnStyle}>
-                      Medication logs
-                    </Link>
-                  )}
+                  <Link
+                    href={`/app/patients/${c.id}/medication-logs`}
+                    style={permsKnown ? (canMeds ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                  >
+                    Medication logs
+                  </Link>
 
-                  {canJournals && (
-                    <Link href={`/app/patients/${c.id}/journals`} style={circleBtnStyle}>
-                      Journals
-                    </Link>
-                  )}
+                  <Link
+                    href={`/app/patients/${c.id}/journals`}
+                    style={permsKnown ? (canJournals ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                  >
+                    Journals
+                  </Link>
                 </div>
               </div>
             );
@@ -300,7 +313,7 @@ export default function HubClient() {
           background: "rgba(0,0,0,0.02)",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 12,
-          maxHeight: 220,
+          maxHeight: 260,
           overflow: "auto",
           whiteSpace: "pre-wrap",
         }}
