@@ -15,27 +15,15 @@ export default function VaultInitPage() {
   }, [params]);
 
   return (
-    <div style={{ padding: 16, maxWidth: 760, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
-        Vault Initialisation
+    <div style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>
+        Set up your encrypted vault
       </h1>
 
-      <div
-        style={{
-          padding: 12,
-          borderRadius: 12,
-          border: "1px solid #e5e5e5",
-          background: "rgba(0,0,0,0.02)",
-          marginBottom: 14,
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 12,
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {`Route (current structure): /app/patients/[id]/vault-init
-Detected id param: ${pid || "(empty)"}`}
-      </div>
+      <p style={{ marginTop: 0, opacity: 0.85, marginBottom: 16 }}>
+        This step creates a vault key on your device and shares it securely with circle members using their public keys.
+        Sensitive data remains end-to-end encrypted.
+      </p>
 
       <VaultInitButton pid={pid} disabled={!pid} />
     </div>
