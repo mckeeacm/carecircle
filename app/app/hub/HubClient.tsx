@@ -1,4 +1,3 @@
-// app/app/hub/HubClient.tsx
 "use client";
 
 import Link from "next/link";
@@ -7,7 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type CircleRow = {
   id: string;
-  name?: string | null;
+  display_name: string;
 };
 
 export default function HubClient() {
@@ -35,8 +34,7 @@ export default function HubClient() {
           return;
         }
 
-        // Minimal hub: show circles the user is a member of.
-        // We keep DB column labels as-is: patient_id, user_id.
+        // Memberships: patient_members.patient_id
         const { data: memberships, error: memErr } = await supabase
           .from("patient_members")
           .select("patient_id")
@@ -53,9 +51,10 @@ export default function HubClient() {
           return;
         }
 
+        // Patients: patients.display_name (canonical)
         const { data: patients, error: patErr } = await supabase
           .from("patients")
-          .select("id, name")
+          .select("id, display_name")
           .in("id", patientIds);
 
         if (patErr) throw patErr;
@@ -132,7 +131,7 @@ export default function HubClient() {
                 background: "rgba(0,0,0,0.02)",
               }}
             >
-              <div style={{ fontWeight: 800 }}>{c.name ?? "Care circle"}</div>
+              <div style={{ fontWeight: 800 }}>{c.display_name}</div>
               <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
                 <code>{c.id}</code>
               </div>
