@@ -1,217 +1,225 @@
+// app/app/account/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { BubbleTour } from "@/app/_components/BubbleTour";
-import { accountEncryptionSteps } from "@/lib/tours";
-import { restartAllTours } from "@/lib/tourReset";
 
-type E2EEKeyRow = {
+type MembershipRow = {
+  patient_id: string;
+  role: string;
+};
+
+type CircleRow = {
   id: string;
-  device_label: string | null;
-  created_at: string;
+  display_name: string;
 };
 
 export default function AccountPage() {
-  const supabase = useMemo(() => supabaseBrowser(), []);
-  const router = useRouter();
+  const supabase = supabaseBrowser();
 
-  const [loading, setLoading] = useState(true);
+  const [uid, setUid] = useState<string>("");
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const [email, setEmail] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [eligible, setEligible] = useState<Array<{ circle: CircleRow; role: string }>>([]);
+  const [debug, setDebug] = useState<string[]>([]);
 
-  const [hasPublicKey, setHasPublicKey] = useState(false);
-  const [deviceKeys, setDeviceKeys] = useState<E2EEKeyRow[]>([]);
-  const [vaultShareCount, setVaultShareCount] = useState(0);
-
-  async function load() {
-    setLoading(true);
-    setMsg(null);
-
-    try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
-
-      const user = auth.user;
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-
-      setEmail(user.email ?? null);
-      setUserId(user.id);
-
-      const { data: pk } = await supabase.from("user_public_keys").select("user_id").eq("user_id", user.id).limit(1);
-      setHasPublicKey(!!pk && pk.length > 0);
-
-      const { data: keys } = await supabase
-        .from("user_e2ee_keys")
-        .select("id, device_label, created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      setDeviceKeys((keys ?? []) as E2EEKeyRow[]);
-
-      const { data: shares } = await supabase.from("patient_vault_shares").select("id").eq("user_id", user.id);
-      setVaultShareCount(shares?.length ?? 0);
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_load_account");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function signOut() {
-    await supabase.auth.signOut();
-    router.push("/");
-  }
-
-  function clearLocalDecryptCache() {
-    try {
-      localStorage.removeItem("carecircle_decrypt_cache");
-      setMsg("Local decrypt cache cleared.");
-    } catch {
-      setMsg("Unable to clear local cache.");
-    }
+  function debugLog(line: string) {
+    setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   }
 
   useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      setMsg(null);
+      setDebug([]);
+      setEligible([]);
+
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) throw error;
+
+        const userId = data.user?.id ?? "";
+        if (!userId) throw new Error("not_authenticated");
+
+        if (!mounted) return;
+        setUid(userId);
+
+        // memberships
+        debugLog("Loading patient_members roles for current user...");
+        const { data: mems, error: memErr } = await supabase
+          .from("patient_members")
+          .select("patient_id, role")
+          .eq("user_id", userId);
+
+        if (memErr) throw memErr;
+
+        const rows = (mems ?? []) as MembershipRow[];
+        const eligibleRows = rows.filter((r) =>
+          ["patient", "legal_guardian", "guardian"].includes(String(r.role))
+        );
+
+        const pids = eligibleRows.map((r) => r.patient_id).filter(Boolean);
+        debugLog(`Eligible circles for Permissions: ${pids.length}`);
+
+        if (pids.length === 0) {
+          setEligible([]);
+          return;
+        }
+
+        // circles
+        const { data: circles, error: cErr } = await supabase
+          .from("patients")
+          .select("id, display_name")
+          .in("id", pids);
+
+        if (cErr) throw cErr;
+
+        const circleMap = new Map<string, CircleRow>();
+        for (const c of (circles ?? []) as CircleRow[]) circleMap.set(c.id, c);
+
+        const merged = eligibleRows
+          .map((r) => {
+            const circle = circleMap.get(r.patient_id);
+            if (!circle) return null;
+            return { circle, role: r.role };
+          })
+          .filter(Boolean) as Array<{ circle: CircleRow; role: string }>;
+
+        if (!mounted) return;
+        setEligible(merged);
+      } catch (e: any) {
+        if (!mounted) return;
+        setMsg(e?.message ?? "account_load_failed");
+      }
+    }
+
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [supabase]);
 
-  const encryptionIncomplete = !hasPublicKey || deviceKeys.length === 0;
-
-  if (loading) {
-    return (
-      <div style={page}>
-        <div style={shell}>
-          <div style={card}>Loading account…</div>
-        </div>
-      </div>
-    );
+  async function signOut() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (e: any) {
+      setMsg(e?.message ?? "sign_out_failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
+  const btnStyle: React.CSSProperties = {
+    display: "inline-block",
+    padding: "10px 12px",
+    border: "1px solid #ccc",
+    borderRadius: 8,
+    textDecoration: "none",
+    color: "inherit",
+  };
+
   return (
-    <div style={page}>
-      <div style={shell}>
-        <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>CareCircle</div>
-            <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.2 }}>Account</div>
-          </div>
+    <div style={{ padding: 16, maxWidth: 900, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Account</h1>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button style={secondaryBtn} onClick={() => router.push("/app/hub")}>Back to Hub</button>
-            <button
-              style={secondaryBtn}
-              onClick={() => {
-                restartAllTours();
-                location.reload();
-              }}
-            >
-              Restart tour
-            </button>
-          </div>
+      <div style={{ marginBottom: 12, opacity: 0.9 }}>
+        <div>
+          <strong>User:</strong> <code>{uid || "(loading...)"}</code>
         </div>
+      </div>
 
-        {msg && <div style={infoBox}>{msg}</div>}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <Link href="/app/hub" style={btnStyle}>
+          Go to Hub
+        </Link>
 
-        <div style={card}>
-          <div style={sectionTitle}>Account</div>
-          <Row label="Email" value={email ?? "—"} />
-          <Row label="User ID" value={userId ?? "—"} />
-          <div style={{ marginTop: 12 }}>
-            <button onClick={signOut} style={secondaryBtn}>Sign out</button>
+        <Link href="/app/onboarding" style={btnStyle}>
+          Manage circles
+        </Link>
+
+        <button
+          type="button"
+          onClick={signOut}
+          disabled={busy}
+          style={{ padding: "10px 12px", border: "1px solid #ccc", borderRadius: 8 }}
+        >
+          {busy ? "Signing out…" : "Sign out"}
+        </button>
+      </div>
+
+      {/* ✅ Permissions section (only for patient / legal guardian / guardian) */}
+      <div
+        style={{
+          padding: 14,
+          borderRadius: 12,
+          border: "1px solid #e5e5e5",
+          background: "rgba(0,0,0,0.02)",
+          marginTop: 12,
+        }}
+      >
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Permissions</div>
+
+        {eligible.length === 0 ? (
+          <div style={{ opacity: 0.85 }}>
+            No circles where you are the patient or legal guardian.
           </div>
-        </div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {eligible.map(({ circle, role }) => (
+              <div
+                key={circle.id}
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  border: "1px solid #ddd",
+                  background: "white",
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>{circle.display_name}</div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+                  role: <code>{role}</code> • pid: <code>{circle.id}</code>
+                </div>
 
-        <div style={card}>
-          <div style={sectionTitle}>Encryption status</div>
-
-          <div id="public-key-status" style={{ marginBottom: 10 }}>
-            <Row label="Public key registered" value={hasPublicKey ? "Yes" : "No"} />
-          </div>
-
-          <div id="device-keys-section" style={{ marginBottom: 10 }}>
-            <Row label="Device keys" value={`${deviceKeys.length}`} />
-          </div>
-
-          <div id="vault-share-count" style={{ marginBottom: 10 }}>
-            <Row label="Vault shares" value={`${vaultShareCount}`} />
-          </div>
-
-          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button id="clear-cache-btn" onClick={clearLocalDecryptCache} style={secondaryBtn}>
-              Clear local decrypt cache
-            </button>
-            <button onClick={() => router.push("/hub")} style={secondaryBtn}>
-              Manage circles
-            </button>
-          </div>
-
-          {encryptionIncomplete ? (
-            <div style={{ marginTop: 12, ...warnBox }}>
-              Encryption is not fully configured on this account/device yet. Journals and messages may not decrypt until E2EE is set up.
-            </div>
-          ) : (
-            <div style={{ marginTop: 12, ...okBox }}>
-              Encryption is active on this device.
-            </div>
-          )}
-        </div>
-
-        <div style={card}>
-          <div style={sectionTitle}>Registered devices</div>
-          {deviceKeys.length === 0 ? (
-            <div style={{ opacity: 0.75 }}>No device keys found.</div>
-          ) : (
-            deviceKeys.map((k) => (
-              <div key={k.id} style={deviceCard}>
-                <div style={{ fontWeight: 900 }}>{k.device_label ?? "Unnamed device"}</div>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>Created {new Date(k.created_at).toLocaleString()}</div>
+                <div style={{ marginTop: 10 }}>
+                  <Link href={`/app/patients/${circle.id}/permissions`} style={btnStyle}>
+                    Open permissions
+                  </Link>
+                </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-        <BubbleTour
-          tourId="account-encryption-v1"
-          steps={accountEncryptionSteps}
-          autoStart={true}
-          forceOpen={encryptionIncomplete}
-          // when encryption is incomplete, forceOpen bypasses "done"
-          // once fixed, it behaves like a normal tour
-        />
+      {msg && (
+        <p style={{ marginTop: 12, padding: 10, borderRadius: 10, border: "1px solid #ddd" }}>
+          {msg}
+        </p>
+      )}
+
+      <div
+        id="debug"
+        style={{
+          marginTop: 16,
+          padding: 12,
+          border: "1px solid #e5e5e5",
+          borderRadius: 12,
+          background: "rgba(0,0,0,0.02)",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontSize: 12,
+          maxHeight: 220,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {debug.length ? debug.join("\n") : "Debug log will appear here."}
       </div>
     </div>
   );
 }
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 12, opacity: 0.7 }}>{label}</div>
-      <div style={{ fontWeight: 900 }}>{value}</div>
-    </div>
-  );
-}
-
-/* styles */
-const page: React.CSSProperties = { minHeight: "100vh", background: "linear-gradient(180deg, #fbfbfb 0%, #f6f6f6 100%)" };
-const shell: React.CSSProperties = { maxWidth: 900, margin: "0 auto", padding: 18 };
-
-const card: React.CSSProperties = { border: "1px solid #eaeaea", borderRadius: 16, padding: 16, background: "#fff", boxShadow: "0 6px 24px rgba(0,0,0,0.04)", marginBottom: 14 };
-const sectionTitle: React.CSSProperties = { fontSize: 12, opacity: 0.75, fontWeight: 900, marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.8 };
-
-const secondaryBtn: React.CSSProperties = { padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", fontWeight: 900, cursor: "pointer" };
-
-const deviceCard: React.CSSProperties = { border: "1px solid #eee", borderRadius: 12, padding: 10, marginBottom: 8 };
-
-const infoBox: React.CSSProperties = { border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12, background: "#fafafa", fontWeight: 800 };
-
-const warnBox: React.CSSProperties = { border: "1px solid #f3d6a0", borderRadius: 12, padding: 12, background: "#fff8e7", fontWeight: 900 };
-const okBox: React.CSSProperties = { border: "1px solid #cfe9cf", borderRadius: 12, padding: 12, background: "#e7ffe7", fontWeight: 900 };
