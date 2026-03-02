@@ -5,18 +5,14 @@ import { useParams } from "next/navigation";
 import VaultInitButton from "./VaultInitButton";
 
 export default function VaultInitPage() {
-  // ✅ Reliable in Client Components, works with your current /app/... route segment
   const params = useParams();
 
-  // Next returns params values as string | string[] | undefined
   const pid = useMemo(() => {
     const raw = (params as any)?.id;
     if (!raw) return "";
     if (Array.isArray(raw)) return raw[0] ?? "";
     return String(raw);
   }, [params]);
-
-  const disabledReason = !pid ? "missing pid (route param [id])" : null;
 
   return (
     <div style={{ padding: 16, maxWidth: 760, margin: "0 auto" }}>
@@ -38,11 +34,10 @@ export default function VaultInitPage() {
         }}
       >
         {`Route (current structure): /app/patients/[id]/vault-init
-Detected id param: ${pid || "(empty)"}
-Status: ${disabledReason ? `disabled — ${disabledReason}` : "ready"}`}
+Detected id param: ${pid || "(empty)"}`}
       </div>
 
-      <VaultInitButton patientId={pid} disabled={!pid} />
+      <VaultInitButton pid={pid} disabled={!pid} />
     </div>
   );
 }
