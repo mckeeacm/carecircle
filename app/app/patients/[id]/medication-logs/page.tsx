@@ -1,5 +1,5 @@
 import MedicationLogsClient from "./MedicationLogsClient";
 
-export default function MedicationLogsPage({ params }: { params: { patientId: string } }) {
-  return <MedicationLogsClient patientId={params.patientId} />;
+export default function Page({ params }: { params: { id: string } }) {
+  return <MedicationLogsClient patientId={params.id} />;
 }
