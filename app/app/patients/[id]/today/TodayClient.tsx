@@ -1,12 +1,14 @@
+// app/app/patients/[id]/today/TodayClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
-import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
-import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 
-type JournalRow = {
+type PatientRow = { id: string; display_name: string };
+
+type JournalPreview = {
   id: string;
   created_at: string;
   journal_type: string;
@@ -15,8 +17,9 @@ type JournalRow = {
 
 type AppointmentRow = {
   id: string;
-  starts_at: string;
+  starts_at: string | null;
   title: string | null;
+  location: string | null;
 };
 
 type MedicationRow = {
@@ -25,16 +28,22 @@ type MedicationRow = {
   dosage: string;
   schedule_text: string;
   active: boolean;
-  created_at: string;
 };
 
 type MedicationLogRow = {
   id: string;
-  medication_id: string;
-  status: string;
   created_at: string;
-  note_encrypted: CipherEnvelopeV1 | null;
+  status: string | null;
+  medication_id: string;
 };
+
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function ts() {
+  return new Date().toISOString();
+}
 
 export default function TodayClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -42,82 +51,48 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
   const [msg, setMsg] = useState<string | null>(null);
   const [debug, setDebug] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [patient, setPatient] = useState<PatientRow | null>(null);
 
-  const [journals, setJournals] = useState<JournalRow[]>([]);
-  const [appts, setAppts] = useState<AppointmentRow[]>([]);
+  const [journals, setJournals] = useState<JournalPreview[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
-  const [medById, setMedById] = useState<Record<string, MedicationRow>>({});
-  const [notePlainByLogId, setNotePlainByLogId] = useState<Record<string, string>>({});
+  const [dmStatus, setDmStatus] = useState<"ok" | "unavailable" | "loading">("loading");
 
-  function debugLog(line: string) {
-    setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
-  }
-
-  async function decryptMedLogNote(l: MedicationLogRow) {
-    if (!vaultKey) return;
-    if (!l.note_encrypted) return;
-    if (notePlainByLogId[l.id] != null) return;
-
-    const plain = await decryptStringWithLocalCache({
-      patientId,
-      table: "medication_logs",
-      rowId: l.id,
-      column: "note_encrypted",
-      env: l.note_encrypted,
-      vaultKey,
-    });
-
-    setNotePlainByLogId((prev) => ({ ...prev, [l.id]: plain }));
+  function log(line: string) {
+    setDebug((p) => [...p, `[${ts()}] ${line}`].slice(-200));
   }
 
   useEffect(() => {
-    let mounted = true;
-
-    async function load() {
-      setLoading(true);
+    (async () => {
       setMsg(null);
       setDebug([]);
+      setPatient(null);
       setJournals([]);
-      setAppts([]);
+      setAppointments([]);
       setMeds([]);
       setMedLogs([]);
-      setMedById({});
-      setNotePlainByLogId({});
+      setDmStatus("loading");
+
+      if (!patientId || !isUuid(patientId)) {
+        setMsg(`invalid patientId: ${String(patientId)}`);
+        log(`ERROR invalid patientId: ${String(patientId)}`);
+        return;
+      }
 
       try {
-        // Auth + membership check (label-stable)
-        const { data: auth, error: authErr } = await supabase.auth.getUser();
-        if (authErr) throw authErr;
-        const uid = auth.user?.id;
-        if (!uid) throw new Error("not_authenticated");
+        log(`Loading patient display_name…`);
+        const { data: p, error: pErr } = await supabase
+          .from("patients")
+          .select("id, display_name")
+          .eq("id", patientId)
+          .single();
 
-        const { data: pm, error: pmErr } = await supabase
-          .from("patient_members")
-          .select("role, is_controller")
-          .eq("patient_id", patientId)
-          .eq("user_id", uid)
-          .maybeSingle();
+        if (pErr) throw pErr;
+        setPatient(p as PatientRow);
 
-        if (pmErr) throw pmErr;
-        if (!pm) throw new Error("not_a_circle_member");
-
-        debugLog(`Membership ok role=${pm.role ?? "null"} controller=${String(pm.is_controller)}`);
-
-        // DMs (best-effort; will work after RLS recursion fix)
-        debugLog("Loading dm_threads for this circle...");
-        const { error: dmErr } = await supabase
-          .from("dm_threads")
-          .select("id")
-          .eq("patient_id", patientId)
-          .limit(1);
-
-        if (dmErr) debugLog(`dm_threads error: ${dmErr.message}`);
-        else debugLog("dm_threads ok");
-
-        // Journals
-        debugLog("Loading newest journal_entries...");
+        // Journals (newest)
+        log(`Loading newest journal_entries…`);
         const { data: j, error: jErr } = await supabase
           .from("journal_entries")
           .select("id, created_at, journal_type, shared_to_circle")
@@ -126,204 +101,253 @@ export default function TodayClient({ patientId }: { patientId: string }) {
           .limit(5);
 
         if (jErr) throw jErr;
-        if (!mounted) return;
-        setJournals((j ?? []) as any);
-        debugLog(`journal_entries loaded: ${(j ?? []).length}`);
+        setJournals((j ?? []) as JournalPreview[]);
+        log(`journal_entries loaded: ${(j ?? []).length}`);
 
-        // Appointments next 24h (only if your table actually exists with starts_at/title)
-        const start = new Date();
-        const end = new Date(Date.now() + 24 * 60 * 60 * 1000);
-        debugLog(`Loading appointments in next 24h window: ${start.toISOString()} -> ${end.toISOString()}`);
+        // Appointments (next 24h) — tolerate table missing by catching and showing empty
+        const now = new Date();
+        const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        log(`Loading appointments next 24h: ${now.toISOString()} -> ${until.toISOString()}`);
 
-        const { data: a, error: aErr } = await supabase
-          .from("appointments")
-          .select("id, starts_at, title")
-          .eq("patient_id", patientId)
-          .gte("starts_at", start.toISOString())
-          .lte("starts_at", end.toISOString())
-          .order("starts_at", { ascending: true })
-          .limit(10);
+        try {
+          const { data: a, error: aErr } = await supabase
+            .from("appointments")
+            .select("id, starts_at, title, location")
+            .eq("patient_id", patientId)
+            .gte("starts_at", now.toISOString())
+            .lte("starts_at", until.toISOString())
+            .order("starts_at", { ascending: true })
+            .limit(10);
 
-        if (aErr) {
-          debugLog(`appointments error: ${aErr.message}`);
-        } else {
-          if (!mounted) return;
-          setAppts((a ?? []) as any);
-          debugLog(`appointments loaded: ${(a ?? []).length}`);
+          if (aErr) throw aErr;
+          setAppointments((a ?? []) as AppointmentRow[]);
+          log(`appointments loaded: ${(a ?? []).length}`);
+        } catch (e: any) {
+          log(`appointments unavailable: ${e?.message ?? String(e)}`);
+          setAppointments([]);
         }
 
-        // Medications (confirmed schema)
-        debugLog("Loading active medications...");
+        // Medications (active)
+        log(`Loading active medications…`);
         const { data: m, error: mErr } = await supabase
           .from("medications")
-          .select("id, name, dosage, schedule_text, active, created_at")
+          .select("id, name, dosage, schedule_text, active")
           .eq("patient_id", patientId)
           .eq("active", true)
           .order("created_at", { ascending: false })
-          .limit(25);
+          .limit(10);
 
-        if (mErr) {
-          debugLog(`medications error: ${mErr.message}`);
-        } else {
-          const list = (m ?? []) as any as MedicationRow[];
-          const map: Record<string, MedicationRow> = {};
-          for (const row of list) map[row.id] = row;
-          if (!mounted) return;
-          setMeds(list);
-          setMedById(map);
-          debugLog(`medications loaded: ${list.length}`);
-        }
+        if (mErr) throw mErr;
+        setMeds((m ?? []) as MedicationRow[]);
+        log(`medications loaded: ${(m ?? []).length}`);
 
-        // Medication logs (confirmed schema)
-        debugLog("Loading recent medication_logs...");
+        // Medication logs
+        log(`Loading recent medication_logs…`);
         const { data: ml, error: mlErr } = await supabase
           .from("medication_logs")
-          .select("id, medication_id, status, created_at, note_encrypted")
+          .select("id, created_at, status, medication_id")
           .eq("patient_id", patientId)
           .order("created_at", { ascending: false })
           .limit(10);
 
-        if (mlErr) {
-          debugLog(`medication_logs error: ${mlErr.message}`);
-        } else {
-          const list = (ml ?? []) as any as MedicationLogRow[];
-          if (!mounted) return;
-          setMedLogs(list);
-          debugLog(`medication_logs loaded: ${list.length}`);
+        if (mlErr) throw mlErr;
+        setMedLogs((ml ?? []) as MedicationLogRow[]);
+        log(`medication_logs loaded: ${(ml ?? []).length}`);
+
+        // DM threads: don’t crash Today if DM policies are currently broken
+        log(`Loading dm_threads (best-effort)…`);
+        try {
+          const { error: dmErr } = await supabase
+            .from("dm_threads")
+            .select("id")
+            .eq("patient_id", patientId)
+            .limit(1);
+
+          if (dmErr) throw dmErr;
+          setDmStatus("ok");
+          log(`dm_threads ok`);
+        } catch (e: any) {
+          setDmStatus("unavailable");
+          log(`dm_threads unavailable: ${e?.message ?? String(e)}`);
         }
 
-        debugLog("Today load complete.");
+        log(`Today load complete.`);
       } catch (e: any) {
-        if (!mounted) return;
-        setMsg(e?.message ?? "today_load_failed");
-      } finally {
-        if (mounted) setLoading(false);
+        setMsg(e?.message ?? "failed_to_load_today");
+        log(`FAILED: ${e?.message ?? String(e)}`);
       }
-    }
-
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, [supabase, patientId]);
+    })();
+  }, [patientId, supabase]);
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Today</h2>
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Today</h1>
+            <div className="cc-subtle">{patient?.display_name ?? patientId}</div>
+          </div>
 
-      {msg && <div style={{ border: "1px solid #c33", padding: 10, borderRadius: 10, marginBottom: 12 }}>{msg}</div>}
-      {loading ? <div style={{ opacity: 0.7, marginBottom: 12 }}>Loading…</div> : null}
+          <div className="cc-row">
+            <Link className="cc-btn" href="/app/hub">
+              Back to Hub
+            </Link>
+          </div>
+        </div>
 
-      <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <b>Newest journals</b>
-        {journals.length === 0 ? (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>None yet.</div>
-        ) : (
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            {journals.map((j) => (
-              <div key={j.id} style={{ border: "1px solid #f3f3f3", borderRadius: 10, padding: 10 }}>
-                <div style={{ fontSize: 13 }}>
-                  <b>{j.journal_type}</b> • {new Date(j.created_at).toLocaleString()} •{" "}
-                  {j.shared_to_circle ? "shared" : "private"}
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
+          </div>
+        ) : null}
+
+        {!vaultKey ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-subtle">
+              You can still browse metadata, but encrypted content won’t decrypt until you have a vault share on this device.
+            </div>
+          </div>
+        ) : null}
+
+        <div className="cc-grid-3">
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Newest journals</h2>
+              <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/journals`}>
+                Open
+              </Link>
+            </div>
+            <div className="cc-spacer-12" />
+            {journals.length === 0 ? (
+              <div className="cc-small">None yet.</div>
+            ) : (
+              <div className="cc-stack">
+                {journals.map((j) => (
+                  <div key={j.id} className="cc-panel-soft">
+                    <div className="cc-row-between">
+                      <div>
+                        <div className="cc-strong">{j.journal_type}</div>
+                        <div className="cc-small">{new Date(j.created_at).toLocaleString()}</div>
+                      </div>
+                      <span className={`cc-pill ${j.shared_to_circle ? "cc-pill-primary" : ""}`}>
+                        {j.shared_to_circle ? "shared" : "private"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Next 24h appointments</h2>
+              <Link className="cc-btn" href={`/app/patients/${patientId}/appointments`}>
+                View
+              </Link>
+            </div>
+            <div className="cc-spacer-12" />
+            {appointments.length === 0 ? (
+              <div className="cc-small">None in the next 24 hours.</div>
+            ) : (
+              <div className="cc-stack">
+                {appointments.map((a) => (
+                  <div key={a.id} className="cc-panel-soft">
+                    <div className="cc-strong">{a.title ?? "Appointment"}</div>
+                    <div className="cc-small">
+                      {(a.starts_at ? new Date(a.starts_at).toLocaleString() : "—") + (a.location ? ` • ${a.location}` : "")}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Messages</h2>
+              <Link className="cc-btn" href={`/app/patients/${patientId}/dm`}>
+                Open
+              </Link>
+            </div>
+            <div className="cc-spacer-12" />
+            {dmStatus === "loading" ? (
+              <div className="cc-small">Checking…</div>
+            ) : dmStatus === "unavailable" ? (
+              <div className="cc-panel">
+                <div className="cc-strong">DM temporarily unavailable</div>
+                <div className="cc-small">
+                  Your current RLS on <code>dm_thread_members</code> is recursing. Fixing that is a DB policy task; Today won’t crash.
                 </div>
               </div>
-            ))}
+            ) : (
+              <div className="cc-small">DM ok.</div>
+            )}
           </div>
-        )}
-      </section>
+        </div>
 
-      <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <b>Next 24h appointments</b>
-        {appts.length === 0 ? (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>None in the next 24 hours.</div>
-        ) : (
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            {appts.map((a) => (
-              <div key={a.id} style={{ border: "1px solid #f3f3f3", borderRadius: 10, padding: 10 }}>
-                <div style={{ fontSize: 13 }}>
-                  <b>{a.title ?? "Appointment"}</b> • {new Date(a.starts_at).toLocaleString()}
-                </div>
+        <div className="cc-grid-2-125">
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Active medications</h2>
+              <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${patientId}/medication-logs`}>
+                Logs
+              </Link>
+            </div>
+            <div className="cc-spacer-12" />
+            {meds.length === 0 ? (
+              <div className="cc-small">No active medications.</div>
+            ) : (
+              <div className="cc-stack">
+                {meds.map((m) => (
+                  <div key={m.id} className="cc-panel-soft">
+                    <div className="cc-strong">
+                      {m.name} {m.dosage ? <span className="cc-subtle">({m.dosage})</span> : null}
+                    </div>
+                    <div className="cc-small">{m.schedule_text || "—"}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </section>
 
-      <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <b>Active medications</b>
-        {meds.length === 0 ? (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>No active medications.</div>
-        ) : (
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            {meds.map((m) => (
-              <div key={m.id} style={{ border: "1px solid #f3f3f3", borderRadius: 10, padding: 10 }}>
-                <div style={{ fontSize: 13 }}>
-                  <b>{m.name}</b>
-                  {m.dosage ? ` (${m.dosage})` : ""}
-                </div>
-                {m.schedule_text ? (
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{m.schedule_text}</div>
-                ) : null}
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Recent medication logs</h2>
+              <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
+                Open
+              </Link>
+            </div>
+            <div className="cc-spacer-12" />
+            {medLogs.length === 0 ? (
+              <div className="cc-small">No logs yet.</div>
+            ) : (
+              <div className="cc-stack">
+                {medLogs.map((l) => (
+                  <div key={l.id} className="cc-panel-soft">
+                    <div className="cc-row-between">
+                      <div className="cc-strong">{l.status ?? "—"}</div>
+                      <div className="cc-small">{new Date(l.created_at).toLocaleString()}</div>
+                    </div>
+                    <div className="cc-small cc-wrap">medication_id: {l.medication_id}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </section>
+        </div>
 
-      <section style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <b>Recent medication logs</b>
-        {medLogs.length === 0 ? (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>No logs yet.</div>
-        ) : (
-          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-            {medLogs.map((l) => {
-              const med = medById[l.medication_id];
-              const plain = notePlainByLogId[l.id];
-              return (
-                <div key={l.id} style={{ border: "1px solid #f3f3f3", borderRadius: 10, padding: 10 }}>
-                  <div style={{ fontSize: 13 }}>
-                    <b>{l.status ?? "—"}</b> • {new Date(l.created_at).toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                    {med ? `${med.name}${med.dosage ? ` (${med.dosage})` : ""}` : `med:${l.medication_id}`}
-                  </div>
-
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      onClick={() => decryptMedLogNote(l)}
-                      disabled={!vaultKey || !!plain || !l.note_encrypted}
-                      style={{ padding: "6px 10px", borderRadius: 10 }}
-                    >
-                      {plain ? "Decrypted" : l.note_encrypted ? "Decrypt note" : "No note"}
-                    </button>
-                  </div>
-
-                  {plain ? (
-                    <div style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>{plain || "—"}</div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <div
-        id="debug"
-        style={{
-          marginTop: 16,
-          padding: 12,
-          border: "1px solid #e5e5e5",
-          borderRadius: 12,
-          background: "rgba(0,0,0,0.02)",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 12,
-          maxHeight: 260,
-          overflow: "auto",
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {debug.length ? debug.join("\n") : "Debug log will appear here."}
+        <div className="cc-card cc-card-pad">
+          <div className="cc-strong">Debug</div>
+          <div className="cc-small cc-subtle">Log will appear here.</div>
+          <div className="cc-spacer-12" />
+          <pre className="cc-panel-soft cc-wrap" style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {debug.join("\n")}
+          </pre>
+        </div>
       </div>
     </div>
   );

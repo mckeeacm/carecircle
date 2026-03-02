@@ -1,9 +1,11 @@
+// app/app/patients/[id]/journals/page.tsx
 import JournalsClient from "./JournalsClient";
 
-type PageProps = {
-  params: { id: string };
-};
-
-export default function Page({ params }: PageProps) {
-  return <JournalsClient patientId={params.id} />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }> | { id: string };
+}) {
+  const resolved = await Promise.resolve(params);
+  return <JournalsClient patientId={resolved.id} />;
 }

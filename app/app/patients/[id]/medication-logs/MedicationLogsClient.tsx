@@ -1,6 +1,8 @@
+// app/app/patients/[id]/medication-logs/MedicationLogsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
@@ -25,6 +27,10 @@ type MedicationLogRow = {
   created_at: string;
 };
 
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 export default function MedicationLogsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -37,7 +43,6 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // form
   const [medicationId, setMedicationId] = useState<string>("");
   const [status, setStatus] = useState<string>("taken");
   const [note, setNote] = useState<string>("");
@@ -45,7 +50,10 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   async function refresh() {
     setLoading(true);
     setMsg(null);
+
     try {
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
       const { data: m, error: mErr } = await supabase
         .from("medications")
         .select("id, name, dosage, schedule_text, active")
@@ -82,10 +90,13 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   async function createLog() {
     if (!vaultKey) return setMsg("no_vault_share");
     if (!medicationId) return setMsg("select_medication");
+
     setSaving(true);
     setMsg(null);
 
     try {
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
       const noteEnv = await vaultEncryptString({
         vaultKey,
         plaintext: note,
@@ -128,100 +139,124 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Medication logs</h2>
-
-      {msg && <div style={{ border: "1px solid #c33", padding: 10, borderRadius: 10, marginBottom: 12 }}>{msg}</div>}
-
-      {!vaultKey && (
-        <div style={{ border: "1px solid #f0c", padding: 10, borderRadius: 10, marginBottom: 12 }}>
-          Vault key not available on this device. You can’t decrypt or save encrypted notes.
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Medication logs</h1>
+            <div className="cc-subtle cc-wrap">{patientId}</div>
+          </div>
+          <div className="cc-row">
+            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+              Today
+            </Link>
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
+          </div>
         </div>
-      )}
 
-      <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-            Medication
-            <select value={medicationId} onChange={(e) => setMedicationId(e.target.value)} style={{ padding: 6 }}>
-              <option value="" disabled>
-                Select…
-              </option>
-              {meds.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                  {m.dosage ? ` (${m.dosage})` : ""}
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
+          </div>
+        ) : null}
+
+        {!vaultKey ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-subtle">You can’t decrypt or save encrypted notes.</div>
+          </div>
+        ) : null}
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <h2 className="cc-h2">New log</h2>
+
+          <div className="cc-row">
+            <div className="cc-field" style={{ minWidth: 280 }}>
+              <div className="cc-label">Medication</div>
+              <select className="cc-select" value={medicationId} onChange={(e) => setMedicationId(e.target.value)}>
+                <option value="" disabled>
+                  Select…
                 </option>
-              ))}
-            </select>
-          </label>
+                {meds.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {m.dosage ? ` (${m.dosage})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-            Status
-            <input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="taken / missed / skipped" />
-          </label>
+            <div className="cc-field" style={{ minWidth: 220 }}>
+              <div className="cc-label">Status</div>
+              <input className="cc-input" value={status} onChange={(e) => setStatus(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="cc-field">
+            <div className="cc-label">Note (E2EE)</div>
+            <textarea
+              className="cc-textarea"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Encrypted note…"
+              disabled={!vaultKey}
+            />
+          </div>
+
+          <div className="cc-row">
+            <button className="cc-btn cc-btn-primary" onClick={createLog} disabled={!vaultKey || saving || !medicationId}>
+              {saving ? "Saving…" : "Save log"}
+            </button>
+          </div>
         </div>
 
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Note (E2EE)</div>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            style={{ width: "100%" }}
-            placeholder="Encrypted note…"
-            disabled={!vaultKey}
-          />
-        </div>
+        <div className="cc-card cc-card-pad">
+          <div className="cc-row-between">
+            <h2 className="cc-h2">Recent logs</h2>
+            <button className="cc-btn" onClick={refresh} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
 
-        <button
-          onClick={createLog}
-          disabled={!vaultKey || saving || !medicationId}
-          style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10 }}
-        >
-          {saving ? "Saving…" : "Save log"}
-        </button>
-      </div>
+          <div className="cc-spacer-12" />
 
-      <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-          <b>Recent logs</b>
-          <button onClick={refresh} disabled={loading} style={{ padding: "6px 10px", borderRadius: 10 }}>
-            {loading ? "…" : "Refresh"}
-          </button>
-        </div>
-
-        <div style={{ marginTop: 10 }}>
           {logs.length === 0 ? (
-            <div style={{ fontSize: 12, opacity: 0.7 }}>No logs yet.</div>
+            <div className="cc-small">No logs yet.</div>
           ) : (
-            logs.map((l) => {
-              const plain = notePlainById[l.id];
-              return (
-                <div
-                  key={l.id}
-                  style={{ border: "1px solid #f3f3f3", borderRadius: 12, padding: 10, marginBottom: 10 }}
-                >
-                  <div style={{ fontSize: 13, opacity: 0.9 }}>
-                    <b>{l.status ?? "—"}</b> • {new Date(l.created_at).toLocaleString()} • med:{l.medication_id}
-                  </div>
+            <div className="cc-stack">
+              {logs.map((l) => {
+                const plain = notePlainById[l.id];
+                return (
+                  <div key={l.id} className="cc-panel-soft">
+                    <div className="cc-row-between">
+                      <div className="cc-wrap">
+                        <div className="cc-strong">{l.status ?? "—"}</div>
+                        <div className="cc-small">{new Date(l.created_at).toLocaleString()}</div>
+                        <div className="cc-small cc-wrap">medication_id: {l.medication_id}</div>
+                      </div>
 
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      onClick={() => decryptLog(l)}
-                      disabled={!vaultKey || !!plain || !l.note_encrypted}
-                      style={{ padding: "6px 10px", borderRadius: 10 }}
-                    >
-                      {plain ? "Decrypted" : l.note_encrypted ? "Decrypt note" : "No note"}
-                    </button>
-                  </div>
+                      <button
+                        className="cc-btn"
+                        onClick={() => decryptLog(l)}
+                        disabled={!vaultKey || !!plain || !l.note_encrypted}
+                      >
+                        {plain ? "Decrypted" : l.note_encrypted ? "Decrypt note" : "No note"}
+                      </button>
+                    </div>
 
-                  {plain ? (
-                    <div style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>{plain || "—"}</div>
-                  ) : null}
-                </div>
-              );
-            })
+                    {plain ? (
+                      <div className="cc-spacer-12">
+                        <div className="cc-panel">{plain || "—"}</div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

@@ -1,5 +1,11 @@
+// app/app/patients/[id]/today/page.tsx
 import TodayClient from "./TodayClient";
 
-export default function Page({ params }: { params: { id: string } }) {
-  return <TodayClient patientId={params.id} />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }> | { id: string };
+}) {
+  const resolved = await Promise.resolve(params);
+  return <TodayClient patientId={resolved.id} />;
 }

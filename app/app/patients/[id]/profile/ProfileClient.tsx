@@ -1,92 +1,121 @@
+// app/app/patients/[id]/profile/ProfileClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 
-type ProfileRow = {
+type PatientRow = { id: string; display_name: string };
+
+type PatientProfileRow = {
   patient_id: string;
+  created_at: string;
+  updated_at: string;
+
   communication_notes_encrypted: CipherEnvelopeV1 | null;
   allergies_encrypted: CipherEnvelopeV1 | null;
   safety_notes_encrypted: CipherEnvelopeV1 | null;
-  created_at: string;
-  updated_at: string;
 };
+
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
 
 export default function ProfileClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
 
-  const [row, setRow] = useState<ProfileRow | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // plaintext form values (local only)
+  const [patient, setPatient] = useState<PatientRow | null>(null);
+  const [profile, setProfile] = useState<PatientProfileRow | null>(null);
+
+  // plaintext fields (what user edits)
   const [communicationNotes, setCommunicationNotes] = useState("");
   const [allergies, setAllergies] = useState("");
   const [safetyNotes, setSafetyNotes] = useState("");
 
-  async function refresh() {
+  async function load() {
     setLoading(true);
     setMsg(null);
+
     try {
-      const { data, error } = await supabase
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
+      // patient label
+      const { data: p, error: pErr } = await supabase
+        .from("patients")
+        .select("id, display_name")
+        .eq("id", patientId)
+        .single();
+      if (pErr) throw pErr;
+      setPatient(p as PatientRow);
+
+      // profile row (may not exist yet)
+      const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, created_at, updated_at"
+          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
 
-      if (error) throw error;
+      if (prErr) throw prErr;
 
-      const r = (data ?? null) as ProfileRow | null;
-      setRow(r);
+      const row = (pr ?? null) as PatientProfileRow | null;
+      setProfile(row);
 
-      // auto-decrypt into form if we can
-      if (r && vaultKey) {
-        const comm = r.communication_notes_encrypted
+      // If we have a vault key, decrypt into form fields
+      if (row && vaultKey) {
+        const cn = row.communication_notes_encrypted
           ? await decryptStringWithLocalCache({
               patientId,
               table: "patient_profiles",
-              rowId: r.patient_id,
+              rowId: patientId, // stable cache key for 1-row-per-patient table
               column: "communication_notes_encrypted",
-              env: r.communication_notes_encrypted,
+              env: row.communication_notes_encrypted,
               vaultKey,
             })
           : "";
 
-        const alg = r.allergies_encrypted
+        const al = row.allergies_encrypted
           ? await decryptStringWithLocalCache({
               patientId,
               table: "patient_profiles",
-              rowId: r.patient_id,
+              rowId: patientId,
               column: "allergies_encrypted",
-              env: r.allergies_encrypted,
+              env: row.allergies_encrypted,
               vaultKey,
             })
           : "";
 
-        const safety = r.safety_notes_encrypted
+        const sn = row.safety_notes_encrypted
           ? await decryptStringWithLocalCache({
               patientId,
               table: "patient_profiles",
-              rowId: r.patient_id,
+              rowId: patientId,
               column: "safety_notes_encrypted",
-              env: r.safety_notes_encrypted,
+              env: row.safety_notes_encrypted,
               vaultKey,
             })
           : "";
 
-        setCommunicationNotes(comm);
-        setAllergies(alg);
-        setSafetyNotes(safety);
+        setCommunicationNotes(cn || "");
+        setAllergies(al || "");
+        setSafetyNotes(sn || "");
       } else {
-        // if no row or no vault key, keep as-is
+        // no vaultKey → keep whatever is in form (usually empty)
+        if (!row) {
+          setCommunicationNotes("");
+          setAllergies("");
+          setSafetyNotes("");
+        }
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_profile");
@@ -96,48 +125,51 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   }
 
   useEffect(() => {
-    refresh();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId, vaultKey]);
+  }, [patientId, !!vaultKey]);
 
   async function save() {
-    if (!vaultKey) return setMsg("no_vault_share");
     setSaving(true);
     setMsg(null);
 
     try {
-      const commEnv = await vaultEncryptString({
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+      if (!vaultKey) throw new Error("no_vault_share");
+
+      const cnEnv = await vaultEncryptString({
         vaultKey,
         plaintext: communicationNotes,
         aad: { table: "patient_profiles", column: "communication_notes_encrypted", patient_id: patientId },
       });
 
-      const allergiesEnv = await vaultEncryptString({
+      const alEnv = await vaultEncryptString({
         vaultKey,
         plaintext: allergies,
         aad: { table: "patient_profiles", column: "allergies_encrypted", patient_id: patientId },
       });
 
-      const safetyEnv = await vaultEncryptString({
+      const snEnv = await vaultEncryptString({
         vaultKey,
         plaintext: safetyNotes,
         aad: { table: "patient_profiles", column: "safety_notes_encrypted", patient_id: patientId },
       });
 
-      // upsert by patient_id
+      // upsert 1-row-per-patient
       const { error } = await supabase.from("patient_profiles").upsert(
         {
           patient_id: patientId,
-          communication_notes_encrypted: commEnv,
-          allergies_encrypted: allergiesEnv,
-          safety_notes_encrypted: safetyEnv,
+          communication_notes_encrypted: cnEnv,
+          allergies_encrypted: alEnv,
+          safety_notes_encrypted: snEnv,
           updated_at: new Date().toISOString(),
-        } as any,
+        },
         { onConflict: "patient_id" }
       );
 
       if (error) throw error;
-      await refresh();
+
+      await load();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_save_profile");
     } finally {
@@ -146,66 +178,93 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Patient profile</h2>
-
-      {msg && <div style={{ border: "1px solid #c33", padding: 10, borderRadius: 10, marginBottom: 12 }}>{msg}</div>}
-
-      {!vaultKey && (
-        <div style={{ border: "1px solid #f0c", padding: 10, borderRadius: 10, marginBottom: 12 }}>
-          Vault key not available on this device. You can’t decrypt or save encrypted profile fields.
-        </div>
-      )}
-
-      <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-          These fields are stored <b>end-to-end encrypted</b> as jsonb ciphertext.
-        </div>
-
-        <label style={{ display: "block", fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Communication notes</label>
-        <textarea
-          value={communicationNotes}
-          onChange={(e) => setCommunicationNotes(e.target.value)}
-          rows={4}
-          style={{ width: "100%", marginBottom: 10 }}
-          placeholder="Encrypted notes…"
-          disabled={!vaultKey}
-        />
-
-        <label style={{ display: "block", fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Allergies</label>
-        <textarea
-          value={allergies}
-          onChange={(e) => setAllergies(e.target.value)}
-          rows={3}
-          style={{ width: "100%", marginBottom: 10 }}
-          placeholder="Encrypted allergies…"
-          disabled={!vaultKey}
-        />
-
-        <label style={{ display: "block", fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Safety notes</label>
-        <textarea
-          value={safetyNotes}
-          onChange={(e) => setSafetyNotes(e.target.value)}
-          rows={4}
-          style={{ width: "100%", marginBottom: 10 }}
-          placeholder="Encrypted safety notes…"
-          disabled={!vaultKey}
-        />
-
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={save} disabled={!vaultKey || saving} style={{ padding: "8px 10px", borderRadius: 10 }}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button onClick={refresh} disabled={loading} style={{ padding: "8px 10px", borderRadius: 10 }}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-        </div>
-
-        {row && (
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Updated: {new Date(row.updated_at).toLocaleString()}
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Patient profile</h1>
+            <div className="cc-subtle">{patient?.display_name ?? patientId}</div>
           </div>
-        )}
+
+          <div className="cc-row">
+            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+              Today
+            </Link>
+            <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
+              Summary
+            </Link>
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
+          </div>
+        </div>
+
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
+          </div>
+        ) : null}
+
+        {!vaultKey ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-subtle">You can’t decrypt or save encrypted profile fields.</div>
+          </div>
+        ) : null}
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-grid-2">
+            <div className="cc-field">
+              <div className="cc-label">Communication notes (E2EE)</div>
+              <textarea
+                className="cc-textarea"
+                value={communicationNotes}
+                onChange={(e) => setCommunicationNotes(e.target.value)}
+                placeholder={vaultKey ? "Encrypted notes…" : "Encrypted notes (vault needed)…"}
+                disabled={!vaultKey}
+              />
+            </div>
+
+            <div className="cc-field">
+              <div className="cc-label">Allergies (E2EE)</div>
+              <textarea
+                className="cc-textarea"
+                value={allergies}
+                onChange={(e) => setAllergies(e.target.value)}
+                placeholder={vaultKey ? "Encrypted allergies…" : "Encrypted allergies (vault needed)…"}
+                disabled={!vaultKey}
+              />
+            </div>
+          </div>
+
+          <div className="cc-field">
+            <div className="cc-label">Safety notes (E2EE)</div>
+            <textarea
+              className="cc-textarea"
+              value={safetyNotes}
+              onChange={(e) => setSafetyNotes(e.target.value)}
+              placeholder={vaultKey ? "Encrypted safety notes…" : "Encrypted safety notes (vault needed)…"}
+              disabled={!vaultKey}
+            />
+          </div>
+
+          <div className="cc-row">
+            <button className="cc-btn cc-btn-primary" onClick={save} disabled={!vaultKey || saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button className="cc-btn" onClick={load} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+
+            {profile?.updated_at ? (
+              <span className="cc-small">Last updated: {new Date(profile.updated_at).toLocaleString()}</span>
+            ) : (
+              <span className="cc-small">No profile record yet.</span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

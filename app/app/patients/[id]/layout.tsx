@@ -1,12 +1,18 @@
+// app/app/patients/[id]/layout.tsx
 import type { ReactNode } from "react";
-import PatientVaultLayoutClient from "./PatientVaultLayoutClient";
+import PatientLayoutClient from "./PatientLayoutClient";
 
-type LayoutProps = {
+export default async function PatientLayout({
+  children,
+  params,
+}: {
   children: ReactNode;
-  params: { id: string } | Promise<{ id: string }>;
-};
+  // Next.js versions can type params as Promise for dynamic segments
+  params: Promise<{ id: string }> | { id: string };
+}) {
+  const resolved = await Promise.resolve(params);
+  const patientId = resolved?.id;
 
-export default async function Layout({ children, params }: LayoutProps) {
-  const { id } = await Promise.resolve(params);
-  return <PatientVaultLayoutClient patientId={id}>{children}</PatientVaultLayoutClient>;
+  // No params in Root layout types here, only in this segment.
+  return <PatientLayoutClient patientId={patientId}>{children}</PatientLayoutClient>;
 }

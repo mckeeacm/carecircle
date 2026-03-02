@@ -1,6 +1,8 @@
+// app/app/patients/[id]/journals/JournalsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
@@ -17,10 +19,13 @@ type JournalRow = {
   shared_to_circle: boolean;
   pain_level: number | null;
   include_in_clinician_summary: boolean | null;
-
   content_encrypted: CipherEnvelopeV1 | null;
   mood_encrypted: CipherEnvelopeV1 | null;
 };
+
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
 
 export default function JournalsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -28,11 +33,9 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
   const [rows, setRows] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(false);
-
   const [viewMode, setViewMode] = useState<"all" | "shared">("all");
 
-  // form
-  const [journalType, setJournalType] = useState("journal"); // plaintext
+  const [journalType, setJournalType] = useState("journal");
   const [mood, setMood] = useState("");
   const [content, setContent] = useState("");
   const [painLevel, setPainLevel] = useState<number | "">("");
@@ -40,7 +43,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function refresh() {
-    if (!patientId) return;
+    if (!patientId || !isUuid(patientId)) {
+      setMsg(`invalid patientId: ${String(patientId)}`);
+      return;
+    }
+
     setLoading(true);
     setMsg(null);
 
@@ -54,9 +61,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         .order("created_at", { ascending: false })
         .limit(50);
 
-      if (viewMode === "shared") {
-        query = query.eq("shared_to_circle", true);
-      }
+      if (viewMode === "shared") query = query.eq("shared_to_circle", true);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -74,9 +79,8 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId, viewMode]);
 
-  // Realtime: refresh when a new journal entry is inserted for this patient
   useEffect(() => {
-    if (!patientId) return;
+    if (!patientId || !isUuid(patientId)) return;
 
     const channel = supabase
       .channel(`journals:${patientId}`)
@@ -91,11 +95,13 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId, supabase]);
+  }, [patientId]);
 
   async function createEntry() {
     if (!vaultKey) return setMsg("no_vault_share");
     if (!content.trim()) return setMsg("content_required");
+    if (!patientId || !isUuid(patientId)) return setMsg(`invalid patientId: ${String(patientId)}`);
+
     setMsg(null);
 
     try {
@@ -113,12 +119,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
       const { error } = await supabase.from("journal_entries").insert({
         patient_id: patientId,
-        journal_type: journalType, // plaintext
+        journal_type: journalType,
         occurred_at: new Date().toISOString(),
         shared_to_circle: sharedToCircle,
         pain_level: painLevel === "" ? null : painLevel,
         include_in_clinician_summary: false,
-
         content_encrypted: contentEnv,
         mood_encrypted: moodEnv,
       });
@@ -129,7 +134,6 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       setContent("");
       setPainLevel("");
       setSharedToCircle(true);
-
       await refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_journal");
@@ -137,87 +141,112 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Journals</h2>
-
-      {msg && <p style={{ color: "#a00" }}>{msg}</p>}
-
-      {!vaultKey ? (
-        <div style={{ border: "1px solid #c3c", padding: 10, borderRadius: 10, marginBottom: 12 }}>
-          Vault key not available on this device. You can’t decrypt or save encrypted content.
-        </div>
-      ) : null}
-
-      <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-        <button
-          onClick={() => setViewMode("all")}
-          style={{ padding: "6px 10px", borderRadius: 10, opacity: viewMode === "all" ? 1 : 0.6 }}
-        >
-          All entries
-        </button>
-        <button
-          onClick={() => setViewMode("shared")}
-          style={{ padding: "6px 10px", borderRadius: 10, opacity: viewMode === "shared" ? 1 : 0.6 }}
-        >
-          Circle feed
-        </button>
-        <button onClick={refresh} disabled={loading} style={{ padding: "6px 10px", borderRadius: 10 }}>
-          {loading ? "…" : "Refresh"}
-        </button>
-      </div>
-
-      <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input
-            value={journalType}
-            onChange={(e) => setJournalType(e.target.value)}
-            placeholder="journal_type (plaintext)"
-          />
-          <input value={mood} onChange={(e) => setMood(e.target.value)} placeholder="Mood (encrypted)" />
-          <input
-            type="number"
-            value={painLevel}
-            onChange={(e) => setPainLevel(e.target.value === "" ? "" : Number(e.target.value))}
-            placeholder="Pain (0-10)"
-          />
-          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <input
-              type="checkbox"
-              checked={sharedToCircle}
-              onChange={(e) => setSharedToCircle(e.target.checked)}
-            />
-            Share to circle
-          </label>
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Journals</h1>
+            <div className="cc-subtle cc-wrap">{patientId}</div>
+          </div>
+          <div className="cc-row">
+            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+              Today
+            </Link>
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
+          </div>
         </div>
 
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Journal content (encrypted)"
-          rows={4}
-          style={{ width: "100%", marginTop: 10 }}
-          disabled={!vaultKey}
-        />
-
-        <button
-          onClick={createEntry}
-          disabled={!vaultKey || !content.trim()}
-          style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10 }}
-        >
-          Save entry
-        </button>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        {loading ? <div>Loading…</div> : null}
-        {rows.map((r) => (
-          <JournalCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} />
-        ))}
-        {!loading && rows.length === 0 ? (
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            {viewMode === "shared" ? "No shared entries yet." : "No entries yet."}
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
+
+        {!vaultKey ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-subtle">You can’t decrypt or save encrypted content.</div>
+          </div>
+        ) : null}
+
+        <div className="cc-row">
+          <button
+            className={`cc-tab ${viewMode === "all" ? "cc-tab-active" : ""}`}
+            onClick={() => setViewMode("all")}
+          >
+            All entries
+          </button>
+          <button
+            className={`cc-tab ${viewMode === "shared" ? "cc-tab-active" : ""}`}
+            onClick={() => setViewMode("shared")}
+          >
+            Circle feed
+          </button>
+          <button className="cc-btn" onClick={refresh} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <h2 className="cc-h2">New entry</h2>
+
+          <div className="cc-row">
+            <div className="cc-field" style={{ minWidth: 220 }}>
+              <div className="cc-label">journal_type (plaintext)</div>
+              <input className="cc-input" value={journalType} onChange={(e) => setJournalType(e.target.value)} />
+            </div>
+
+            <div className="cc-field" style={{ minWidth: 220 }}>
+              <div className="cc-label">Mood (encrypted)</div>
+              <input className="cc-input" value={mood} onChange={(e) => setMood(e.target.value)} />
+            </div>
+
+            <div className="cc-field" style={{ width: 160 }}>
+              <div className="cc-label">Pain (0–10)</div>
+              <input
+                className="cc-input"
+                type="number"
+                value={painLevel}
+                onChange={(e) => setPainLevel(e.target.value === "" ? "" : Number(e.target.value))}
+              />
+            </div>
+
+            <label className="cc-check">
+              <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
+              <span className="cc-label">Share to circle</span>
+            </label>
+          </div>
+
+          <div className="cc-field">
+            <div className="cc-label">Journal content (encrypted)</div>
+            <textarea className="cc-textarea" value={content} onChange={(e) => setContent(e.target.value)} />
+          </div>
+
+          <div className="cc-row">
+            <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || !content.trim()}>
+              Save entry
+            </button>
+          </div>
+        </div>
+
+        <div className="cc-card cc-card-pad">
+          <h2 className="cc-h2">Recent entries</h2>
+          <div className="cc-spacer-12" />
+
+          {rows.length === 0 ? (
+            <div className="cc-small">{viewMode === "shared" ? "No shared entries yet." : "No entries yet."}</div>
+          ) : (
+            <div className="cc-stack">
+              {rows.map((r) => (
+                <JournalCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -275,26 +304,34 @@ function JournalCard({
   }
 
   return (
-    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12, marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontSize: 13, opacity: 0.85 }}>
-          <b>{row.journal_type}</b> • {new Date(row.created_at).toLocaleString()}
-          {row.shared_to_circle ? " • shared" : " • private"}
-          {row.pain_level != null ? ` • pain:${row.pain_level}` : ""}
+    <div className="cc-panel-soft">
+      <div className="cc-row-between">
+        <div className="cc-wrap">
+          <div className="cc-strong">
+            {row.journal_type}{" "}
+            <span className="cc-small">
+              • {new Date(row.created_at).toLocaleString()} • {row.shared_to_circle ? "shared" : "private"}
+              {row.pain_level != null ? ` • pain:${row.pain_level}` : ""}
+            </span>
+          </div>
         </div>
-        <button onClick={toggle} style={{ padding: "6px 10px", borderRadius: 10 }} disabled={!vaultKey}>
+
+        <button className="cc-btn" onClick={toggle}>
           {open ? "Hide" : "Decrypt"}
         </button>
       </div>
 
-      {open && (
-        <div style={{ marginTop: 10 }}>
-          <div>
+      {open ? (
+        <div className="cc-spacer-12">
+          <div className="cc-small">
             <b>Mood:</b> {ptMood || "—"}
           </div>
-          <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{ptContent || "—"}</div>
+          <div className="cc-spacer-12" />
+          <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
+            {ptContent || "—"}
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
