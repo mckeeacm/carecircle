@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import PatientVaultLayoutClient from "./PatientVaultLayoutClient";
 
-export default function Layout({
-  children,
-  params,
-}: {
+type LayoutProps = {
   children: ReactNode;
-  params: { id: string };
-}) {
-  return <PatientVaultLayoutClient patientId={params.id}>{children}</PatientVaultLayoutClient>;
+  params: { id: string } | Promise<{ id: string }>;
+};
+
+export default async function Layout({ children, params }: LayoutProps) {
+  const { id } = await Promise.resolve(params);
+  return <PatientVaultLayoutClient patientId={id}>{children}</PatientVaultLayoutClient>;
 }
