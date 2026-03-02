@@ -38,6 +38,9 @@ function truthy(v: unknown): boolean {
   return v === true;
 }
 
+type RolePermMap = Record<string, Record<string, boolean>>;
+type MemberPermMap = Record<string, Record<string, boolean>>;
+
 export default function AccountPermissionsPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const [msg, setMsg] = useState<string | null>(null);
@@ -51,11 +54,62 @@ export default function AccountPermissionsPage() {
   const [loading, setLoading] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
+  // QoL: feature filter to reduce heavy tables
+  const [featureQuery, setFeatureQuery] = useState("");
+
+  // Precomputed maps (the main performance win)
+  const rolePermMap = useMemo<RolePermMap>(() => {
+    const map: RolePermMap = {};
+    const rows = data?.role_perms ?? [];
+    for (const r of rows) {
+      if (!map[r.role]) map[r.role] = {};
+      map[r.role][r.feature_key] = truthy(r.allowed);
+    }
+    return map;
+  }, [data]);
+
+  const memberPermMap = useMemo<MemberPermMap>(() => {
+    const map: MemberPermMap = {};
+    const rows = data?.member_perms ?? [];
+    for (const m of rows) {
+      if (!map[m.user_id]) map[m.user_id] = {};
+      map[m.user_id][m.feature_key] = truthy(m.allowed);
+    }
+    return map;
+  }, [data]);
+
+  const roles = data?.roles ?? [];
+  const members = data?.members ?? [];
+
+  const filteredFeatures = useMemo(() => {
+    const q = featureQuery.trim().toLowerCase();
+    if (!q) return features;
+
+    return features.filter((f) => {
+      const hay = `${f.key} ${f.label ?? ""} ${f.description ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [features, featureQuery]);
+
+  // O(1) helpers
+  function roleAllowed(role: string, featureKey: string): boolean {
+    return rolePermMap?.[role]?.[featureKey] === true;
+  }
+
+  function memberOverride(memberUid: string, featureKey: string): boolean | null {
+    const v = memberPermMap?.[memberUid]?.[featureKey];
+    return typeof v === "boolean" ? v : null;
+  }
+
   // Load controller patients
   useEffect(() => {
     (async () => {
       setMsg(null);
-      const { data: auth } = await supabase.auth.getUser();
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) {
+        setMsg(authErr.message);
+        return;
+      }
       if (!auth.user) {
         setMsg("not_authenticated");
         return;
@@ -117,10 +171,9 @@ export default function AccountPermissionsPage() {
     setLoading(true);
     setMsg(null);
     try {
+      // IMPORTANT: payload key must match SQL param name exactly: pid
       const { data, error } = await supabase.rpc("permissions_get", { pid: patientId });
       if (error) throw error;
-
-      // Supabase may return json as object already
       setData(data as PermGet);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_permissions");
@@ -134,17 +187,6 @@ export default function AccountPermissionsPage() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
-
-  // Helpers
-  function roleAllowed(role: string, featureKey: string): boolean {
-    const rp = data?.role_perms?.find((r) => r.role === role && r.feature_key === featureKey);
-    return rp ? truthy(rp.allowed) : false;
-  }
-
-  function memberOverride(memberUid: string, featureKey: string): boolean | null {
-    const mp = data?.member_perms?.find((m) => m.user_id === memberUid && m.feature_key === featureKey);
-    return mp ? truthy(mp.allowed) : null;
-  }
 
   async function seedDefaults() {
     if (!patientId) return;
@@ -240,9 +282,6 @@ export default function AccountPermissionsPage() {
     }
   }
 
-  const roles = data?.roles ?? [];
-  const members = data?.members ?? [];
-
   return (
     <div style={{ padding: 16 }}>
       <h2>Account • Permissions</h2>
@@ -253,7 +292,7 @@ export default function AccountPermissionsPage() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", marginBottom: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           Patient
           <select value={patientId} onChange={(e) => setPatientId(e.target.value)} style={{ padding: 6 }}>
@@ -265,6 +304,16 @@ export default function AccountPermissionsPage() {
           </select>
         </label>
 
+        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          Filter features
+          <input
+            value={featureQuery}
+            onChange={(e) => setFeatureQuery(e.target.value)}
+            placeholder="Type to filter (e.g. journals, dm, meds)"
+            style={{ padding: 6, minWidth: 260 }}
+          />
+        </label>
+
         <button
           onClick={seedDefaults}
           disabled={!patientId || savingKey === "seed"}
@@ -273,13 +322,13 @@ export default function AccountPermissionsPage() {
           {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
         </button>
 
-        <button
-          onClick={refresh}
-          disabled={!patientId || loading}
-          style={{ padding: "8px 10px", borderRadius: 10 }}
-        >
+        <button onClick={refresh} disabled={!patientId || loading} style={{ padding: "8px 10px", borderRadius: 10 }}>
           {loading ? "Loading…" : "Refresh"}
         </button>
+
+        <div style={{ fontSize: 12, opacity: 0.75 }}>
+          Showing <strong>{filteredFeatures.length}</strong> / {features.length} features
+        </div>
       </div>
 
       {!patientId ? (
@@ -320,7 +369,7 @@ export default function AccountPermissionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {features.map((f) => (
+                  {filteredFeatures.map((f) => (
                     <tr key={f.key}>
                       <td style={tdStyle}>
                         <div style={{ fontWeight: 600 }}>{f.label ?? f.key}</div>
@@ -376,7 +425,7 @@ export default function AccountPermissionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {features.map((f) => (
+                  {filteredFeatures.map((f) => (
                     <tr key={f.key}>
                       <td style={tdStyle}>
                         <div style={{ fontWeight: 600 }}>{f.label ?? f.key}</div>

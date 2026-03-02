@@ -10,13 +10,41 @@ type CircleRow = {
   display_name: string;
 };
 
-type MembershipRow = {
-  patient_id: string;
-  role: string;
-  is_controller: boolean;
+type PermGet = {
+  roles: string[];
+  members: {
+    user_id: string;
+    role: string | null;
+    nickname: string | null;
+    is_controller: boolean | null;
+    email: string | null;
+  }[];
+  role_perms: {
+    patient_id: string;
+    role: string;
+    feature_key: string;
+    allowed: boolean;
+  }[];
+  member_perms: {
+    patient_id: string;
+    user_id: string;
+    feature_key: string;
+    allowed: boolean;
+  }[];
 };
 
-type PermissionLookup = Record<string, boolean>;
+type PermCtx = {
+  loaded: boolean;
+  my_role: string | null;
+  is_controller: boolean;
+  roleMap: Record<string, boolean>; // feature_key -> allowed for my role
+  memberMap: Record<string, boolean>; // feature_key -> allowed override for me
+  raw?: PermGet;
+};
+
+function truthy(v: unknown): boolean {
+  return v === true;
+}
 
 export default function HubClient() {
   const supabase = supabaseBrowser();
@@ -25,66 +53,52 @@ export default function HubClient() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [circles, setCircles] = useState<CircleRow[]>([]);
-  const [permsByPid, setPermsByPid] = useState<Record<string, PermissionLookup | null>>({});
-  const [rawPermsByPid, setRawPermsByPid] = useState<Record<string, any>>({});
+  const [permByPid, setPermByPid] = useState<Record<string, PermCtx>>({});
   const [debug, setDebug] = useState<string[]>([]);
 
   function debugLog(line: string) {
     setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
   }
 
-  function normalisePermissions(data: any): PermissionLookup {
-    const lookup: PermissionLookup = {};
-    if (!data) return lookup;
-
-    if (Array.isArray(data)) {
-      for (const k of data) if (typeof k === "string") lookup[k] = true;
-      return lookup;
-    }
-
-    if (typeof data === "object") {
-      const maybe =
-        (data.permissions && typeof data.permissions === "object" && data.permissions) ||
-        (data.allowed && Array.isArray(data.allowed) && data.allowed) ||
-        data;
-
-      if (Array.isArray(maybe)) {
-        for (const k of maybe) if (typeof k === "string") lookup[k] = true;
-        return lookup;
-      }
-
-      if (typeof maybe === "object") {
-        for (const [k, v] of Object.entries(maybe)) {
-          if (typeof v === "boolean") lookup[k] = v;
-          if (typeof v === "number") lookup[k] = v === 1;
-        }
-      }
-    }
-
-    return lookup;
-  }
-
-  // Candidate keys (we’ll tighten once we see real payload)
-  const PERM_KEYS = useMemo(
+  // Canonical feature keys from your DB seed
+  const FEATURE = useMemo(
     () => ({
-      today: ["today_read", "view_today", "can_view_today", "today:view", "circle_today_read"],
-      summary: ["summary_read", "view_summary", "can_view_summary", "summary:view", "circle_summary_read"],
-      profile: ["profile_read", "view_profile", "can_view_profile", "profile:view", "circle_profile_read"],
-      medicationLogs: [
-        "medication_logs_read",
-        "medication_read",
-        "meds_read",
-        "view_medication_logs",
-        "medication-logs:view",
-      ],
-      journals: ["journals_read", "journal_read", "view_journals", "journals:view", "circle_journals_read"],
+      today: "summary_view", // until you add a dedicated today_view
+      summary: "summary_view",
+      profile: "profile_view",
+      meds: "meds_view",
+      journals: "journals_view",
     }),
     []
   );
 
-  function hasAny(lookup: PermissionLookup, keys: string[]) {
-    for (const k of keys) if (lookup[k] === true) return true;
-    return false;
+  function computePermCtx(payload: PermGet, uid: string): PermCtx {
+    const me = (payload.members ?? []).find((m) => m.user_id === uid);
+    const my_role = me?.role ?? null;
+    const is_controller = truthy(me?.is_controller);
+
+    const roleMap: Record<string, boolean> = {};
+    const memberMap: Record<string, boolean> = {};
+
+    if (my_role) {
+      for (const rp of payload.role_perms ?? []) {
+        if (rp.role === my_role) roleMap[rp.feature_key] = truthy(rp.allowed);
+      }
+    }
+
+    for (const mp of payload.member_perms ?? []) {
+      if (mp.user_id === uid) memberMap[mp.feature_key] = truthy(mp.allowed);
+    }
+
+    return { loaded: true, my_role, is_controller, roleMap, memberMap, raw: payload };
+  }
+
+  function allowed(ctx: PermCtx | undefined, feature_key: string): boolean {
+    if (!ctx?.loaded) return false;
+    // Controller gets management access implicitly in your system, but for view features we still honour keys.
+    // Member override wins
+    if (feature_key in ctx.memberMap) return ctx.memberMap[feature_key] === true;
+    return ctx.roleMap[feature_key] === true;
   }
 
   useEffect(() => {
@@ -95,13 +109,11 @@ export default function HubClient() {
       setMsg(null);
       setDebug([]);
       setCircles([]);
-      setPermsByPid({});
-      setRawPermsByPid({});
+      setPermByPid({});
 
       try {
         const { data: auth, error: authErr } = await supabase.auth.getUser();
         if (authErr) throw authErr;
-
         const uid = auth.user?.id;
         if (!uid) {
           setMsg("not_authenticated");
@@ -111,13 +123,14 @@ export default function HubClient() {
         debugLog("Loading patient_members for current user...");
         const { data: memberships, error: memErr } = await supabase
           .from("patient_members")
-          .select("patient_id, role, is_controller")
+          .select("patient_id")
           .eq("user_id", uid);
 
         if (memErr) throw memErr;
 
-        const memRows = (memberships ?? []) as MembershipRow[];
-        const patientIds = memRows.map((m) => m.patient_id).filter(Boolean);
+        const patientIds = Array.from(
+          new Set((memberships ?? []).map((m: any) => m.patient_id as string).filter(Boolean))
+        );
 
         debugLog(`Memberships found: ${patientIds.length}`);
 
@@ -137,33 +150,39 @@ export default function HubClient() {
         const circleRows = (patients ?? []) as CircleRow[];
 
         debugLog("Loading permissions per circle (permissions_get)...");
-        const permsMap: Record<string, PermissionLookup | null> = {};
-        const rawMap: Record<string, any> = {};
+        const nextPerms: Record<string, PermCtx> = {};
 
         for (const c of circleRows) {
-          // RPC payload key MUST be pid
+          // payload key MUST be pid
           const { data, error } = await supabase.rpc("permissions_get", { pid: c.id });
 
-          rawMap[c.id] = data;
-
           if (error) {
-            // Don’t break hub; mark perms unknown (null) and log
-            permsMap[c.id] = null;
             debugLog(`permissions_get ERROR pid=${c.id}: ${error.message}`);
-            // ts-expect-error extra fields
-            debugLog(`meta code=${error.code ?? "n/a"} details=${error.details ?? "n/a"} hint=${error.hint ?? "n/a"}`);
-          } else {
-            const norm = normalisePermissions(data);
-            permsMap[c.id] = norm;
-            debugLog(`permissions_get OK pid=${c.id} keys=${Object.keys(norm).length}`);
-            debugLog(`permissions_get RAW pid=${c.id}: ${JSON.stringify(data)}`);
+            nextPerms[c.id] = {
+              loaded: false,
+              my_role: null,
+              is_controller: false,
+              roleMap: {},
+              memberMap: {},
+            };
+            continue;
           }
+
+          const payload = data as PermGet;
+          const ctx = computePermCtx(payload, uid);
+
+          debugLog(
+            `permissions_get OK pid=${c.id} my_role=${ctx.my_role ?? "null"} controller=${String(ctx.is_controller)} roleKeys=${Object.keys(
+              ctx.roleMap
+            ).length} memberKeys=${Object.keys(ctx.memberMap).length}`
+          );
+
+          nextPerms[c.id] = ctx;
         }
 
         if (!mounted) return;
         setCircles(circleRows);
-        setPermsByPid(permsMap);
-        setRawPermsByPid(rawMap);
+        setPermByPid(nextPerms);
       } catch (e: any) {
         if (!mounted) return;
         setMsg(e?.message ?? "hub_load_failed");
@@ -176,7 +195,7 @@ export default function HubClient() {
     return () => {
       mounted = false;
     };
-  }, [supabase]);
+  }, [supabase, FEATURE]);
 
   const topBtnStyle: React.CSSProperties = {
     display: "inline-block",
@@ -229,18 +248,13 @@ export default function HubClient() {
       {!busy && !msg && circles.length > 0 && (
         <div style={{ display: "grid", gap: 10 }}>
           {circles.map((c) => {
-            const lookupOrNull = permsByPid[c.id];
-            const lookup = lookupOrNull ?? {}; // if null -> unknown
+            const ctx = permByPid[c.id];
 
-            const permsKnown = lookupOrNull !== null;
-
-            // If perms unknown, we still SHOW buttons but disable them (safe, visible, debuggable).
-            // If perms known, we enable only if matching keys.
-            const canToday = permsKnown ? hasAny(lookup, PERM_KEYS.today) : true;
-            const canSummary = permsKnown ? hasAny(lookup, PERM_KEYS.summary) : true;
-            const canProfile = permsKnown ? hasAny(lookup, PERM_KEYS.profile) : true;
-            const canMeds = permsKnown ? hasAny(lookup, PERM_KEYS.medicationLogs) : true;
-            const canJournals = permsKnown ? hasAny(lookup, PERM_KEYS.journals) : true;
+            const canToday = allowed(ctx, FEATURE.today);
+            const canSummary = allowed(ctx, FEATURE.summary);
+            const canProfile = allowed(ctx, FEATURE.profile);
+            const canMeds = allowed(ctx, FEATURE.meds);
+            const canJournals = allowed(ctx, FEATURE.journals);
 
             return (
               <div
@@ -258,41 +272,44 @@ export default function HubClient() {
                 </div>
 
                 <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                  Perms: <code>{permsKnown ? "loaded" : "unknown (RPC error) — buttons shown but disabled until fixed"}</code>
+                  Perms:{" "}
+                  <code>
+                    {ctx?.loaded ? `loaded (role=${ctx.my_role ?? "null"})` : "unknown"}
+                  </code>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
                   <Link
                     href={`/app/patients/${c.id}/today`}
-                    style={permsKnown ? (canToday ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                    style={canToday ? circleBtnStyle : disabledBtnStyle}
                   >
                     Today
                   </Link>
 
                   <Link
                     href={`/app/patients/${c.id}/summary`}
-                    style={permsKnown ? (canSummary ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                    style={canSummary ? circleBtnStyle : disabledBtnStyle}
                   >
                     Summary
                   </Link>
 
                   <Link
                     href={`/app/patients/${c.id}/profile`}
-                    style={permsKnown ? (canProfile ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                    style={canProfile ? circleBtnStyle : disabledBtnStyle}
                   >
                     Profile
                   </Link>
 
                   <Link
                     href={`/app/patients/${c.id}/medication-logs`}
-                    style={permsKnown ? (canMeds ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                    style={canMeds ? circleBtnStyle : disabledBtnStyle}
                   >
                     Medication logs
                   </Link>
 
                   <Link
                     href={`/app/patients/${c.id}/journals`}
-                    style={permsKnown ? (canJournals ? circleBtnStyle : disabledBtnStyle) : disabledBtnStyle}
+                    style={canJournals ? circleBtnStyle : disabledBtnStyle}
                   >
                     Journals
                   </Link>
