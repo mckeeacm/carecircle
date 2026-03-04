@@ -24,6 +24,11 @@ export function usePatientVault() {
   return ctx;
 }
 
+function isUuid(s: unknown): s is string {
+  if (typeof s !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 export function PatientVaultProvider({
   patientId,
   children,
@@ -42,9 +47,14 @@ export function PatientVaultProvider({
     setError(null);
 
     try {
-      // 1) controller check (your existing RPC)
+      // Guard: never call RPC with undefined / invalid UUID
+      if (!isUuid(patientId)) {
+        throw new Error(`invalid_patientId:${String(patientId)}`);
+      }
+
+      // 1) controller check — IMPORTANT: function args are (pid uuid)
       const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", {
-        patient_id: patientId,
+        pid: patientId, // ✅ label-stable with DB signature
       });
       if (ctlErr) throw ctlErr;
       setIsController(Boolean(ctl));
@@ -56,7 +66,6 @@ export function PatientVaultProvider({
     } catch (e: any) {
       setVaultKey(null);
 
-      // keep messages human-readable but stable
       const msg =
         e?.message ||
         e?.error_description ||
@@ -72,8 +81,11 @@ export function PatientVaultProvider({
     setLoading(true);
     setError(null);
     try {
+      if (!isUuid(patientId)) {
+        throw new Error(`invalid_patientId:${String(patientId)}`);
+      }
+
       await initialiseVaultForPatient(patientId);
-      // after init, refresh to get my share + unwrap
       await refresh();
     } catch (e: any) {
       setError(e?.message ?? "init_failed");
@@ -114,7 +126,6 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  // vaultKey missing
   return (
     <div style={{ padding: 16, border: "1px solid #eee", borderRadius: 12 }}>
       <h3 style={{ marginTop: 0 }}>Encrypted vault not available</h3>
@@ -122,7 +133,9 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         {error ? (
           <>
-            <div><b>Reason:</b> {error}</div>
+            <div>
+              <b>Reason:</b> {error}
+            </div>
             <div style={{ marginTop: 6 }}>
               Most common causes:
               <ul style={{ margin: "6px 0 0 18px" }}>
@@ -137,16 +150,13 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
         <button onClick={refresh} style={{ padding: "8px 10px", borderRadius: 10 }}>
           Retry
         </button>
 
         {isController ? (
-          <button
-            onClick={initialiseIfController}
-            style={{ padding: "8px 10px", borderRadius: 10 }}
-          >
+          <button onClick={initialiseIfController} style={{ padding: "8px 10px", borderRadius: 10 }}>
             Initialise vault (controller)
           </button>
         ) : (
