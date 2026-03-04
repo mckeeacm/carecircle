@@ -4,13 +4,17 @@
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { getSodium } from "@/lib/e2ee/sodium";
 import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
-import { wrapVaultKeyForRecipient } from "@/lib/e2ee/vaultShares";
+import {
+  wrapVaultKeyForRecipient,
+  unwrapVaultKeyForMe,
+  type WrappedKeyV1,
+} from "@/lib/e2ee/vaultShares";
 
 type VaultShareRow = {
   id: string;
   patient_id: string;
   user_id: string;
-  wrapped_key: any; // jsonb (cipher envelope)
+  wrapped_key: WrappedKeyV1; // jsonb stored as this object
   created_at: string;
 };
 
@@ -18,12 +22,12 @@ type PatientMemberRow = { user_id: string };
 
 type UserPublicKeyRow = {
   user_id: string;
-  public_key: string; // base64 raw bytes (as per your earlier code)
+  public_key: string; // base64 raw bytes (your existing convention)
   algorithm: string | null;
 };
 
 // -----------------------------
-// Helpers
+// Helpers (stable, no drift)
 // -----------------------------
 
 function isUuid(s: string) {
@@ -43,7 +47,8 @@ function bytesToB64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-// Local cache of unwrapped vault key (provider also caches; this makes load() stable)
+// Local cache of unwrapped vault key.
+// Provider also caches; this makes loadMyPatientVaultKey stable on its own too.
 function localVaultKeyKey(pid: string, uid: string) {
   return `cc:vault:${pid}:${uid}`;
 }
@@ -65,6 +70,7 @@ function tryGetCachedVaultKey(pid: string, uid: string): Uint8Array | null {
       localStorage.removeItem(localVaultKeyTs(pid, uid));
       return null;
     }
+
     return b64ToBytes(b64);
   } catch {
     return null;
@@ -81,52 +87,8 @@ function setCachedVaultKey(pid: string, uid: string, key: Uint8Array | null) {
     localStorage.setItem(localVaultKeyKey(pid, uid), bytesToB64(key));
     localStorage.setItem(localVaultKeyTs(pid, uid), new Date().toISOString());
   } catch {
-    // ignore storage errors
+    // ignore
   }
-}
-
-/**
- * IMPORTANT:
- * We do NOT guess your wrapped_key envelope format.
- * Your wrapVaultKeyForRecipient() already produces the correct structure.
- * So we require that your unwrap side is implemented in vaultShares too.
- *
- * If you already have unwrap logic elsewhere, import it here and replace this.
- */
-async function unwrapVaultKeyForMe(args: { wrapped_key: any }): Promise<Uint8Array> {
-  const sodium = await getSodium();
-  const { publicKey, privateKey } = await getOrCreateDeviceKeypair();
-
-  const wrapped_key = args.wrapped_key;
-
-  // --- Supported minimal formats ---
-  // If your wrapVaultKeyForRecipient returns something else, paste it and I’ll match it exactly.
-
-  // Format 1: crypto_box_seal
-  if (wrapped_key?.alg === "crypto_box_seal" && typeof wrapped_key?.sealed_key_b64 === "string") {
-    const sealed = b64ToBytes(wrapped_key.sealed_key_b64);
-    const opened = sodium.crypto_box_seal_open(sealed, publicKey, privateKey);
-    if (!opened || opened.length !== 32) throw new Error("vault_key_unwrap_failed");
-    return opened;
-  }
-
-  // Format 2: crypto_box_easy
-  if (
-    wrapped_key?.alg === "crypto_box_easy" &&
-    typeof wrapped_key?.nonce_b64 === "string" &&
-    typeof wrapped_key?.ciphertext_b64 === "string" &&
-    typeof wrapped_key?.sender_pk_b64 === "string"
-  ) {
-    const nonce = b64ToBytes(wrapped_key.nonce_b64);
-    const cipher = b64ToBytes(wrapped_key.ciphertext_b64);
-    const senderPk = b64ToBytes(wrapped_key.sender_pk_b64);
-    const opened = sodium.crypto_box_open_easy(cipher, nonce, senderPk, privateKey);
-    if (!opened || opened.length !== 32) throw new Error("vault_key_unwrap_failed");
-    return opened;
-  }
-
-  // If your wrapped_key is something else, we can't safely guess.
-  throw new Error("wrapped_key_format_unrecognised");
 }
 
 // -----------------------------
@@ -134,8 +96,8 @@ async function unwrapVaultKeyForMe(args: { wrapped_key: any }): Promise<Uint8Arr
 // -----------------------------
 
 /**
- * Loads and unwraps the current user's vault key share for a patient.
- * Returns null if no share exists for this user.
+ * Load + unwrap MY vault key for a patient.
+ * Returns null if no share row exists for this user (RLS: auth.uid() = user_id).
  */
 export async function loadMyPatientVaultKey(patientId: string): Promise<Uint8Array | null> {
   if (!patientId || !isUuid(patientId)) throw new Error("invalid_patient_id");
@@ -144,18 +106,17 @@ export async function loadMyPatientVaultKey(patientId: string): Promise<Uint8Arr
 
   const { data: auth, error: authErr } = await supabase.auth.getUser();
   if (authErr) throw authErr;
-
   const uid = auth.user?.id;
   if (!uid) throw new Error("not_authenticated");
 
-  // 0) cache
+  // 0) cache first
   const cached = tryGetCachedVaultKey(patientId, uid);
   if (cached) return cached;
 
-  // 1) ensure device keypair exists (MUST be persisted by deviceKeys.ts)
-  await getOrCreateDeviceKeypair();
+  // 1) ensure device keypair exists (must be persisted by deviceKeys.ts)
+  const { publicKey, privateKey } = await getOrCreateDeviceKeypair();
 
-  // 2) fetch my share (RLS: auth.uid() = user_id)
+  // 2) fetch my share (RLS allows reading own row)
   const { data: rows, error } = await supabase
     .from("patient_vault_shares")
     .select("id, patient_id, user_id, wrapped_key, created_at")
@@ -167,30 +128,31 @@ export async function loadMyPatientVaultKey(patientId: string): Promise<Uint8Arr
   if (error) throw error;
 
   const row = (rows?.[0] ?? null) as VaultShareRow | null;
-  if (!row) {
-    // No share exists for this user
-    return null;
-  }
+  if (!row) return null;
 
-  // 3) unwrap
-  const vaultKey = await unwrapVaultKeyForMe({ wrapped_key: row.wrapped_key });
+  // 3) unwrap using your shared helper (label-consistent)
+  const vaultKey = await unwrapVaultKeyForMe({
+    wrapped: row.wrapped_key,
+    myPublicKey: publicKey,
+    myPrivateKey: privateKey,
+  });
 
-  // 4) cache
+  if (!vaultKey || vaultKey.length !== 32) throw new Error("vault_key_unwrap_failed");
+
+  // 4) cache locally
   setCachedVaultKey(patientId, uid, vaultKey);
 
   return vaultKey;
 }
 
 /**
- * Controller-only: generate a vault key and write shares for all members.
+ * Controller-only: generate a vault key and create shares for all members.
  *
- * Uses:
- * - patient_members(patient_id) to get member user_ids
- * - user_public_keys(user_id) to get public keys
- * - patient_vault_shares(wrapped_key) to store wrapped key per member
+ * Writes: patient_vault_shares(patient_id, user_id, wrapped_key)
+ * Reads:  patient_members(patient_id)
+ * Reads:  user_public_keys(user_id, public_key)
  *
- * IMPORTANT label stability:
- * - patient_id, user_id, wrapped_key (DO NOT CHANGE)
+ * IMPORTANT: uses RPC is_patient_controller(pid uuid) with param name 'pid'
  */
 export async function initialiseVaultForPatient(patientId: string): Promise<void> {
   if (!patientId || !isUuid(patientId)) throw new Error("invalid_patient_id");
@@ -203,12 +165,12 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
   const uid = auth.user?.id;
   if (!uid) throw new Error("not_authenticated");
 
-  // controller check: is_patient_controller(pid uuid)
+  // controller check (no overload ambiguity)
   const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid: patientId });
   if (ctlErr) throw ctlErr;
   if (!ctl) throw new Error("not_controller");
 
-  // 1) load members
+  // 1) members
   const { data: members, error: memErr } = await supabase
     .from("patient_members")
     .select("user_id")
@@ -219,7 +181,7 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
   const userIds = ((members ?? []) as PatientMemberRow[]).map((m) => m.user_id);
   if (userIds.length === 0) throw new Error("no_members_found");
 
-  // 2) load pubkeys
+  // 2) pubkeys
   const { data: pubKeys, error: pkErr } = await supabase
     .from("user_public_keys")
     .select("user_id, public_key, algorithm")
@@ -229,6 +191,7 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
 
   const pkRows = (pubKeys ?? []) as UserPublicKeyRow[];
 
+  // Ensure everyone has a pubkey
   const missing = userIds.filter((id) => !pkRows.some((p) => p.user_id === id));
   if (missing.length > 0) throw new Error(`missing_public_keys_for_${missing.length}_members`);
 
@@ -236,7 +199,7 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
   const sodium = await getSodium();
   const vaultKey = sodium.randombytes_buf(32) as Uint8Array;
 
-  // 4) delete existing shares for these users (clean slate)
+  // 4) clean existing shares for those users (controller-only by policy)
   const { error: delErr } = await supabase
     .from("patient_vault_shares")
     .delete()
@@ -245,7 +208,7 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
 
   if (delErr) throw delErr;
 
-  // 5) create shares
+  // 5) wrap + insert
   const rows = await Promise.all(
     pkRows.map(async (p) => {
       const recipientPk = b64ToBytes(p.public_key);
@@ -258,7 +221,7 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
       return {
         patient_id: patientId,
         user_id: p.user_id,
-        wrapped_key: wrapped, // jsonb envelope
+        wrapped_key: wrapped, // WrappedKeyV1
       };
     })
   );
@@ -266,8 +229,22 @@ export async function initialiseVaultForPatient(patientId: string): Promise<void
   const { error: insErr } = await supabase.from("patient_vault_shares").insert(rows);
   if (insErr) throw insErr;
 
-  // 6) if this user is among the members, cache locally immediately
+  // 6) cache locally for controller user (if they are in the circle)
   if (userIds.includes(uid)) {
     setCachedVaultKey(patientId, uid, vaultKey);
   }
+}
+
+/**
+ * Optional: allow UI to forget local cache explicitly.
+ */
+export async function forgetMyCachedVaultKey(patientId: string): Promise<void> {
+  if (!patientId || !isUuid(patientId)) return;
+
+  const supabase = supabaseBrowser();
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return;
+
+  setCachedVaultKey(patientId, uid, null);
 }
