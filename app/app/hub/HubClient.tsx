@@ -1,14 +1,17 @@
-// app/app/hub/HubClient.tsx
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
-type CircleRow = {
-  id: string;
-  display_name: string;
+type Membership = {
+  patient_id: string;
+  role: string;
+  nickname: string | null;
+  is_controller: boolean;
 };
+
+type PatientRow = { id: string; display_name: string };
 
 type PermGet = {
   roles: string[];
@@ -19,323 +22,250 @@ type PermGet = {
     is_controller: boolean | null;
     email: string | null;
   }[];
-  role_perms: {
-    patient_id: string;
-    role: string;
-    feature_key: string;
-    allowed: boolean;
-  }[];
-  member_perms: {
-    patient_id: string;
-    user_id: string;
-    feature_key: string;
-    allowed: boolean;
-  }[];
+  role_perms: { patient_id: string; role: string; feature_key: string; allowed: boolean }[];
+  member_perms: { patient_id: string; user_id: string; feature_key: string; allowed: boolean }[];
 };
 
-type PermCtx = {
-  loaded: boolean;
-  my_role: string | null;
-  is_controller: boolean;
-  roleMap: Record<string, boolean>; // feature_key -> allowed for my role
-  memberMap: Record<string, boolean>; // feature_key -> allowed override for me
-  raw?: PermGet;
-};
-
-function truthy(v: unknown): boolean {
+function truthy(v: unknown) {
   return v === true;
 }
 
+function hasRolePermission(data: PermGet | null, role: string, key: string): boolean {
+  const rp = data?.role_perms?.find((r) => r.role === role && r.feature_key === key);
+  return rp ? truthy(rp.allowed) : false;
+}
+
+function getMemberOverride(data: PermGet | null, userId: string, key: string): boolean | null {
+  const mp = data?.member_perms?.find((m) => m.user_id === userId && m.feature_key === key);
+  return mp ? truthy(mp.allowed) : null;
+}
+
+function effectiveAllowed(data: PermGet | null, userId: string, role: string, key: string): boolean {
+  const ov = getMemberOverride(data, userId, key);
+  if (ov !== null) return ov;
+  return hasRolePermission(data, role, key);
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
 export default function HubClient() {
-  const supabase = supabaseBrowser();
+  const supabase = useMemo(() => supabaseBrowser(), []);
 
-  const [busy, setBusy] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
-
-  const [circles, setCircles] = useState<CircleRow[]>([]);
-  const [permByPid, setPermByPid] = useState<Record<string, PermCtx>>({});
   const [debug, setDebug] = useState<string[]>([]);
+  const [userId, setUserId] = useState<string>("");
 
-  function debugLog(line: string) {
-    setDebug((prev) => [...prev, `[${new Date().toISOString()}] ${line}`]);
-  }
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
+  const [permsByPid, setPermsByPid] = useState<Record<string, PermGet | null>>({});
 
-  // Canonical feature keys from your DB seed
-  const FEATURE = useMemo(
-    () => ({
-      today: "summary_view", // until you add a dedicated today_view
-      summary: "summary_view",
-      profile: "profile_view",
-      meds: "meds_view",
-      journals: "journals_view",
-    }),
-    []
-  );
-
-  function computePermCtx(payload: PermGet, uid: string): PermCtx {
-    const me = (payload.members ?? []).find((m) => m.user_id === uid);
-    const my_role = me?.role ?? null;
-    const is_controller = truthy(me?.is_controller);
-
-    const roleMap: Record<string, boolean> = {};
-    const memberMap: Record<string, boolean> = {};
-
-    if (my_role) {
-      for (const rp of payload.role_perms ?? []) {
-        if (rp.role === my_role) roleMap[rp.feature_key] = truthy(rp.allowed);
-      }
-    }
-
-    for (const mp of payload.member_perms ?? []) {
-      if (mp.user_id === uid) memberMap[mp.feature_key] = truthy(mp.allowed);
-    }
-
-    return { loaded: true, my_role, is_controller, roleMap, memberMap, raw: payload };
-  }
-
-  function allowed(ctx: PermCtx | undefined, feature_key: string): boolean {
-    if (!ctx?.loaded) return false;
-    // Controller gets management access implicitly in your system, but for view features we still honour keys.
-    // Member override wins
-    if (feature_key in ctx.memberMap) return ctx.memberMap[feature_key] === true;
-    return ctx.roleMap[feature_key] === true;
+  function log(line: string) {
+    setDebug((p) => [...p, `[${nowIso()}] ${line}`].slice(-250));
   }
 
   useEffect(() => {
-    let mounted = true;
-
-    async function load() {
-      setBusy(true);
+    (async () => {
       setMsg(null);
       setDebug([]);
-      setCircles([]);
-      setPermByPid({});
+      setMemberships([]);
+      setPatientsById({});
+      setPermsByPid({});
 
-      try {
-        const { data: auth, error: authErr } = await supabase.auth.getUser();
-        if (authErr) throw authErr;
-        const uid = auth.user?.id;
-        if (!uid) {
-          setMsg("not_authenticated");
-          return;
-        }
-
-        debugLog("Loading patient_members for current user...");
-        const { data: memberships, error: memErr } = await supabase
-          .from("patient_members")
-          .select("patient_id")
-          .eq("user_id", uid);
-
-        if (memErr) throw memErr;
-
-        const patientIds = Array.from(
-          new Set((memberships ?? []).map((m: any) => m.patient_id as string).filter(Boolean))
-        );
-
-        debugLog(`Memberships found: ${patientIds.length}`);
-
-        if (patientIds.length === 0) {
-          setCircles([]);
-          return;
-        }
-
-        debugLog("Loading patients display_name...");
-        const { data: patients, error: patErr } = await supabase
-          .from("patients")
-          .select("id, display_name")
-          .in("id", patientIds);
-
-        if (patErr) throw patErr;
-
-        const circleRows = (patients ?? []) as CircleRow[];
-
-        debugLog("Loading permissions per circle (permissions_get)...");
-        const nextPerms: Record<string, PermCtx> = {};
-
-        for (const c of circleRows) {
-          // payload key MUST be pid
-          const { data, error } = await supabase.rpc("permissions_get", { pid: c.id });
-
-          if (error) {
-            debugLog(`permissions_get ERROR pid=${c.id}: ${error.message}`);
-            nextPerms[c.id] = {
-              loaded: false,
-              my_role: null,
-              is_controller: false,
-              roleMap: {},
-              memberMap: {},
-            };
-            continue;
-          }
-
-          const payload = data as PermGet;
-          const ctx = computePermCtx(payload, uid);
-
-          debugLog(
-            `permissions_get OK pid=${c.id} my_role=${ctx.my_role ?? "null"} controller=${String(ctx.is_controller)} roleKeys=${Object.keys(
-              ctx.roleMap
-            ).length} memberKeys=${Object.keys(ctx.memberMap).length}`
-          );
-
-          nextPerms[c.id] = ctx;
-        }
-
-        if (!mounted) return;
-        setCircles(circleRows);
-        setPermByPid(nextPerms);
-      } catch (e: any) {
-        if (!mounted) return;
-        setMsg(e?.message ?? "hub_load_failed");
-      } finally {
-        if (mounted) setBusy(false);
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) {
+        setMsg(authErr.message);
+        return;
       }
-    }
+      const uid = auth.user?.id;
+      if (!uid) {
+        setMsg("not_authenticated");
+        return;
+      }
+      setUserId(uid);
 
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, [supabase, FEATURE]);
+      log("Loading patient_members for current user...");
+      const { data: pm, error: pmErr } = await supabase
+        .from("patient_members")
+        .select("patient_id, role, nickname, is_controller")
+        .eq("user_id", uid);
 
-  const topBtnStyle: React.CSSProperties = {
-    display: "inline-block",
-    padding: "10px 12px",
-    border: "1px solid #ccc",
-    borderRadius: 8,
-    textDecoration: "none",
-    color: "inherit",
-  };
+      if (pmErr) {
+        setMsg(pmErr.message);
+        return;
+      }
 
-  const circleBtnStyle: React.CSSProperties = {
-    display: "inline-block",
-    padding: "8px 10px",
-    border: "1px solid #ccc",
-    borderRadius: 8,
-    textDecoration: "none",
-    color: "inherit",
-    fontSize: 13,
-  };
+      const ms = (pm ?? []) as Membership[];
+      setMemberships(ms);
+      log(`Memberships found: ${ms.length}`);
 
-  const disabledBtnStyle: React.CSSProperties = {
-    ...circleBtnStyle,
-    opacity: 0.5,
-    pointerEvents: "none",
-  };
+      const pids = Array.from(new Set(ms.map((m) => m.patient_id)));
+      if (pids.length === 0) return;
+
+      log("Loading patients display_name...");
+      const { data: pts, error: pErr } = await supabase
+        .from("patients")
+        .select("id, display_name")
+        .in("id", pids)
+        .order("created_at", { ascending: false });
+
+      if (pErr) {
+        setMsg(pErr.message);
+        return;
+      }
+
+      const map: Record<string, PatientRow> = {};
+      for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
+      setPatientsById(map);
+
+      log("Loading permissions per circle (permissions_get)...");
+      const nextPerms: Record<string, PermGet | null> = {};
+      for (const pid of pids) {
+        const { data, error } = await supabase.rpc("permissions_get", { pid });
+        if (error) {
+          log(`permissions_get ERROR pid=${pid}: ${error.message}`);
+          nextPerms[pid] = null;
+        } else {
+          nextPerms[pid] = data as PermGet;
+          const keys = (data as any)?.role_perms?.length ?? 0;
+          log(`permissions_get OK pid=${pid} keys=${keys}`);
+        }
+      }
+      setPermsByPid(nextPerms);
+    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_hub"));
+  }, [supabase]);
 
   return (
-    <div style={{ padding: 16, maxWidth: 900, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>Hub</h1>
-
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <Link href="/app/account" style={topBtnStyle}>
-          Account
-        </Link>
-        <Link href="/app/onboarding" style={topBtnStyle}>
-          Manage circles
-        </Link>
-      </div>
-
-      {busy && <p>Loading…</p>}
-
-      {!busy && msg && (
-        <p style={{ padding: 10, border: "1px solid #ddd", borderRadius: 10 }}>{msg}</p>
-      )}
-
-      {!busy && !msg && circles.length === 0 && (
-        <p style={{ opacity: 0.85 }}>No circles yet. Go to “Manage circles”.</p>
-      )}
-
-      {!busy && !msg && circles.length > 0 && (
-        <div style={{ display: "grid", gap: 10 }}>
-          {circles.map((c) => {
-            const ctx = permByPid[c.id];
-
-            const canToday = allowed(ctx, FEATURE.today);
-            const canSummary = allowed(ctx, FEATURE.summary);
-            const canProfile = allowed(ctx, FEATURE.profile);
-            const canMeds = allowed(ctx, FEATURE.meds);
-            const canJournals = allowed(ctx, FEATURE.journals);
-
-            return (
-              <div
-                key={c.id}
-                style={{
-                  padding: 12,
-                  borderRadius: 12,
-                  border: "1px solid #e5e5e5",
-                  background: "rgba(0,0,0,0.02)",
-                }}
-              >
-                <div style={{ fontWeight: 800 }}>{c.display_name}</div>
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                  <code>{c.id}</code>
-                </div>
-
-                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                  Perms:{" "}
-                  <code>
-                    {ctx?.loaded ? `loaded (role=${ctx.my_role ?? "null"})` : "unknown"}
-                  </code>
-                </div>
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-                  <Link
-                    href={`/app/patients/${c.id}/today`}
-                    style={canToday ? circleBtnStyle : disabledBtnStyle}
-                  >
-                    Today
-                  </Link>
-
-                  <Link
-                    href={`/app/patients/${c.id}/summary`}
-                    style={canSummary ? circleBtnStyle : disabledBtnStyle}
-                  >
-                    Summary
-                  </Link>
-
-                  <Link
-                    href={`/app/patients/${c.id}/profile`}
-                    style={canProfile ? circleBtnStyle : disabledBtnStyle}
-                  >
-                    Profile
-                  </Link>
-
-                  <Link
-                    href={`/app/patients/${c.id}/medication-logs`}
-                    style={canMeds ? circleBtnStyle : disabledBtnStyle}
-                  >
-                    Medication logs
-                  </Link>
-
-                  <Link
-                    href={`/app/patients/${c.id}/journals`}
-                    style={canJournals ? circleBtnStyle : disabledBtnStyle}
-                  >
-                    Journals
-                  </Link>
-                </div>
-              </div>
-            );
-          })}
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Hub</h1>
+            <div className="cc-subtle">All circles you’re a member of</div>
+          </div>
+          <div className="cc-row">
+            <Link className="cc-btn" href="/app/account">
+              Account
+            </Link>
+          </div>
         </div>
-      )}
 
-      <div
-        id="debug"
-        style={{
-          marginTop: 16,
-          padding: 12,
-          border: "1px solid #e5e5e5",
-          borderRadius: 12,
-          background: "rgba(0,0,0,0.02)",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 12,
-          maxHeight: 260,
-          overflow: "auto",
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {debug.length ? debug.join("\n") : "Debug log will appear here."}
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
+          </div>
+        ) : null}
+
+        {memberships.length === 0 ? (
+          <div className="cc-card cc-card-pad">
+            <div className="cc-strong">No circles yet</div>
+            <div className="cc-subtle">You aren’t a member of any patient circles.</div>
+          </div>
+        ) : (
+          <div className="cc-stack">
+            {memberships.map((m) => {
+              const p = patientsById[m.patient_id];
+              const perms = permsByPid[m.patient_id] ?? null;
+
+              // Feature key mapping
+              const canToday = true; // Today is a hub dashboard; keep accessible if member
+              const canSummary = effectiveAllowed(perms, userId, m.role, "summary_view");
+              const canProfile = effectiveAllowed(perms, userId, m.role, "profile_view");
+              const canMeds = effectiveAllowed(perms, userId, m.role, "meds_view");
+              const canJournals = effectiveAllowed(perms, userId, m.role, "journals_view");
+              const canAppointments = effectiveAllowed(perms, userId, m.role, "appointments_view");
+              const canDm = effectiveAllowed(perms, userId, m.role, "dm_view");
+              const canSobriety = effectiveAllowed(perms, userId, m.role, "trackers_view");
+              const canPerms = m.is_controller || m.role === "patient";
+
+              return (
+                <div key={m.patient_id} className="cc-card cc-card-pad cc-stack">
+                  <div className="cc-row-between">
+                    <div className="cc-wrap">
+                      <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
+                      <div className="cc-small cc-wrap">{m.patient_id}</div>
+                      <div className="cc-small">
+                        role: <b>{m.role}</b> • controller: <b>{m.is_controller ? "true" : "false"}</b>
+                      </div>
+                    </div>
+
+                    <div className="cc-row">
+                      <span className="cc-pill cc-pill-primary">Perms: {perms ? "loaded" : "—"}</span>
+                    </div>
+                  </div>
+
+                  <div className="cc-row">
+                    <Link className="cc-btn cc-btn-primary" href={`/app/patients/${m.patient_id}/today`}>
+                      Today
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/summary`} aria-disabled={!canSummary}>
+                      <button className="cc-btn" disabled={!canSummary} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Summary
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/profile`}>
+                      <button className="cc-btn" disabled={!canProfile} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Profile
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/medication-logs`}>
+                      <button className="cc-btn" disabled={!canMeds} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Medication logs
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/journals`}>
+                      <button className="cc-btn" disabled={!canJournals} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Journals
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/appointments`}>
+                      <button className="cc-btn" disabled={!canAppointments} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Appointments
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/dm`}>
+                      <button className="cc-btn" disabled={!canDm} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        DMs
+                      </button>
+                    </Link>
+
+                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/sobriety`}>
+                      <button className="cc-btn" disabled={!canSobriety} style={{ padding: 0, border: "none", background: "transparent" }}>
+                        Sobriety
+                      </button>
+                    </Link>
+
+                    {canPerms ? (
+                      <Link className="cc-btn cc-btn-secondary" href={`/app/account/permissions?pid=${m.patient_id}`}>
+                        Permissions
+                      </Link>
+                    ) : null}
+                  </div>
+
+                  <div className="cc-small cc-subtle">
+                    Buttons are enabled only if your effective permission allows that feature (role defaults + member overrides).
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="cc-card cc-card-pad">
+          <div className="cc-strong">Debug</div>
+          <pre className="cc-panel-soft cc-wrap" style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+            {debug.join("\n")}
+          </pre>
+        </div>
       </div>
     </div>
   );

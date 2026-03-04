@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
@@ -12,25 +13,17 @@ type AppointmentRow = {
   patient_id: string;
   starts_at: string;
   ends_at: string | null;
-  title: string | null;
+  title: string;
   location: string | null;
   provider: string | null;
-  notes_encrypted: CipherEnvelopeV1 | null;
   status: string | null;
   created_by: string;
   created_at: string;
+  notes_encrypted: CipherEnvelopeV1 | null;
 };
 
-function toLocalInputValue(iso: string): string {
-  // yyyy-mm-ddThh:mm for <input type="datetime-local">
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInputValue(v: string): string {
-  // Treat as local time, convert to ISO
-  return new Date(v).toISOString();
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
 export default function AppointmentsClient({ patientId }: { patientId: string }) {
@@ -38,36 +31,32 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
   const { vaultKey } = usePatientVault();
 
   const [rows, setRows] = useState<AppointmentRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [plainById, setPlainById] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // selection + decrypted cache
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [notesPlainById, setNotesPlainById] = useState<Record<string, string>>({});
-
-  // form fields
-  const [startsAt, setStartsAt] = useState<string>(() => toLocalInputValue(new Date().toISOString()));
+  // form
+  const [startsAt, setStartsAt] = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [endsAt, setEndsAt] = useState<string>("");
-  const [title, setTitle] = useState<string>("");
+  const [title, setTitle] = useState<string>("Appointment");
   const [location, setLocation] = useState<string>("");
   const [provider, setProvider] = useState<string>("");
   const [status, setStatus] = useState<string>("scheduled");
-  const [notesPlain, setNotesPlain] = useState<string>("");
-
-  const [saving, setSaving] = useState(false);
+  const [notes, setNotes] = useState<string>("");
 
   async function refresh() {
     setLoading(true);
     setMsg(null);
     try {
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
       const { data, error } = await supabase
         .from("appointments")
-        .select(
-          "id, patient_id, starts_at, ends_at, title, location, provider, notes_encrypted, status, created_by, created_at"
-        )
+        .select("id, patient_id, starts_at, ends_at, title, location, provider, status, created_by, created_at, notes_encrypted")
         .eq("patient_id", patientId)
         .order("starts_at", { ascending: true })
-        .limit(200);
+        .limit(50);
 
       if (error) throw error;
       setRows((data ?? []) as AppointmentRow[]);
@@ -83,258 +72,203 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
-  function resetForm() {
-    setActiveId(null);
-    setStartsAt(toLocalInputValue(new Date().toISOString()));
-    setEndsAt("");
-    setTitle("");
-    setLocation("");
-    setProvider("");
-    setStatus("scheduled");
-    setNotesPlain("");
-  }
-
-  async function loadIntoForm(a: AppointmentRow) {
-    setActiveId(a.id);
-    setStartsAt(toLocalInputValue(a.starts_at));
-    setEndsAt(a.ends_at ? toLocalInputValue(a.ends_at) : "");
-    setTitle(a.title ?? "");
-    setLocation(a.location ?? "");
-    setProvider(a.provider ?? "");
-    setStatus(a.status ?? "scheduled");
-
-    // decrypt notes into form if possible
-    if (vaultKey && a.notes_encrypted) {
-      const cached = notesPlainById[a.id];
-      if (cached != null) {
-        setNotesPlain(cached);
-      } else {
-        const plain = await decryptStringWithLocalCache({
-          patientId,
-          table: "appointments",
-          rowId: a.id,
-          column: "notes_encrypted",
-          env: a.notes_encrypted,
-          vaultKey,
-        });
-        setNotesPlainById((prev) => ({ ...prev, [a.id]: plain }));
-        setNotesPlain(plain);
-      }
-    } else {
-      setNotesPlain("");
-    }
-  }
-
-  async function decryptNotesPreview(a: AppointmentRow) {
-    if (!vaultKey || !a.notes_encrypted) return;
-    if (notesPlainById[a.id] != null) return;
-
-    const plain = await decryptStringWithLocalCache({
-      patientId,
-      table: "appointments",
-      rowId: a.id,
-      column: "notes_encrypted",
-      env: a.notes_encrypted,
-      vaultKey,
-    });
-
-    setNotesPlainById((prev) => ({ ...prev, [a.id]: plain }));
-  }
-
-  async function save() {
-    if (!vaultKey) return setMsg("no_vault_share");
+  async function createAppointment() {
     setSaving(true);
     setMsg(null);
-
     try {
-      const notesEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: notesPlain,
-        aad: { table: "appointments", column: "notes_encrypted", patient_id: patientId },
-      });
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
 
-      const payload: Partial<AppointmentRow> & { patient_id: string; starts_at: string; notes_encrypted: any } = {
-        patient_id: patientId,
-        starts_at: fromLocalInputValue(startsAt),
-        ends_at: endsAt ? fromLocalInputValue(endsAt) : null,
-        title: title.trim() ? title.trim() : null,
-        location: location.trim() ? location.trim() : null,
-        provider: provider.trim() ? provider.trim() : null,
-        status: status.trim() ? status.trim() : null,
-        notes_encrypted: notesEnv,
-      };
-
-      if (!activeId) {
-        const { error } = await supabase.from("appointments").insert(payload as any);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("appointments").update(payload as any).eq("id", activeId);
-        if (error) throw error;
-
-        // update decrypted cache for this id
-        setNotesPlainById((prev) => ({ ...prev, [activeId]: notesPlain }));
+      let notesEnv: CipherEnvelopeV1 | null = null;
+      if (notes.trim()) {
+        if (!vaultKey) throw new Error("no_vault_share");
+        notesEnv = await vaultEncryptString({
+          vaultKey,
+          plaintext: notes,
+          aad: { table: "appointments", column: "notes_encrypted", patient_id: patientId },
+        });
       }
 
+      const starts = new Date(startsAt);
+      if (Number.isNaN(starts.getTime())) throw new Error("invalid_starts_at");
+
+      const ends = endsAt.trim() ? new Date(endsAt) : null;
+      if (endsAt.trim() && ends && Number.isNaN(ends.getTime())) throw new Error("invalid_ends_at");
+
+      const { error } = await supabase.from("appointments").insert({
+        patient_id: patientId,
+        starts_at: starts.toISOString(),
+        ends_at: ends ? ends.toISOString() : null,
+        title,
+        location: location || null,
+        provider: provider || null,
+        status: status || null,
+        notes_encrypted: notesEnv,
+      });
+
+      if (error) throw error;
+
+      setNotes("");
       await refresh();
-      resetForm();
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_save_appointment");
+      setMsg(e?.message ?? "failed_to_create_appointment");
     } finally {
       setSaving(false);
     }
   }
 
-  async function remove(id: string) {
-    setMsg(null);
-    try {
-      const { error } = await supabase.from("appointments").delete().eq("id", id);
-      if (error) throw error;
-      if (activeId === id) resetForm();
-      await refresh();
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_delete_appointment");
-    }
+  async function decryptNotes(row: AppointmentRow) {
+    if (!vaultKey || !row.notes_encrypted) return;
+    if (plainById[row.id] != null) return;
+
+    const plain = await decryptStringWithLocalCache({
+      patientId,
+      table: "appointments",
+      rowId: row.id,
+      column: "notes_encrypted",
+      env: row.notes_encrypted,
+      vaultKey,
+    });
+
+    setPlainById((p) => ({ ...p, [row.id]: plain }));
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>Appointments</h2>
-
-      {msg && <div style={{ border: "1px solid #c33", padding: 10, borderRadius: 10, marginBottom: 12 }}>{msg}</div>}
-
-      {!vaultKey && (
-        <div style={{ border: "1px solid #f0c", padding: 10, borderRadius: 10, marginBottom: 12 }}>
-          Vault key not available on this device. You can’t decrypt or save encrypted notes.
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 12 }}>
-        {/* List */}
-        <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-            <b>List</b>
-            <button onClick={refresh} disabled={loading} style={{ padding: "6px 10px", borderRadius: 10 }}>
-              {loading ? "…" : "Refresh"}
-            </button>
+    <div className="cc-page">
+      <div className="cc-container cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Appointments</h1>
+            <div className="cc-subtle cc-wrap">{patientId}</div>
           </div>
-
-          <div style={{ marginTop: 10 }}>
-            {rows.length === 0 ? (
-              <div style={{ fontSize: 12, opacity: 0.7 }}>No appointments.</div>
-            ) : (
-              rows.map((a) => {
-                const preview = notesPlainById[a.id];
-                return (
-                  <div
-                    key={a.id}
-                    style={{
-                      border: a.id === activeId ? "2px solid #222" : "1px solid #f0f0f0",
-                      borderRadius: 12,
-                      padding: 10,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <div style={{ fontWeight: 700 }}>{a.title ?? "Appointment"}</div>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>{new Date(a.starts_at).toLocaleString()}</div>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>
-                      {a.provider ? `Provider: ${a.provider}` : ""}
-                      {a.location ? ` • ${a.location}` : ""}
-                      {a.status ? ` • ${a.status}` : ""}
-                    </div>
-
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => loadIntoForm(a)}
-                        style={{ padding: "6px 10px", borderRadius: 10 }}
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        onClick={() => decryptNotesPreview(a)}
-                        disabled={!vaultKey || !a.notes_encrypted || preview != null}
-                        style={{ padding: "6px 10px", borderRadius: 10 }}
-                      >
-                        {preview != null ? "Notes decrypted" : "Decrypt notes"}
-                      </button>
-
-                      <button
-                        onClick={() => remove(a.id)}
-                        style={{ padding: "6px 10px", borderRadius: 10 }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-
-                    {preview != null ? (
-                      <div style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                        {preview.length > 140 ? preview.slice(0, 140) + "…" : preview}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })
-            )}
+          <div className="cc-row">
+            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>Today</Link>
+            <Link className="cc-btn" href="/app/hub">Hub</Link>
           </div>
         </div>
 
-        {/* Editor */}
-        <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <b>{activeId ? "Edit appointment" : "New appointment"}</b>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={resetForm} style={{ padding: "6px 10px", borderRadius: 10 }}>
-                New
-              </button>
-              <button onClick={save} disabled={!vaultKey || saving} style={{ padding: "6px 10px", borderRadius: 10 }}>
-                {saving ? "Saving…" : "Save"}
-              </button>
+        {msg ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{msg}</div>
+          </div>
+        ) : null}
+
+        {!vaultKey ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-subtle">Encrypted notes can’t be saved or decrypted.</div>
+          </div>
+        ) : null}
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <h2 className="cc-h2">New appointment</h2>
+
+          <div className="cc-grid-2">
+            <div className="cc-field">
+              <div className="cc-label">Starts at</div>
+              <input
+                className="cc-input"
+                type="datetime-local"
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+              />
             </div>
-          </div>
 
-          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Starts
-              <input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Ends (optional)
-              <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Title
-              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Checkup" />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Location
-              <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Optional" />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Provider
-              <input value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="Optional" />
-            </label>
-
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-              Status
-              <input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="scheduled / cancelled / done" />
-            </label>
-
-            <div>
-              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Notes (E2EE)</div>
-              <textarea
-                value={notesPlain}
-                onChange={(e) => setNotesPlain(e.target.value)}
-                rows={6}
-                style={{ width: "100%" }}
-                placeholder="Encrypted appointment notes…"
-                disabled={!vaultKey}
+            <div className="cc-field">
+              <div className="cc-label">Ends at (optional)</div>
+              <input
+                className="cc-input"
+                type="datetime-local"
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
               />
             </div>
           </div>
+
+          <div className="cc-grid-2">
+            <div className="cc-field">
+              <div className="cc-label">Title</div>
+              <input className="cc-input" value={title} onChange={(e) => setTitle(e.target.value)} />
+            </div>
+
+            <div className="cc-field">
+              <div className="cc-label">Status (optional)</div>
+              <input className="cc-input" value={status} onChange={(e) => setStatus(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="cc-grid-2">
+            <div className="cc-field">
+              <div className="cc-label">Location (optional)</div>
+              <input className="cc-input" value={location} onChange={(e) => setLocation(e.target.value)} />
+            </div>
+
+            <div className="cc-field">
+              <div className="cc-label">Provider (optional)</div>
+              <input className="cc-input" value={provider} onChange={(e) => setProvider(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="cc-field">
+            <div className="cc-label">Notes (E2EE, optional)</div>
+            <textarea className="cc-textarea" value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!vaultKey} />
+          </div>
+
+          <div className="cc-row">
+            <button className="cc-btn cc-btn-primary" onClick={createAppointment} disabled={saving}>
+              {saving ? "Saving…" : "Create"}
+            </button>
+            <button className="cc-btn" onClick={refresh} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <h2 className="cc-h2">Upcoming</h2>
+          </div>
+
+          {rows.length === 0 ? (
+            <div className="cc-small">No appointments yet.</div>
+          ) : (
+            rows.map((r) => {
+              const plain = plainById[r.id];
+              return (
+                <div key={r.id} className="cc-panel-soft">
+                  <div className="cc-row-between">
+                    <div className="cc-wrap">
+                      <div className="cc-strong">{r.title}</div>
+                      <div className="cc-small">
+                        {new Date(r.starts_at).toLocaleString()}
+                        {r.ends_at ? ` → ${new Date(r.ends_at).toLocaleString()}` : ""}
+                        {r.location ? ` • ${r.location}` : ""}
+                        {r.provider ? ` • ${r.provider}` : ""}
+                        {r.status ? ` • ${r.status}` : ""}
+                      </div>
+                    </div>
+
+                    <button
+                      className="cc-btn"
+                      onClick={() => decryptNotes(r)}
+                      disabled={!vaultKey || !r.notes_encrypted || !!plain}
+                    >
+                      {plain ? "Decrypted" : r.notes_encrypted ? "Decrypt notes" : "No notes"}
+                    </button>
+                  </div>
+
+                  {plain ? (
+                    <div className="cc-spacer-12">
+                      <div className="cc-panel" style={{ whiteSpace: "pre-wrap" }}>
+                        {plain}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

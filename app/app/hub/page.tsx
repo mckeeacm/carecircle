@@ -1,6 +1,5 @@
-// app/app/hub/page.tsx
 import HubClient from "./HubClient";
 
-export default function HubPage() {
+export default function Page() {
   return <HubClient />;
 }
