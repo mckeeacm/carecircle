@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { registerMyPublicKey } from "@/lib/e2ee/registerPublicKey";
 
 type Membership = {
   patient_id: string;
@@ -21,6 +22,11 @@ type InviteCreateResult = {
   token: string;
 };
 
+function isUuid(s: unknown): s is string {
+  if (typeof s !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const [email, setEmail] = useState<string>("");
@@ -29,12 +35,31 @@ export default function AccountClient() {
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
 
+  // E2EE device status
+  const [e2eeBusy, setE2eeBusy] = useState(false);
+  const [hasPublicKey, setHasPublicKey] = useState<boolean | null>(null);
+
   // invite UI state per circle
   const [inviteBusyPid, setInviteBusyPid] = useState<string | null>(null);
   const [inviteRoleByPid, setInviteRoleByPid] = useState<Record<string, string>>({});
   const [inviteDaysByPid, setInviteDaysByPid] = useState<Record<string, number>>({});
   const [inviteMaxUsesByPid, setInviteMaxUsesByPid] = useState<Record<string, number>>({});
   const [inviteUrlByPid, setInviteUrlByPid] = useState<Record<string, string>>({});
+
+  async function refreshHasPublicKey(uid: string) {
+    try {
+      const { data, error } = await supabase
+        .from("user_public_keys")
+        .select("user_id")
+        .eq("user_id", uid)
+        .limit(1);
+
+      if (error) throw error;
+      setHasPublicKey((data ?? []).length > 0);
+    } catch {
+      setHasPublicKey(null);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -51,6 +76,8 @@ export default function AccountClient() {
         return;
       }
 
+      await refreshHasPublicKey(uid);
+
       const { data: pm, error: pmErr } = await supabase
         .from("patient_members")
         .select("patient_id, role, nickname, is_controller")
@@ -64,7 +91,7 @@ export default function AccountClient() {
       const ms = (pm ?? []) as Membership[];
       setMemberships(ms);
 
-      const pids = Array.from(new Set(ms.map((m) => m.patient_id)));
+      const pids = Array.from(new Set(ms.map((m) => m.patient_id))).filter((pid) => isUuid(pid));
       if (pids.length === 0) return;
 
       const { data: pts, error: pErr } = await supabase
@@ -82,7 +109,7 @@ export default function AccountClient() {
       for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
       setPatientsById(map);
 
-      // seed defaults for invite form
+      // seed defaults for invite form (only for valid UUID pids)
       const roleSeed: Record<string, string> = {};
       const daysSeed: Record<string, number> = {};
       const usesSeed: Record<string, number> = {};
@@ -103,8 +130,30 @@ export default function AccountClient() {
     if (error) setMsg(error.message);
   }
 
-  async function createInvite(patientId: string) {
+  async function enableE2EEOnThisDevice() {
     setMsg(null);
+    setE2eeBusy(true);
+    try {
+      await registerMyPublicKey();
+      setHasPublicKey(true);
+      setMsg(
+        "E2EE enabled on this device (public key registered). If you still can’t decrypt for a circle, ask the controller to run Vault init again so you get a vault share."
+      );
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_register_public_key");
+    } finally {
+      setE2eeBusy(false);
+    }
+  }
+
+  async function createInvite(patientId: unknown) {
+    setMsg(null);
+
+    if (!isUuid(patientId)) {
+      setMsg(`invalid_patient_id_for_invite: ${String(patientId)}`);
+      return;
+    }
+
     setInviteBusyPid(patientId);
     setInviteUrlByPid((prev) => ({ ...prev, [patientId]: "" }));
 
@@ -114,7 +163,7 @@ export default function AccountClient() {
       const maxUses = Number(inviteMaxUsesByPid[patientId] ?? 1);
 
       const { data, error } = await supabase.rpc("patient_invite_create", {
-        pid: patientId,
+        pid: patientId, // ✅ label-stable
         p_role: role,
         p_expires_in_days: days,
         p_max_uses: maxUses,
@@ -123,10 +172,7 @@ export default function AccountClient() {
       if (error) throw error;
 
       const res = data as InviteCreateResult;
-      const origin =
-        typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
-
-      // join route suggestion: you can wire this into /app/onboarding later
+      const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
       const inviteUrl = `${origin}/app/onboarding?invite=${encodeURIComponent(res.token)}`;
 
       setInviteUrlByPid((prev) => ({ ...prev, [patientId]: inviteUrl }));
@@ -141,7 +187,7 @@ export default function AccountClient() {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      // ignore (some browsers block clipboard in non-https/local)
+      // ignore
     }
   }
 
@@ -163,7 +209,7 @@ export default function AccountClient() {
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
+            <div className="cc-status-error-title">Message</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
@@ -186,14 +232,50 @@ export default function AccountClient() {
           </div>
         </div>
 
+        {/* E2EE device setup */}
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <div>
+              <h2 className="cc-h2">E2EE device setup</h2>
+              <div className="cc-subtle">
+                Your account must have a public key in <code>user_public_keys</code> before a controller can create a vault share
+                for you.
+              </div>
+            </div>
+
+            <div className="cc-row">
+              <span className="cc-pill cc-pill-primary">
+                {hasPublicKey === true ? "Public key: OK" : hasPublicKey === false ? "Public key: missing" : "Public key: unknown"}
+              </span>
+
+              <button
+                className="cc-btn cc-btn-secondary"
+                onClick={enableE2EEOnThisDevice}
+                disabled={e2eeBusy || hasPublicKey === true}
+              >
+                {hasPublicKey === true ? "Enabled" : e2eeBusy ? "Enabling…" : "Enable E2EE on this device"}
+              </button>
+            </div>
+          </div>
+
+          {hasPublicKey === false ? (
+            <div className="cc-panel">
+              <div className="cc-small cc-subtle">
+                After enabling E2EE, ask the circle controller to run <b>Vault init</b> again so you receive a row in{" "}
+                <code>patient_vault_shares</code>.
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         {/* Vault access (device recovery / setup) */}
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
               <h2 className="cc-h2">Vault access on this device</h2>
               <div className="cc-subtle">
-                If DMs/journals/notes say “Vault key not available”, open the Vault for that circle to re-load the wrapped key
-                and store it locally on this device.
+                If DMs/journals/notes say “Vault key not available”, open the Vault for that circle to re-load the wrapped key and
+                store it locally on this device.
               </div>
             </div>
           </div>
@@ -204,32 +286,48 @@ export default function AccountClient() {
             <div className="cc-stack">
               {memberships.map((m) => {
                 const p = patientsById[m.patient_id];
+                const pidOk = isUuid(m.patient_id);
+
                 return (
-                  <div key={m.patient_id} className="cc-panel-soft cc-stack">
+                  <div key={String(m.patient_id)} className="cc-panel-soft cc-stack">
                     <div className="cc-row-between">
                       <div className="cc-wrap">
                         <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
-                        <div className="cc-small cc-wrap">{m.patient_id}</div>
+                        <div className="cc-small cc-wrap">{String(m.patient_id)}</div>
                         <div className="cc-small">
                           role: <b>{m.role}</b> • controller: <b>{m.is_controller ? "true" : "false"}</b>
                         </div>
+                        {!pidOk ? <div className="cc-small" style={{ color: "crimson" }}>invalid patient_id on membership</div> : null}
                       </div>
 
                       <div className="cc-row">
-                        <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${m.patient_id}/vault`}>
-                          Open Vault
-                        </Link>
+                        {pidOk ? (
+                          <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${m.patient_id}/vault`}>
+                            Open Vault
+                          </Link>
+                        ) : (
+                          <button className="cc-btn cc-btn-secondary" disabled>
+                            Open Vault
+                          </button>
+                        )}
 
                         {m.is_controller ? (
-                          <Link className="cc-btn" href={`/app/patients/${m.patient_id}/vault-init`}>
-                            Vault init
-                          </Link>
+                          pidOk ? (
+                            <Link className="cc-btn" href={`/app/patients/${m.patient_id}/vault-init`}>
+                              Vault init
+                            </Link>
+                          ) : (
+                            <button className="cc-btn" disabled>
+                              Vault init
+                            </button>
+                          )
                         ) : null}
                       </div>
                     </div>
 
                     <div className="cc-small cc-subtle">
-                      “Open Vault” should unwrap your share from <code>patient_vault_shares</code> and cache the vault key locally for this device.
+                      “Open Vault” should unwrap your share from <code>patient_vault_shares</code> and cache the vault key locally
+                      for this device.
                     </div>
                   </div>
                 );
@@ -244,7 +342,8 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">Invite a circle member</h2>
               <div className="cc-subtle">
-                Invites add a member + role. Vault sharing is separate (E2EE): a controller must share the vault key to the new member after they join.
+                Invites add a member + role. Vault sharing is separate (E2EE): a controller must share the vault key to the new
+                member after they join.
               </div>
             </div>
           </div>
@@ -256,6 +355,7 @@ export default function AccountClient() {
               {memberships
                 .filter((m) => m.is_controller)
                 .map((m) => {
+                  const pidOk = isUuid(m.patient_id);
                   const p = patientsById[m.patient_id];
                   const role = inviteRoleByPid[m.patient_id] ?? "family";
                   const days = inviteDaysByPid[m.patient_id] ?? 7;
@@ -264,14 +364,19 @@ export default function AccountClient() {
                   const busy = inviteBusyPid === m.patient_id;
 
                   return (
-                    <div key={`invite:${m.patient_id}`} className="cc-panel-soft cc-stack">
+                    <div key={`invite:${String(m.patient_id)}`} className="cc-panel-soft cc-stack">
                       <div className="cc-row-between">
                         <div className="cc-wrap">
                           <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
-                          <div className="cc-small cc-wrap">{m.patient_id}</div>
+                          <div className="cc-small cc-wrap">{String(m.patient_id)}</div>
+                          {!pidOk ? <div className="cc-small" style={{ color: "crimson" }}>invalid patient_id — can’t create invite</div> : null}
                         </div>
 
-                        <button className="cc-btn cc-btn-secondary" onClick={() => createInvite(m.patient_id)} disabled={busy}>
+                        <button
+                          className="cc-btn cc-btn-secondary"
+                          onClick={() => createInvite(m.patient_id)}
+                          disabled={busy || !pidOk}
+                        >
                           {busy ? "Creating…" : "Create invite link"}
                         </button>
                       </div>
@@ -283,6 +388,7 @@ export default function AccountClient() {
                             className="cc-select"
                             value={role}
                             onChange={(e) => setInviteRoleByPid((prev) => ({ ...prev, [m.patient_id]: e.target.value }))}
+                            disabled={!pidOk}
                           >
                             <option value="family">family</option>
                             <option value="carer">carer</option>
@@ -298,7 +404,10 @@ export default function AccountClient() {
                             type="number"
                             min={1}
                             value={days}
-                            onChange={(e) => setInviteDaysByPid((prev) => ({ ...prev, [m.patient_id]: Number(e.target.value || 7) }))}
+                            disabled={!pidOk}
+                            onChange={(e) =>
+                              setInviteDaysByPid((prev) => ({ ...prev, [m.patient_id]: Number(e.target.value || 7) }))
+                            }
                           />
                         </div>
 
@@ -309,6 +418,7 @@ export default function AccountClient() {
                             type="number"
                             min={1}
                             value={maxUses}
+                            disabled={!pidOk}
                             onChange={(e) =>
                               setInviteMaxUsesByPid((prev) => ({ ...prev, [m.patient_id]: Number(e.target.value || 1) }))
                             }
@@ -328,7 +438,8 @@ export default function AccountClient() {
                             </button>
                           </div>
                           <div className="cc-small cc-subtle">
-                            After they accept, go to <b>Vault init / Vault</b> and share the vault key to them (creates their <code>patient_vault_shares</code> row).
+                            After they accept, go to <b>Vault init / Vault</b> and share the vault key to them (creates their{" "}
+                            <code>patient_vault_shares</code> row).
                           </div>
                         </div>
                       ) : (
