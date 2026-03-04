@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type CircleMembership = {
@@ -19,7 +19,13 @@ type PatientRow = {
   created_at: string;
 };
 
-type StepId = "circle" | "vault" | "permissions" | "finish";
+type StepId = "invite" | "circle" | "vault" | "permissions" | "finish";
+
+type InviteAcceptResult = {
+  patient_id: string;
+  role: string;
+  already_member: boolean;
+};
 
 function safeBool(v: unknown) {
   return v === true;
@@ -28,6 +34,9 @@ function safeBool(v: unknown) {
 export default function OnboardingPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const router = useRouter();
+  const sp = useSearchParams();
+
+  const inviteToken = (sp.get("invite") ?? "").trim();
 
   const [uid, setUid] = useState<string | null>(null);
 
@@ -42,19 +51,35 @@ export default function OnboardingPage() {
 
   const [hasVaultShare, setHasVaultShare] = useState<boolean>(false);
 
+  // Invite state
+  const [inviteStatus, setInviteStatus] = useState<
+    "idle" | "checking" | "need_auth" | "accepting" | "accepted" | "error"
+  >("idle");
+  const [inviteResult, setInviteResult] = useState<InviteAcceptResult | null>(null);
+
   // Create circle form
   const [newCircleName, setNewCircleName] = useState<string>("");
 
+  const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
+  const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
+  const isController = safeBool(selectedMembership?.is_controller);
+
   const currentStep: StepId = useMemo(() => {
+    // If there is an invite token, we run invite as first step until accepted/failed.
+    if (inviteToken) {
+      if (inviteStatus === "accepted") {
+        // once accepted, continue normal flow
+      } else {
+        return "invite";
+      }
+    }
+
     if (!selectedPatientId) return "circle";
     if (!hasVaultShare) return "vault";
 
-    // If controller, we want them to seed/review permissions as part of onboarding.
-    const me = memberships.find((m) => m.patient_id === selectedPatientId);
-    if (me?.is_controller) return "permissions";
-
+    if (isController) return "permissions";
     return "finish";
-  }, [selectedPatientId, hasVaultShare, memberships]);
+  }, [inviteToken, inviteStatus, selectedPatientId, hasVaultShare, isController]);
 
   async function refresh() {
     setLoading(true);
@@ -67,6 +92,8 @@ export default function OnboardingPage() {
       const me = auth.user;
       if (!me) {
         // Your login page is "/", not "/login"
+        setUid(null);
+        setInviteStatus(inviteToken ? "need_auth" : "idle");
         router.push("/");
         return;
       }
@@ -107,7 +134,7 @@ export default function OnboardingPage() {
       setPatientsById(map);
 
       // choose a default circle:
-      // prefer controller circle, else first
+      // if selected already, keep it. else prefer controller circle, else first
       if (!selectedPatientId) {
         const controller = ms.find((m) => safeBool(m.is_controller));
         setSelectedPatientId(controller?.patient_id ?? ms[0].patient_id);
@@ -137,8 +164,55 @@ export default function OnboardingPage() {
     }
   }
 
+  async function acceptInviteIfPresent() {
+    if (!inviteToken) return;
+
+    setMsg(null);
+    setInviteResult(null);
+    setInviteStatus("checking");
+
+    try {
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+
+      if (!auth.user?.id) {
+        setInviteStatus("need_auth");
+        // already routed to "/" by refresh, but keep state consistent
+        return;
+      }
+
+      setInviteStatus("accepting");
+
+      const { data, error } = await supabase.rpc("patient_invite_accept", {
+        p_token: inviteToken,
+      });
+
+      if (error) throw error;
+
+      const res = data as InviteAcceptResult;
+      setInviteResult(res);
+      setInviteStatus("accepted");
+
+      // refresh memberships/patients, then select the invited circle
+      await refresh();
+      setSelectedPatientId(res.patient_id);
+
+      // also refresh vault share status (will typically be false)
+      await refreshVaultShare(res.patient_id, auth.user.id);
+    } catch (e: any) {
+      setInviteStatus("error");
+      setMsg(e?.message ?? "failed_to_accept_invite");
+    }
+  }
+
   useEffect(() => {
-    refresh();
+    (async () => {
+      await refresh();
+      // Only after we have auth state do we attempt invite accept
+      if (inviteToken) {
+        await acceptInviteIfPresent();
+      }
+    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -170,12 +244,10 @@ export default function OnboardingPage() {
       if (pErr) throw pErr;
 
       // 2) patient_members (make creator the controller)
-      // NOTE: role MUST satisfy patient_members_role_check.
-      // Until you add 'owner' to the constraint, use an allowed role label.
       const { error: mErr } = await supabase.from("patient_members").insert({
         patient_id: pid,
         user_id: uid,
-        role: "family", // change to "owner" AFTER you update the DB constraint
+        role: "family",
         nickname: null,
         is_controller: true,
         created_at: now,
@@ -210,10 +282,6 @@ export default function OnboardingPage() {
     }
   }
 
-  const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
-  const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
-  const isController = safeBool(selectedMembership?.is_controller);
-
   if (loading) {
     return (
       <div style={page}>
@@ -238,6 +306,15 @@ export default function OnboardingPage() {
           {/* Left: Stepper */}
           <div style={sideCard}>
             <div style={{ fontWeight: 800, marginBottom: 10 }}>Getting started</div>
+
+            {inviteToken ? (
+              <Step
+                label="Join circle from invite"
+                active={currentStep === "invite"}
+                done={inviteStatus === "accepted"}
+              />
+            ) : null}
+
             <Step label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
             <Step
               label="Set up vault access (E2EE)"
@@ -247,7 +324,6 @@ export default function OnboardingPage() {
             <Step
               label="Permissions & roles"
               active={currentStep === "permissions"}
-              // Controller finishes this step by visiting account perms, so “done” is visual only
               done={!!selectedPatientId && hasVaultShare && !isController ? true : false}
             />
             <Step label="Finish" active={currentStep === "finish"} done={false} />
@@ -266,6 +342,90 @@ export default function OnboardingPage() {
 
           {/* Right: Active step content */}
           <div style={card}>
+            {currentStep === "invite" && (
+              <>
+                <h2 style={h2}>Joining a circle…</h2>
+                <p style={p}>
+                  You opened an invite link. We’ll add you to the circle and set your role.
+                </p>
+
+                {inviteStatus === "checking" || inviteStatus === "accepting" ? (
+                  <div style={infoBox}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                      {inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}
+                    </div>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>Please keep this page open.</div>
+                  </div>
+                ) : null}
+
+                {inviteStatus === "need_auth" ? (
+                  <div style={errorBox}>
+                    <div style={{ fontWeight: 900, marginBottom: 6 }}>Sign in required</div>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>
+                      You need to sign in before you can accept an invite link.
+                    </div>
+                    <div style={{ height: 12 }} />
+                    <button onClick={() => router.push("/")} style={primaryBtn}>
+                      Go to sign in
+                    </button>
+                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                      After signing in, open the invite link again.
+                    </div>
+                  </div>
+                ) : null}
+
+                {inviteStatus === "error" ? (
+                  <>
+                    <div style={errorBox}>
+                      Invite could not be accepted. {msg ?? "unknown_error"}
+                    </div>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                      <button onClick={acceptInviteIfPresent} style={primaryBtn}>
+                        Try again
+                      </button>
+                      <button onClick={() => router.push("/app/account")} style={secondaryBtn}>
+                        Open Account
+                      </button>
+                      <button onClick={() => router.push("/app/hub")} style={secondaryBtn}>
+                        Open Hub
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+
+                {inviteStatus === "accepted" && inviteResult ? (
+                  <>
+                    <div style={okBox}>
+                      {inviteResult.already_member ? "You’re already a member of this circle." : "You’ve joined the circle!"}
+                      <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+                        role: <b>{inviteResult.role}</b>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 14, ...infoBox }}>
+                      <div style={{ fontWeight: 900, marginBottom: 6 }}>Next: vault access</div>
+                      <div style={{ fontSize: 13, opacity: 0.9 }}>
+                        Because of end-to-end encryption, joining does not automatically give decryption access.
+                        A controller must share the vault key to you. Once they do, open Vault to cache it on this device.
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                      <button
+                        onClick={() => {
+                          if (!uid) return;
+                          refreshVaultShare(inviteResult.patient_id, uid);
+                        }}
+                        style={secondaryBtn}
+                      >
+                        Continue
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </>
+            )}
+
             {currentStep === "circle" && (
               <>
                 <h2 style={h2}>Welcome to CareCircle</h2>
@@ -351,19 +511,29 @@ export default function OnboardingPage() {
                 <div style={infoBox}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>What happens here?</div>
                   <div style={{ fontSize: 13, opacity: 0.9 }}>
-                    You’ll initialise this device’s E2EE access for the selected circle. After that, journals, DM, sobriety notes,
+                    You’ll set up this device’s E2EE access for the selected circle. After that, journals, DM, sobriety notes,
                     appointment notes and profile sensitive fields can decrypt locally.
                   </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                  <button
-                    onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
-                    style={primaryBtn}
-                    disabled={!selectedPatientId}
-                  >
-                    Initialise vault for this circle
-                  </button>
+                  {isController ? (
+                    <button
+                      onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
+                      style={primaryBtn}
+                      disabled={!selectedPatientId}
+                    >
+                      Initialise vault for this circle
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => router.push(`/app/patients/${selectedPatientId}/vault`)}
+                      style={primaryBtn}
+                      disabled={!selectedPatientId}
+                    >
+                      Open Vault for this circle
+                    </button>
+                  )}
 
                   <button
                     onClick={() => uid && selectedPatientId && refreshVaultShare(selectedPatientId, uid)}
@@ -378,7 +548,8 @@ export default function OnboardingPage() {
                   <div style={{ marginTop: 12, ...okBox }}>Vault share detected for this circle on this account.</div>
                 ) : (
                   <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
-                    No vault share detected yet (or access is blocked by RLS). After vault init, click “recheck”.
+                    No vault share detected yet (or access is blocked by RLS). If you’re not a controller, you may need to ask
+                    the controller to share the vault key to you first.
                   </div>
                 )}
               </>
@@ -393,7 +564,9 @@ export default function OnboardingPage() {
 
                 <div style={infoBox}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>Recommended next step</div>
-                  <div style={{ fontSize: 13, opacity: 0.9 }}>Seed defaults (safe + idempotent), then open Account to edit permissions.</div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                    Seed defaults (safe + idempotent), then open Account to edit permissions.
+                  </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
@@ -410,7 +583,9 @@ export default function OnboardingPage() {
                   </button>
                 </div>
 
-                <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>Tip: Roles are applied first, then per-member overrides.</div>
+                <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
+                  Tip: Roles are applied first, then per-member overrides.
+                </div>
               </>
             )}
 
@@ -441,7 +616,7 @@ export default function OnboardingPage() {
         </div>
 
         <div style={{ marginTop: 14, fontSize: 12, opacity: 0.65 }}>
-          Onboarding is guided but reversible — you can always revisit permissions or vault init later.
+          Onboarding is guided but reversible — you can always revisit permissions or vault access later.
         </div>
       </div>
     </div>
