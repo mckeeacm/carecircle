@@ -1,4 +1,3 @@
-// app/app/patients/[id]/profile/page.tsx
 import ProfileClient from "./ProfileClient";
 
 export default async function Page({
