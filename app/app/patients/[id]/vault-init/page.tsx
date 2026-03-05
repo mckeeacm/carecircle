@@ -1,15 +1,7 @@
 import { Suspense } from "react";
 import VaultInitClient from "./VaultInitClient";
 
-function normaliseId(raw: unknown): string {
-  if (!raw) return "";
-  if (Array.isArray(raw)) return String(raw[0] ?? "");
-  return String(raw);
-}
-
-export default function Page({ params }: { params: { id?: string | string[] } }) {
-  const pid = normaliseId(params?.id);
-
+export default function Page() {
   return (
     <Suspense
       fallback={
@@ -18,7 +10,7 @@ export default function Page({ params }: { params: { id?: string | string[] } })
         </div>
       }
     >
-      <VaultInitClient pid={pid} />
+      <VaultInitClient />
     </Suspense>
   );
 }
