@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { registerMyPublicKey } from "@/lib/e2ee/registerPublicKey";
 
 type CircleMembership = {
   patient_id: string;
@@ -34,14 +35,6 @@ function safeBool(v: unknown) {
 
 const INVITE_TOKEN_LS_KEY = "cc:invite_token_v1";
 
-function buildSignInUrl(nextPath: string) {
-  // Your app currently redirects unauth users to "/".
-  // We preserve onboarding continuation via next=.
-  const u = new URL("/", window.location.origin);
-  u.searchParams.set("next", nextPath);
-  return u.pathname + u.search;
-}
-
 function readStoredInviteToken() {
   try {
     const t = localStorage.getItem(INVITE_TOKEN_LS_KEY);
@@ -54,17 +47,18 @@ function readStoredInviteToken() {
 function storeInviteToken(t: string) {
   try {
     localStorage.setItem(INVITE_TOKEN_LS_KEY, t);
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 function clearStoredInviteToken() {
   try {
     localStorage.removeItem(INVITE_TOKEN_LS_KEY);
-  } catch {
-    // ignore
-  }
+  } catch {}
+}
+
+function origin() {
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
 }
 
 export default function OnboardingClient() {
@@ -86,6 +80,7 @@ export default function OnboardingClient() {
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
 
   const [hasVaultShare, setHasVaultShare] = useState<boolean>(false);
+  const [hasPublicKey, setHasPublicKey] = useState<boolean | null>(null);
 
   // Invite state
   const [inviteStatus, setInviteStatus] = useState<
@@ -96,60 +91,69 @@ export default function OnboardingClient() {
   // Create circle form
   const [newCircleName, setNewCircleName] = useState<string>("");
 
+  // Sign-in UI
+  const [email, setEmail] = useState<string>("");
+  const [signInSent, setSignInSent] = useState<boolean>(false);
+
   const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
   const isController = safeBool(selectedMembership?.is_controller);
 
   const inviteTokenForFlow = inviteTokenFromUrl || readStoredInviteToken() || "";
 
-  const currentStep: StepId = useMemo(() => {
-    if (inviteTokenForFlow) {
-      if (inviteStatus === "accepted") {
-        // continue normal flow
-      } else {
-        return "invite";
-      }
+  const getAuthedUserId = useCallback(async () => {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    return data.session?.user?.id ?? null;
+  }, [supabase]);
+
+  async function refreshHasPublicKey(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from("user_public_keys")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      setHasPublicKey(!!data);
+    } catch {
+      setHasPublicKey(null);
     }
+  }
 
-    if (!selectedPatientId) return "circle";
-    if (!hasVaultShare) return "vault";
-    if (isController) return "permissions";
-    return "finish";
-  }, [inviteTokenForFlow, inviteStatus, selectedPatientId, hasVaultShare, isController]);
+  async function refreshVaultShare(patientId: string, userId: string) {
+    setHasVaultShare(false);
+    try {
+      const { data, error } = await supabase
+        .from("patient_vault_shares")
+        .select("id")
+        .eq("patient_id", patientId)
+        .eq("user_id", userId)
+        .limit(1);
 
-  const ensureAuthedOrRedirect = useCallback(
-    async (nextPath: string) => {
-      // Prefer getSession() for “are we signed in?” checks to avoid noisy getUser() errors on first load.
-      const { data, error } = await supabase.auth.getSession();
-      if (error) return { ok: false as const, userId: null as string | null };
-
-      const session = data.session;
-      if (!session?.user?.id) {
-        setUid(null);
-
-        // If invite is present (URL or stored), we explicitly show need_auth (not “Auth session missing!”).
-        if (inviteTokenForFlow) setInviteStatus("need_auth");
-
-        router.replace(buildSignInUrl(nextPath));
-        return { ok: false as const, userId: null as string | null };
-      }
-
-      setUid(session.user.id);
-      return { ok: true as const, userId: session.user.id };
-    },
-    [inviteTokenForFlow, router, supabase]
-  );
+      if (error) throw error;
+      setHasVaultShare((data ?? []).length > 0);
+    } catch {
+      setHasVaultShare(false);
+    }
+  }
 
   async function refresh() {
     setLoading(true);
     setMsg(null);
 
     try {
-      // If not signed in, redirect; do not throw “Auth session missing!”
-      const auth = await ensureAuthedOrRedirect("/app/onboarding");
-      if (!auth.ok || !auth.userId) return;
+      const meId = await getAuthedUserId();
+      if (!meId) {
+        setUid(null);
+        setHasPublicKey(null);
+        if (inviteTokenForFlow) setInviteStatus("need_auth");
+        return;
+      }
 
-      const meId = auth.userId;
+      setUid(meId);
+      await refreshHasPublicKey(meId);
 
       const { data: mem, error: memErr } = await supabase
         .from("patient_members")
@@ -193,23 +197,6 @@ export default function OnboardingClient() {
     }
   }
 
-  async function refreshVaultShare(patientId: string, userId: string) {
-    setHasVaultShare(false);
-    try {
-      const { data, error } = await supabase
-        .from("patient_vault_shares")
-        .select("id")
-        .eq("patient_id", patientId)
-        .eq("user_id", userId)
-        .limit(1);
-
-      if (error) throw error;
-      setHasVaultShare((data ?? []).length > 0);
-    } catch {
-      setHasVaultShare(false);
-    }
-  }
-
   const acceptInviteToken = useCallback(
     async (token: string) => {
       if (!token) return;
@@ -218,12 +205,10 @@ export default function OnboardingClient() {
       setInviteResult(null);
       setInviteStatus("checking");
 
-      // Ensure token is stored (so if we redirect mid-way we can resume)
       storeInviteToken(token);
 
-      // Ensure signed in; if not, redirect and stop here.
-      const auth = await ensureAuthedOrRedirect("/app/onboarding");
-      if (!auth.ok || !auth.userId) {
+      const meId = await getAuthedUserId();
+      if (!meId) {
         setInviteStatus("need_auth");
         return;
       }
@@ -231,63 +216,57 @@ export default function OnboardingClient() {
       setInviteStatus("accepting");
 
       try {
-        const { data, error } = await supabase.rpc("patient_invite_accept", {
-          p_token: token,
-        });
-
+        const { data, error } = await supabase.rpc("patient_invite_accept", { p_token: token });
         if (error) throw error;
 
         const res = data as InviteAcceptResult;
         setInviteResult(res);
         setInviteStatus("accepted");
 
-        // Clear stored token after success (prevents re-accepting on refresh)
         clearStoredInviteToken();
 
         await refresh();
         setSelectedPatientId(res.patient_id);
-        await refreshVaultShare(res.patient_id, auth.userId);
 
-        // Remove token from URL if still present (belt + braces)
+        await refreshHasPublicKey(meId);
+        await refreshVaultShare(res.patient_id, meId);
+
         router.replace("/app/onboarding");
       } catch (e: any) {
-        // If user is somehow signed out mid-request, treat as need_auth not error spam.
         const m = (e?.message ?? "").toLowerCase();
         if (m.includes("auth session missing") || m.includes("jwt") || m.includes("not authenticated")) {
           setInviteStatus("need_auth");
           setMsg(null);
-          router.replace(buildSignInUrl("/app/onboarding"));
           return;
         }
-
         setInviteStatus("error");
         setMsg(e?.message ?? "failed_to_accept_invite");
       }
     },
-    [ensureAuthedOrRedirect, refresh, router, supabase]
+    [getAuthedUserId, refresh, router, supabase]
   );
 
+  // Boot
   useEffect(() => {
     (async () => {
-      // If invite token is in URL, store it immediately and remove from URL to avoid leaks.
+      // store invite & strip URL, but continue flow in same mount
       if (inviteTokenFromUrl) {
         storeInviteToken(inviteTokenFromUrl);
         router.replace("/app/onboarding");
-        // Do not continue in this render; next render will use stored token.
-        return;
       }
 
       await refresh();
 
       const stored = readStoredInviteToken();
-      if (stored) {
-        await acceptInviteToken(stored);
-      }
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
+      if (stored) await acceptInviteToken(stored);
+    })().catch((e: any) => {
+      setMsg(e?.message ?? "failed_to_load_onboarding");
+      setLoading(false);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Resume after login if the user signs in while this page is open.
+  // Resume after sign-in (email link / OAuth)
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange(async (event) => {
       if (event === "SIGNED_IN") {
@@ -297,13 +276,56 @@ export default function OnboardingClient() {
       }
     });
     return () => data.subscription.unsubscribe();
-  }, [acceptInviteToken, refresh, supabase.auth]);
+  }, [acceptInviteToken, refresh, supabase]);
 
+  // When patient selection changes, refresh vault share for that patient
   useEffect(() => {
     if (!uid || !selectedPatientId) return;
     refreshVaultShare(selectedPatientId, uid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, selectedPatientId]);
+
+  async function sendMagicLink() {
+    const e = email.trim().toLowerCase();
+    if (!e) {
+      setMsg("Please enter your email address.");
+      return;
+    }
+
+    setBusy("signin");
+    setMsg(null);
+    setSignInSent(false);
+
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: e,
+        options: {
+          emailRedirectTo: `${origin()}/app/onboarding`,
+        },
+      });
+      if (error) throw error;
+
+      setSignInSent(true);
+    } catch (err: any) {
+      setMsg(err?.message ?? "failed_to_send_sign_in_link");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function enableE2EEHere() {
+    setBusy("enable-e2ee");
+    setMsg(null);
+    try {
+      await registerMyPublicKey();
+      if (uid) await refreshHasPublicKey(uid);
+      setMsg("E2EE enabled on this device. If you’re joining a circle, ask the controller to re-run Vault init to create your vault share.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_register_public_key");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function createCircle() {
     if (!uid) return;
@@ -355,12 +377,25 @@ export default function OnboardingClient() {
     try {
       const { error } = await supabase.rpc("permissions_seed_defaults", { pid: selectedPatientId });
       if (error) throw error;
+      setMsg("Defaults seeded.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_seed_defaults");
     } finally {
       setBusy(null);
     }
   }
+
+  // ✅ Smart step logic: auto-skip Vault if already has share
+  const currentStep: StepId = useMemo(() => {
+    if (inviteTokenForFlow) {
+      if (inviteStatus !== "accepted") return "invite";
+    }
+
+    if (!selectedPatientId) return "circle";
+    if (!hasVaultShare) return "vault";
+    if (isController) return "permissions";
+    return "finish";
+  }, [inviteTokenForFlow, inviteStatus, selectedPatientId, hasVaultShare, isController]);
 
   function StepRow({ label, active, done }: { label: string; active: boolean; done: boolean }) {
     return (
@@ -384,12 +419,8 @@ export default function OnboardingClient() {
               <div className="cc-subtle">Loading…</div>
             </div>
             <div className="cc-row">
-              <Link className="cc-btn" href="/app/hub">
-                Hub
-              </Link>
-              <Link className="cc-btn" href="/app/account">
-                Account
-              </Link>
+              <Link className="cc-btn" href="/app/hub">Hub</Link>
+              <Link className="cc-btn" href="/app/account">Account</Link>
             </div>
           </div>
 
@@ -412,18 +443,14 @@ export default function OnboardingClient() {
           </div>
 
           <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
+            <Link className="cc-btn" href="/app/hub">Hub</Link>
+            <Link className="cc-btn" href="/app/account">Account</Link>
           </div>
         </div>
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
+            <div className="cc-status-error-title">Message</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
@@ -450,11 +477,18 @@ export default function OnboardingClient() {
                   Role: <b>{selectedMembership?.role ?? "—"}</b>
                   {isController ? " • controller" : ""}
                 </div>
+                <div className="cc-small">
+                  E2EE key:{" "}
+                  <b>
+                    {hasPublicKey === true ? "enabled" : hasPublicKey === false ? "missing" : "unknown"}
+                  </b>
+                </div>
               </div>
             ) : null}
           </div>
 
           <div className="cc-card cc-card-pad cc-stack">
+            {/* INVITE STEP */}
             {currentStep === "invite" ? (
               <>
                 <h2 className="cc-h2">Joining a circle…</h2>
@@ -471,12 +505,38 @@ export default function OnboardingClient() {
                   <div className="cc-status cc-status-error">
                     <div className="cc-status-error-title">Sign in required</div>
                     <div className="cc-subtle">
-                      Please sign in to accept this invite. You’ll be brought back here automatically.
+                      Enter the email address that received the invite. We’ll send you a sign-in link, then you’ll be brought back here automatically.
                     </div>
+
                     <div className="cc-spacer-12" />
-                    <button className="cc-btn cc-btn-primary" onClick={() => router.replace(buildSignInUrl("/app/onboarding"))}>
-                      Go to sign in
-                    </button>
+
+                    <div className="cc-row">
+                      <input
+                        className="cc-input"
+                        placeholder="Email address"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        inputMode="email"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                      />
+                      <button className="cc-btn cc-btn-primary" onClick={sendMagicLink} disabled={busy === "signin"}>
+                        {busy === "signin" ? "Sending…" : "Send sign-in link"}
+                      </button>
+                    </div>
+
+                    {signInSent ? (
+                      <div className="cc-panel-blue" style={{ marginTop: 12 }}>
+                        <div className="cc-strong">Check your email</div>
+                        <div className="cc-subtle">
+                          Open the sign-in link on this same device/browser. Once signed in, we’ll automatically accept the invite.
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="cc-small cc-subtle" style={{ marginTop: 10 }}>
+                      Tip: If you’re opening the invite inside another app (Facebook/Instagram), use “Open in Browser”.
+                    </div>
                   </div>
                 ) : null}
 
@@ -491,12 +551,8 @@ export default function OnboardingClient() {
                       <button className="cc-btn cc-btn-primary" onClick={() => acceptInviteToken(readStoredInviteToken() ?? "")}>
                         Try again
                       </button>
-                      <button className="cc-btn" onClick={() => router.push("/app/account")}>
-                        Open Account
-                      </button>
-                      <button className="cc-btn" onClick={() => router.push("/app/hub")}>
-                        Open Hub
-                      </button>
+                      <button className="cc-btn" onClick={() => router.push("/app/account")}>Open Account</button>
+                      <button className="cc-btn" onClick={() => router.push("/app/hub")}>Open Hub</button>
                     </div>
                   </>
                 ) : null}
@@ -512,20 +568,13 @@ export default function OnboardingClient() {
                       </div>
                     </div>
 
-                    <div className="cc-panel-blue">
-                      <div className="cc-strong">Next: vault access</div>
-                      <div className="cc-subtle">
-                        Joining doesn’t automatically give decryption access. A controller must share the vault key to you.
-                        Once they do, open Vault to cache it on this device.
-                      </div>
-                    </div>
-
                     <div className="cc-row">
                       <button
-                        className="cc-btn"
-                        onClick={() => {
+                        className="cc-btn cc-btn-primary"
+                        onClick={async () => {
                           if (!uid) return;
-                          refreshVaultShare(inviteResult.patient_id, uid);
+                          await refreshHasPublicKey(uid);
+                          await refreshVaultShare(inviteResult.patient_id, uid);
                         }}
                       >
                         Continue
@@ -536,6 +585,7 @@ export default function OnboardingClient() {
               </>
             ) : null}
 
+            {/* CIRCLE STEP */}
             {currentStep === "circle" ? (
               <>
                 <h2 className="cc-h2">Welcome to CareCircle</h2>
@@ -545,9 +595,7 @@ export default function OnboardingClient() {
                   <>
                     <div className="cc-kicker">Select an existing circle</div>
                     <select className="cc-select" value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)}>
-                      <option value="" disabled>
-                        Select…
-                      </option>
+                      <option value="" disabled>Select…</option>
                       {memberships.map((m) => (
                         <option key={m.patient_id} value={m.patient_id}>
                           {(patientsById[m.patient_id]?.display_name ?? m.patient_id) + (safeBool(m.is_controller) ? " (controller)" : "")}
@@ -591,10 +639,11 @@ export default function OnboardingClient() {
                 {selectedPatientId ? (
                   <div className="cc-row">
                     <button
-                      className="cc-btn"
-                      onClick={() => {
+                      className="cc-btn cc-btn-primary"
+                      onClick={async () => {
                         if (!uid) return;
-                        refreshVaultShare(selectedPatientId, uid);
+                        await refreshHasPublicKey(uid);
+                        await refreshVaultShare(selectedPatientId, uid);
                       }}
                     >
                       Continue
@@ -604,51 +653,99 @@ export default function OnboardingClient() {
               </>
             ) : null}
 
+            {/* VAULT STEP (SMART) */}
             {currentStep === "vault" ? (
               <>
-                <h2 className="cc-h2">Secure vault (end-to-end encryption)</h2>
-                <div className="cc-subtle">This device needs a vault share to decrypt and create secure content.</div>
+                <h2 className="cc-h2">Vault access (E2EE)</h2>
+                <div className="cc-subtle">
+                  To decrypt and create secure content on this device, you need:
+                  <br />
+                  1) a device public key (<code>user_public_keys</code>) and
+                  <br />
+                  2) a vault share from the controller (<code>patient_vault_shares</code>).
+                </div>
 
-                <div className="cc-panel">
-                  <div className="cc-strong">What happens here?</div>
-                  <div className="cc-subtle">
-                    The vault key stays client-side. Controllers initialise + share. Members open Vault to cache their wrapped key for this device.
+                {hasPublicKey === false ? (
+                  <div className="cc-panel-blue">
+                    <div className="cc-strong">Step 1: Enable E2EE on this device</div>
+                    <div className="cc-subtle">
+                      This registers your public key so a controller can share the vault key to you.
+                    </div>
+                    <div className="cc-row" style={{ marginTop: 10 }}>
+                      <button className="cc-btn cc-btn-primary" onClick={enableE2EEHere} disabled={busy === "enable-e2ee"}>
+                        {busy === "enable-e2ee" ? "Enabling…" : "Enable E2EE on this device"}
+                      </button>
+                      <button
+                        className="cc-btn"
+                        onClick={async () => uid && (await refreshHasPublicKey(uid))}
+                        disabled={!uid}
+                      >
+                        Recheck
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : null}
 
-                <div className="cc-row">
-                  {isController ? (
-                    <button className="cc-btn cc-btn-primary" onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}>
-                      Initialise vault for this circle
-                    </button>
-                  ) : (
-                    <button className="cc-btn cc-btn-primary" onClick={() => router.push(`/app/patients/${selectedPatientId}/vault`)}>
-                      Open Vault for this circle
-                    </button>
-                  )}
+                {hasPublicKey === true && !hasVaultShare ? (
+                  <div className="cc-panel">
+                    <div className="cc-strong">Step 2: Waiting for controller</div>
+                    <div className="cc-subtle">
+                      Your device key is ready, but you don’t yet have a vault share for this circle.
+                      Ask the controller to run <b>Vault init</b> again so your share is created.
+                    </div>
 
-                  <button
-                    className="cc-btn"
-                    onClick={() => uid && selectedPatientId && refreshVaultShare(selectedPatientId, uid)}
-                    disabled={!selectedPatientId}
-                  >
-                    I’ve done it — recheck
-                  </button>
-                </div>
+                    <div className="cc-row" style={{ marginTop: 10 }}>
+                      {isController ? (
+                        <button
+                          className="cc-btn cc-btn-primary"
+                          onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
+                        >
+                          Open Vault init
+                        </button>
+                      ) : (
+                        <button
+                          className="cc-btn"
+                          onClick={() => router.push(`/app/account`)}
+                        >
+                          Open Account
+                        </button>
+                      )}
+
+                      <button
+                        className="cc-btn cc-btn-secondary"
+                        onClick={async () => {
+                          if (!uid || !selectedPatientId) return;
+                          await refreshHasPublicKey(uid);
+                          await refreshVaultShare(selectedPatientId, uid);
+                        }}
+                      >
+                        I’ve asked them — recheck
+                      </button>
+
+                      <button
+                        className="cc-btn"
+                        onClick={() => router.push(`/app/patients/${selectedPatientId}/vault`)}
+                      >
+                        Open Vault page
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 {hasVaultShare ? (
                   <div className="cc-status cc-status-ok">
                     <div className="cc-strong">Vault share detected for this circle.</div>
-                    <div className="cc-subtle">You can decrypt and create encrypted content on this device.</div>
+                    <div className="cc-subtle">You can unlock the vault and start using encrypted features on this device.</div>
                   </div>
                 ) : (
                   <div className="cc-small cc-subtle">
-                    No vault share detected yet (or access blocked by RLS). If you’re not a controller, ask the controller to share the vault key to you.
+                    No vault share detected yet (or access blocked by RLS).
                   </div>
                 )}
               </>
             ) : null}
 
+            {/* PERMISSIONS STEP */}
             {currentStep === "permissions" ? (
               <>
                 <h2 className="cc-h2">Permissions & roles</h2>
@@ -666,8 +763,8 @@ export default function OnboardingClient() {
                     {busy === "seed" ? "Seeding…" : "Seed defaults"}
                   </button>
 
-                  <button className="cc-btn" onClick={() => router.push("/app/account")}>
-                    Open Account (permissions)
+                  <button className="cc-btn" onClick={() => router.push("/app/account/permissions")}>
+                    Open Permissions
                   </button>
 
                   <button className="cc-btn" onClick={() => router.push("/app/hub")}>
@@ -679,29 +776,31 @@ export default function OnboardingClient() {
               </>
             ) : null}
 
+            {/* FINISH STEP */}
             {currentStep === "finish" ? (
               <>
                 <h2 className="cc-h2">All set</h2>
-                <div className="cc-subtle">You’re ready to use CareCircle across your circles.</div>
+                <div className="cc-subtle">
+                  You’re ready to use CareCircle.
+                  {!isController ? " If you can’t decrypt yet, open Vault once the controller shares access." : ""}
+                </div>
 
                 <div className="cc-row">
                   <button className="cc-btn cc-btn-primary" onClick={() => router.push("/app/hub")}>
                     Go to Hub
                   </button>
-                  <button className="cc-btn" onClick={() => router.push("/app/today")}>
-                    Go to Today
+                  <button className="cc-btn" onClick={() => router.push("/app/account")}>
+                    Open Account
                   </button>
                 </div>
-
-                {!isController ? (
-                  <div className="cc-small cc-subtle">You’re not a controller in this circle, so permissions are managed by the controller.</div>
-                ) : null}
               </>
             ) : null}
           </div>
         </div>
 
-        <div className="cc-small cc-subtle">Onboarding is guided but reversible — you can always revisit permissions or vault access later.</div>
+        <div className="cc-small cc-subtle">
+          Onboarding is guided but reversible — you can revisit permissions or vault access later.
+        </div>
       </div>
     </div>
   );

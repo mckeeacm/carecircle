@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import VaultInitClient from "./VaultInitClient";
+import VaultShareClient from "./VaultShareClient";
 
 export default function Page({ params }: { params: { id: string } }) {
   return (
@@ -7,12 +7,12 @@ export default function Page({ params }: { params: { id: string } }) {
       fallback={
         <div className="cc-page">
           <div className="cc-container cc-card cc-card-pad">
-            Loading vault initialisation…
+            Loading vault sharing…
           </div>
         </div>
       }
     >
-      <VaultInitClient pid={params.id} />
+      <VaultShareClient pid={params.id} />
     </Suspense>
   );
 }

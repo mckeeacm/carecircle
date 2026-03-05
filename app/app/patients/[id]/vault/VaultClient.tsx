@@ -3,28 +3,30 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { getSodium } from "@/lib/e2ee/sodium";
 import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
+import { unwrapVaultKeyForMe, type WrappedKeyV1 } from "@/lib/e2ee/vaultShares";
 
-type Props = { pid: string };
+type Props = {
+  pid: string;
+};
 
 type CacheRecord = {
   v: 1;
   createdAt: number;
   expiresAt: number;
-  vaultKeyB64: string; // base64 raw bytes
+  vaultKeyB64: string;
 };
 
 function cacheKey(pid: string, uid: string) {
   return `carecircle:vaultkey:v1:${pid}:${uid}`;
 }
 
-// Base64 helpers (explicit and stable)
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   return btoa(bin);
 }
+
 function base64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
@@ -33,12 +35,15 @@ function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
   try {
     const raw = localStorage.getItem(cacheKey(pid, uid));
     if (!raw) return null;
+
     const rec = JSON.parse(raw) as CacheRecord;
     if (!rec || rec.v !== 1) return null;
-    if (!rec.expiresAt || Date.now() > rec.expiresAt) {
+
+    if (Date.now() > rec.expiresAt) {
       localStorage.removeItem(cacheKey(pid, uid));
       return null;
     }
+
     return base64ToBytes(rec.vaultKeyB64);
   } catch {
     return null;
@@ -48,93 +53,78 @@ function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
 function writeCachedVaultKey(pid: string, uid: string, vaultKey: Uint8Array) {
   const now = Date.now();
   const ttlDays = 30;
-  const expiresAt = now + ttlDays * 24 * 60 * 60 * 1000;
 
   const rec: CacheRecord = {
     v: 1,
     createdAt: now,
-    expiresAt,
+    expiresAt: now + ttlDays * 24 * 60 * 60 * 1000,
     vaultKeyB64: bytesToBase64(vaultKey),
   };
 
   try {
     localStorage.setItem(cacheKey(pid, uid), JSON.stringify(rec));
-  } catch {
-    // ignore (private mode / kiosk restrictions)
-  }
+  } catch {}
 }
 
 function forgetCachedVaultKey(pid: string, uid: string) {
   try {
     localStorage.removeItem(cacheKey(pid, uid));
-  } catch {
-    // ignore
-  }
-}
-
-function extractCiphertextB64(env: any): string | null {
-  // Your wrapVaultKeyForRecipient() envelope key may differ.
-  // We support a few common variants so it works immediately.
-  const v =
-    env?.ciphertext ??
-    env?.ct ??
-    env?.data ??
-    env?.sealed ??
-    env?.ciphertext_b64 ??
-    env?.ciphertextB64 ??
-    null;
-
-  return typeof v === "string" && v.trim() ? v.trim() : null;
+  } catch {}
 }
 
 export default function VaultClient({ pid }: Props) {
   const supabase = useMemo(() => supabaseBrowser(), []);
 
   const [uid, setUid] = useState<string>("");
+
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [hasCached, setHasCached] = useState(false);
   const [hasShareRow, setHasShareRow] = useState<boolean | null>(null);
+  const [isController, setIsController] = useState(false);
 
   async function refresh() {
     setLoading(true);
     setMsg(null);
 
     try {
-      const { data, error } = await supabase.auth.getSession();
+      const { data: sessionData, error } = await supabase.auth.getSession();
       if (error) throw error;
 
-      const me = data.session?.user;
+      const me = sessionData.session?.user;
+
       if (!me?.id) {
         setUid("");
-        setHasCached(false);
-        setHasShareRow(null);
         setMsg("Please sign in to access the vault.");
         return;
       }
 
       setUid(me.id);
 
-      // Local cache status
       const cached = readCachedVaultKey(pid, me.id);
       setHasCached(!!cached);
 
-      // Share status (own share only; policy is auth.uid() = user_id)
-      const { data: share, error: shareErr } = await supabase
+      // check vault share
+      const { data: share } = await supabase
         .from("patient_vault_shares")
-        .select("id")
+        .select("wrapped_key")
         .eq("patient_id", pid)
         .eq("user_id", me.id)
         .maybeSingle();
 
-      if (shareErr) {
-        // If policy misconfigured, we won't crash; just show unknown.
-        setHasShareRow(null);
-      } else {
-        setHasShareRow(!!share?.id);
-      }
+      setHasShareRow(!!share?.wrapped_key);
+
+      // check controller role
+      const { data: mem } = await supabase
+        .from("patient_members")
+        .select("is_controller")
+        .eq("patient_id", pid)
+        .eq("user_id", me.id)
+        .maybeSingle();
+
+      setIsController(mem?.is_controller === true);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_vault");
     } finally {
@@ -144,7 +134,6 @@ export default function VaultClient({ pid }: Props) {
 
   useEffect(() => {
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pid]);
 
   async function unlockFromShare() {
@@ -152,66 +141,48 @@ export default function VaultClient({ pid }: Props) {
     setMsg(null);
 
     try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const me = sessionData.session?.user;
 
-      const me = data.session?.user;
       if (!me?.id) throw new Error("not_authenticated");
-      setUid(me.id);
 
-      // Load my share row
-      const { data: share, error: shareErr } = await supabase
+      const { data: share } = await supabase
         .from("patient_vault_shares")
-        .select("id, wrapped_key")
+        .select("wrapped_key")
         .eq("patient_id", pid)
         .eq("user_id", me.id)
         .maybeSingle();
 
-      if (shareErr) throw shareErr;
-
       if (!share?.wrapped_key) {
-        setHasShareRow(false);
         throw new Error(
-          "No vault share found for your account in this circle. Ask the controller to run Vault init (after you enable E2EE on this device)."
+          "No vault share found. Ask the controller to share the vault key."
         );
       }
 
-      // Unwrap locally using device keypair
-      const sodium = await getSodium();
+      const wrapped = share.wrapped_key as WrappedKeyV1;
+
       const kp: any = await getOrCreateDeviceKeypair();
 
-      const publicKey: Uint8Array =
+      const myPublicKey =
         kp?.publicKey ?? kp?.public_key ?? kp?.pk;
 
-      const secretKey: Uint8Array =
+      const myPrivateKey =
         kp?.secretKey ?? kp?.secret_key ?? kp?.sk;
 
-      if (!publicKey || !secretKey) {
+      if (!myPublicKey || !myPrivateKey) {
         throw new Error("device_keypair_missing_keys");
       }
 
-      // Your wrapped_key is a jsonb envelope produced by wrapVaultKeyForRecipient().
-      const env: any = share.wrapped_key;
-      const ciphertextB64 = extractCiphertextB64(env);
-
-      if (!ciphertextB64) {
-        throw new Error("wrapped_key_envelope_missing_ciphertext");
-      }
-
-      const ciphertext = base64ToBytes(ciphertextB64);
-
-      // libsodium: crypto_box_seal_open(ciphertext, recipient_pk, recipient_sk)
-      const vaultKey = sodium.crypto_box_seal_open(ciphertext, publicKey, secretKey);
-
-      if (!(vaultKey instanceof Uint8Array) || vaultKey.length === 0) {
-        throw new Error("failed_to_unwrap_vault_key");
-      }
+      const vaultKey = await unwrapVaultKeyForMe({
+        wrapped,
+        myPublicKey,
+        myPrivateKey,
+      });
 
       writeCachedVaultKey(pid, me.id, vaultKey);
 
       setHasCached(true);
-      setHasShareRow(true);
-      setMsg("Vault key unlocked and stored on this device (30 day cache).");
+      setMsg("Vault unlocked on this device.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_unlock_vault");
     } finally {
@@ -221,21 +192,22 @@ export default function VaultClient({ pid }: Props) {
 
   async function forgetOnDevice() {
     if (!uid) return;
+
     setBusy("forget");
     setMsg(null);
-    try {
-      forgetCachedVaultKey(pid, uid);
-      setHasCached(false);
-      setMsg("Vault key removed from this device.");
-    } finally {
-      setBusy(null);
-    }
+
+    forgetCachedVaultKey(pid, uid);
+
+    setHasCached(false);
+    setBusy(null);
   }
 
   if (loading) {
     return (
       <div className="cc-page">
-        <div className="cc-container cc-card cc-card-pad">Loading vault…</div>
+        <div className="cc-container cc-card cc-card-pad">
+          Loading vault…
+        </div>
       </div>
     );
   }
@@ -243,11 +215,12 @@ export default function VaultClient({ pid }: Props) {
   return (
     <div className="cc-page">
       <div className="cc-container cc-stack">
+
         <div className="cc-row-between">
           <div>
             <div className="cc-kicker">CareCircle</div>
             <h1 className="cc-h1">Vault</h1>
-            <div className="cc-subtle cc-wrap">Circle: {pid}</div>
+            <div className="cc-subtle">Circle: {pid}</div>
           </div>
 
           <div className="cc-row">
@@ -260,72 +233,87 @@ export default function VaultClient({ pid }: Props) {
           </div>
         </div>
 
-        {msg ? (
+        {msg && (
           <div className="cc-status cc-status-error">
             <div className="cc-status-error-title">Message</div>
-            <div className="cc-wrap">{msg}</div>
+            <div>{msg}</div>
           </div>
-        ) : null}
+        )}
+
+        {/* Vault controls */}
 
         <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-row-between">
-            <div>
-              <div className="cc-strong">Vault status</div>
-              <div className="cc-subtle">
-                This device can decrypt encrypted fields only if the vault key is cached locally.
-              </div>
+
+          <div className="cc-strong">Vault status</div>
+
+          <div className="cc-row">
+            <span className="cc-pill">
+              Cache: {hasCached ? "present" : "missing"}
+            </span>
+
+            <span className="cc-pill">
+              Share: {hasShareRow ? "present" : "missing"}
+            </span>
+          </div>
+
+          <div className="cc-row">
+
+            <button
+              className="cc-btn cc-btn-primary"
+              onClick={unlockFromShare}
+              disabled={busy === "unlock"}
+            >
+              {busy === "unlock" ? "Unlocking…" : "Unlock vault"}
+            </button>
+
+            <button
+              className="cc-btn cc-btn-danger"
+              onClick={forgetOnDevice}
+              disabled={busy === "forget" || !hasCached}
+            >
+              Forget vault on this device
+            </button>
+
+            <button className="cc-btn" onClick={refresh}>
+              Refresh
+            </button>
+
+          </div>
+
+        </div>
+
+        {/* Controller sharing panel */}
+
+        {isController && (
+          <div className="cc-card cc-card-pad cc-stack">
+
+            <div className="cc-strong">Controller tools</div>
+
+            <div className="cc-subtle">
+              Share the vault key with circle members who have enabled E2EE.
             </div>
 
             <div className="cc-row">
-              <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
-                Cache: {hasCached ? "present" : "missing"}
-              </span>
-              <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
-                Share: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
-              </span>
+
+              <Link
+                className="cc-btn cc-btn-primary"
+                href={`/app/patients/${pid}/vault-share`}
+              >
+                Share vault to members
+              </Link>
+
+              <Link
+                className="cc-btn"
+                href={`/app/patients/${pid}/vault-init`}
+              >
+                Recreate vault
+              </Link>
+
             </div>
+
           </div>
+        )}
 
-          <div className="cc-row">
-            <button className="cc-btn cc-btn-primary" onClick={unlockFromShare} disabled={busy === "unlock" || !pid}>
-              {busy === "unlock" ? "Unlocking…" : "Unlock vault on this device"}
-            </button>
-
-            <button className="cc-btn cc-btn-danger" onClick={forgetOnDevice} disabled={busy === "forget" || !uid || !hasCached}>
-              {busy === "forget" ? "Forgetting…" : "Forget vault on this device"}
-            </button>
-
-            <button className="cc-btn" onClick={refresh} disabled={!!busy}>
-              Refresh
-            </button>
-          </div>
-
-          {!hasCached ? (
-            <div className="cc-panel">
-              <div className="cc-strong">If you can’t unlock</div>
-              <div className="cc-subtle">
-                Ask the circle controller to run <b>Vault init</b> after you’ve enabled E2EE in Account (public key registered).
-                Your database currently shows only the controller has a vault share.
-              </div>
-            </div>
-          ) : null}
-
-          <div className="cc-small cc-subtle">
-            The vault key is stored only on this device (localStorage). Deleting browser storage or using a new device will require unlocking again.
-          </div>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-strong">Controller tools</div>
-          <div className="cc-subtle">
-            If you are a controller in this circle, use Vault init to regenerate and share vault shares.
-          </div>
-          <div className="cc-row">
-            <Link className="cc-btn" href={`/app/patients/${pid}/vault-init`}>
-              Open Vault init
-            </Link>
-          </div>
-        </div>
       </div>
     </div>
   );
