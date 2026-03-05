@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import VaultInitButton from "./VaultInitButton";
+import VaultInitClient from "./VaultInitClient";
 
 export default function Page({ params }: { params: { id: string } }) {
   if (!params?.id) return notFound();
@@ -15,16 +15,7 @@ export default function Page({ params }: { params: { id: string } }) {
         </div>
       }
     >
-      <div className="cc-page">
-        <div className="cc-container cc-stack">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Vault setup</h1>
-          </div>
-
-          <VaultInitButton pid={params.id} />
-        </div>
-      </div>
+      <VaultInitClient pid={params.id} />
     </Suspense>
   );
 }
