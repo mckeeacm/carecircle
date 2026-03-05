@@ -1,10 +1,7 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
 import VaultInitClient from "./VaultInitClient";
 
 export default function Page({ params }: { params: { id: string } }) {
-  if (!params?.id) return notFound();
-
   return (
     <Suspense
       fallback={
