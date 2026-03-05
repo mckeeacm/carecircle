@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
@@ -32,12 +32,47 @@ function safeBool(v: unknown) {
   return v === true;
 }
 
+const INVITE_TOKEN_LS_KEY = "cc:invite_token_v1";
+
+function buildSignInUrl(nextPath: string) {
+  // Your app currently redirects unauth users to "/".
+  // We preserve onboarding continuation via next=.
+  const u = new URL("/", window.location.origin);
+  u.searchParams.set("next", nextPath);
+  return u.pathname + u.search;
+}
+
+function readStoredInviteToken() {
+  try {
+    const t = localStorage.getItem(INVITE_TOKEN_LS_KEY);
+    return (t ?? "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function storeInviteToken(t: string) {
+  try {
+    localStorage.setItem(INVITE_TOKEN_LS_KEY, t);
+  } catch {
+    // ignore
+  }
+}
+
+function clearStoredInviteToken() {
+  try {
+    localStorage.removeItem(INVITE_TOKEN_LS_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function OnboardingClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const router = useRouter();
   const sp = useSearchParams();
 
-  const inviteToken = (sp.get("invite") ?? "").trim();
+  const inviteTokenFromUrl = (sp.get("invite") ?? "").trim();
 
   const [uid, setUid] = useState<string | null>(null);
 
@@ -65,8 +100,10 @@ export default function OnboardingClient() {
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
   const isController = safeBool(selectedMembership?.is_controller);
 
+  const inviteTokenForFlow = inviteTokenFromUrl || readStoredInviteToken() || "";
+
   const currentStep: StepId = useMemo(() => {
-    if (inviteToken) {
+    if (inviteTokenForFlow) {
       if (inviteStatus === "accepted") {
         // continue normal flow
       } else {
@@ -78,30 +115,46 @@ export default function OnboardingClient() {
     if (!hasVaultShare) return "vault";
     if (isController) return "permissions";
     return "finish";
-  }, [inviteToken, inviteStatus, selectedPatientId, hasVaultShare, isController]);
+  }, [inviteTokenForFlow, inviteStatus, selectedPatientId, hasVaultShare, isController]);
+
+  const ensureAuthedOrRedirect = useCallback(
+    async (nextPath: string) => {
+      // Prefer getSession() for “are we signed in?” checks to avoid noisy getUser() errors on first load.
+      const { data, error } = await supabase.auth.getSession();
+      if (error) return { ok: false as const, userId: null as string | null };
+
+      const session = data.session;
+      if (!session?.user?.id) {
+        setUid(null);
+
+        // If invite is present (URL or stored), we explicitly show need_auth (not “Auth session missing!”).
+        if (inviteTokenForFlow) setInviteStatus("need_auth");
+
+        router.replace(buildSignInUrl(nextPath));
+        return { ok: false as const, userId: null as string | null };
+      }
+
+      setUid(session.user.id);
+      return { ok: true as const, userId: session.user.id };
+    },
+    [inviteTokenForFlow, router, supabase]
+  );
 
   async function refresh() {
     setLoading(true);
     setMsg(null);
 
     try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
+      // If not signed in, redirect; do not throw “Auth session missing!”
+      const auth = await ensureAuthedOrRedirect("/app/onboarding");
+      if (!auth.ok || !auth.userId) return;
 
-      const me = auth.user;
-      if (!me) {
-        setUid(null);
-        setInviteStatus(inviteToken ? "need_auth" : "idle");
-        router.push("/");
-        return;
-      }
-
-      setUid(me.id);
+      const meId = auth.userId;
 
       const { data: mem, error: memErr } = await supabase
         .from("patient_members")
         .select("patient_id, role, nickname, is_controller, created_at")
-        .eq("user_id", me.id)
+        .eq("user_id", meId)
         .order("created_at", { ascending: true });
 
       if (memErr) throw memErr;
@@ -157,54 +210,94 @@ export default function OnboardingClient() {
     }
   }
 
-  async function acceptInviteIfPresent() {
-    if (!inviteToken) return;
+  const acceptInviteToken = useCallback(
+    async (token: string) => {
+      if (!token) return;
 
-    setMsg(null);
-    setInviteResult(null);
-    setInviteStatus("checking");
+      setMsg(null);
+      setInviteResult(null);
+      setInviteStatus("checking");
 
-    try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
+      // Ensure token is stored (so if we redirect mid-way we can resume)
+      storeInviteToken(token);
 
-      if (!auth.user?.id) {
+      // Ensure signed in; if not, redirect and stop here.
+      const auth = await ensureAuthedOrRedirect("/app/onboarding");
+      if (!auth.ok || !auth.userId) {
         setInviteStatus("need_auth");
         return;
       }
 
       setInviteStatus("accepting");
 
-      // 🔒 label-stable payload key
-      const { data, error } = await supabase.rpc("patient_invite_accept", {
-        p_token: inviteToken,
-      });
+      try {
+        const { data, error } = await supabase.rpc("patient_invite_accept", {
+          p_token: token,
+        });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const res = data as InviteAcceptResult;
-      setInviteResult(res);
-      setInviteStatus("accepted");
+        const res = data as InviteAcceptResult;
+        setInviteResult(res);
+        setInviteStatus("accepted");
 
-      await refresh();
-      setSelectedPatientId(res.patient_id);
-      await refreshVaultShare(res.patient_id, auth.user.id);
+        // Clear stored token after success (prevents re-accepting on refresh)
+        clearStoredInviteToken();
 
-      // harden: remove token from URL once used
-      router.replace("/app/onboarding");
-    } catch (e: any) {
-      setInviteStatus("error");
-      setMsg(e?.message ?? "failed_to_accept_invite");
-    }
-  }
+        await refresh();
+        setSelectedPatientId(res.patient_id);
+        await refreshVaultShare(res.patient_id, auth.userId);
+
+        // Remove token from URL if still present (belt + braces)
+        router.replace("/app/onboarding");
+      } catch (e: any) {
+        // If user is somehow signed out mid-request, treat as need_auth not error spam.
+        const m = (e?.message ?? "").toLowerCase();
+        if (m.includes("auth session missing") || m.includes("jwt") || m.includes("not authenticated")) {
+          setInviteStatus("need_auth");
+          setMsg(null);
+          router.replace(buildSignInUrl("/app/onboarding"));
+          return;
+        }
+
+        setInviteStatus("error");
+        setMsg(e?.message ?? "failed_to_accept_invite");
+      }
+    },
+    [ensureAuthedOrRedirect, refresh, router, supabase]
+  );
 
   useEffect(() => {
     (async () => {
+      // If invite token is in URL, store it immediately and remove from URL to avoid leaks.
+      if (inviteTokenFromUrl) {
+        storeInviteToken(inviteTokenFromUrl);
+        router.replace("/app/onboarding");
+        // Do not continue in this render; next render will use stored token.
+        return;
+      }
+
       await refresh();
-      if (inviteToken) await acceptInviteIfPresent();
+
+      const stored = readStoredInviteToken();
+      if (stored) {
+        await acceptInviteToken(stored);
+      }
     })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Resume after login if the user signs in while this page is open.
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === "SIGNED_IN") {
+        const stored = readStoredInviteToken();
+        if (stored) await acceptInviteToken(stored);
+        else await refresh();
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, [acceptInviteToken, refresh, supabase.auth]);
 
   useEffect(() => {
     if (!uid || !selectedPatientId) return;
@@ -339,7 +432,7 @@ export default function OnboardingClient() {
           <div className="cc-card cc-card-pad cc-stack">
             <div className="cc-strong">Getting started</div>
 
-            {inviteToken ? (
+            {inviteTokenForFlow ? (
               <StepRow label="Join circle from invite" active={currentStep === "invite"} done={inviteStatus === "accepted"} />
             ) : null}
 
@@ -377,9 +470,11 @@ export default function OnboardingClient() {
                 {inviteStatus === "need_auth" ? (
                   <div className="cc-status cc-status-error">
                     <div className="cc-status-error-title">Sign in required</div>
-                    <div className="cc-subtle">You need to sign in before you can accept an invite link.</div>
+                    <div className="cc-subtle">
+                      Please sign in to accept this invite. You’ll be brought back here automatically.
+                    </div>
                     <div className="cc-spacer-12" />
-                    <button className="cc-btn cc-btn-primary" onClick={() => router.push("/")}>
+                    <button className="cc-btn cc-btn-primary" onClick={() => router.replace(buildSignInUrl("/app/onboarding"))}>
                       Go to sign in
                     </button>
                   </div>
@@ -393,7 +488,7 @@ export default function OnboardingClient() {
                     </div>
 
                     <div className="cc-row">
-                      <button className="cc-btn cc-btn-primary" onClick={acceptInviteIfPresent}>
+                      <button className="cc-btn cc-btn-primary" onClick={() => acceptInviteToken(readStoredInviteToken() ?? "")}>
                         Try again
                       </button>
                       <button className="cc-btn" onClick={() => router.push("/app/account")}>
@@ -455,8 +550,7 @@ export default function OnboardingClient() {
                       </option>
                       {memberships.map((m) => (
                         <option key={m.patient_id} value={m.patient_id}>
-                          {(patientsById[m.patient_id]?.display_name ?? m.patient_id) +
-                            (safeBool(m.is_controller) ? " (controller)" : "")}
+                          {(patientsById[m.patient_id]?.display_name ?? m.patient_id) + (safeBool(m.is_controller) ? " (controller)" : "")}
                         </option>
                       ))}
                     </select>
@@ -513,9 +607,7 @@ export default function OnboardingClient() {
             {currentStep === "vault" ? (
               <>
                 <h2 className="cc-h2">Secure vault (end-to-end encryption)</h2>
-                <div className="cc-subtle">
-                  This device needs a vault share to decrypt and create secure content.
-                </div>
+                <div className="cc-subtle">This device needs a vault share to decrypt and create secure content.</div>
 
                 <div className="cc-panel">
                   <div className="cc-strong">What happens here?</div>
@@ -602,18 +694,14 @@ export default function OnboardingClient() {
                 </div>
 
                 {!isController ? (
-                  <div className="cc-small cc-subtle">
-                    You’re not a controller in this circle, so permissions are managed by the controller.
-                  </div>
+                  <div className="cc-small cc-subtle">You’re not a controller in this circle, so permissions are managed by the controller.</div>
                 ) : null}
               </>
             ) : null}
           </div>
         </div>
 
-        <div className="cc-small cc-subtle">
-          Onboarding is guided but reversible — you can always revisit permissions or vault access later.
-        </div>
+        <div className="cc-small cc-subtle">Onboarding is guided but reversible — you can always revisit permissions or vault access later.</div>
       </div>
     </div>
   );
