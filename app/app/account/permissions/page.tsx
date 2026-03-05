@@ -1,11 +1,15 @@
 import { Suspense } from "react";
 import PermissionsClient from "./PermissionsClient";
 
-export const dynamic = "force-dynamic";
-
 export default function Page() {
   return (
-    <Suspense fallback={<div style={{ padding: 24 }}>Loading permissions…</div>}>
+    <Suspense
+      fallback={
+        <div className="cc-page">
+          <div className="cc-container cc-card cc-card-pad">Loading permissions…</div>
+        </div>
+      }
+    >
       <PermissionsClient />
     </Suspense>
   );

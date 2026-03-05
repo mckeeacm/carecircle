@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
@@ -30,11 +30,20 @@ function truthy(v: unknown): boolean {
   return v === true;
 }
 
+function isUuid(s: unknown): s is string {
+  if (typeof s !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 export default function PermissionsClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const sp = useSearchParams();
 
   const [msg, setMsg] = useState<string | null>(null);
+
+  const [uid, setUid] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+
   const [patients, setPatients] = useState<PatientRow[]>([]);
   const [patientId, setPatientId] = useState<string>("");
 
@@ -44,94 +53,152 @@ export default function PermissionsClient() {
   const [loading, setLoading] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  useEffect(() => {
-    const preset = sp.get("pid");
-    if (preset && !patientId) setPatientId(preset);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const bootedRef = useRef(false);
 
-  // Load controller patients
+  async function getSessionUser() {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    return data.session?.user ?? null;
+  }
+
+  // Boot: lock onto auth session reliably (prevents RPC being called as anon)
   useEffect(() => {
+    let alive = true;
+
+    const preset = (sp.get("pid") ?? "").trim();
+    if (preset && isUuid(preset)) setPatientId((prev) => prev || preset);
+
     (async () => {
-      setMsg(null);
+      try {
+        setMsg(null);
+        const u = await getSessionUser();
+        if (!alive) return;
 
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
-        setMsg("not_authenticated");
-        return;
+        setUid(u?.id ?? "");
+        setEmail(u?.email ?? "");
+
+        bootedRef.current = true;
+
+        if (!u?.id) {
+          setMsg("Not signed in (no session). If you’re signed in in another tab, refresh once.");
+          return;
+        }
+
+        await loadControllerPatients(u.id);
+        await loadFeatures();
+      } catch (e: any) {
+        if (!alive) return;
+        setMsg(e?.message ?? "failed_to_boot_permissions");
       }
+    })();
 
-      // Controllers only (stable rule)
-      const { data: pm, error: pmErr } = await supabase
-        .from("patient_members")
-        .select("patient_id")
-        .eq("user_id", auth.user.id)
-        .eq("is_controller", true);
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      const u = session?.user;
+      setUid(u?.id ?? "");
+      setEmail(u?.email ?? "");
 
-      if (pmErr) {
-        setMsg(pmErr.message);
-        return;
-      }
-
-      const ids = Array.from(new Set((pm ?? []).map((r: any) => r.patient_id as string)));
-      if (ids.length === 0) {
+      // If we just became signed-in, load the lists
+      if (u?.id) {
+        loadControllerPatients(u.id).catch(() => {});
+        loadFeatures().catch(() => {});
+      } else {
         setPatients([]);
-        setMsg("You are not a controller for any circles.");
-        return;
+        setPatientId("");
+        setData(null);
       }
+    });
 
-      const { data: pts, error: pErr } = await supabase
-        .from("patients")
-        .select("id, display_name")
-        .in("id", ids)
-        .order("created_at", { ascending: false });
-
-      if (pErr) {
-        setMsg(pErr.message);
-        return;
-      }
-
-      setPatients((pts ?? []) as PatientRow[]);
-      if (!patientId && pts?.[0]?.id) setPatientId(pts[0].id);
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_patients"));
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load features list
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from("feature_keys")
-        .select("key, label, description")
-        .order("key", { ascending: true });
+  async function loadControllerPatients(currentUid: string) {
+    setMsg(null);
 
-      if (error) {
-        setMsg(error.message);
-        return;
-      }
-      setFeatures((data ?? []) as FeatureKeyRow[]);
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_features"));
-  }, [supabase]);
+    // Controllers only (your chosen rule)
+    const { data: pm, error: pmErr } = await supabase
+      .from("patient_members")
+      .select("patient_id")
+      .eq("user_id", currentUid)
+      .eq("is_controller", true);
+
+    if (pmErr) throw pmErr;
+
+    const ids = Array.from(new Set((pm ?? []).map((r: any) => String(r.patient_id)))).filter(isUuid);
+
+    if (ids.length === 0) {
+      setPatients([]);
+      setData(null);
+      setMsg("You are not a controller for any circles.");
+      return;
+    }
+
+    const { data: pts, error: pErr } = await supabase
+      .from("patients")
+      .select("id, display_name")
+      .in("id", ids)
+      .order("created_at", { ascending: false });
+
+    if (pErr) throw pErr;
+
+    const rows = (pts ?? []) as PatientRow[];
+    setPatients(rows);
+
+    setPatientId((prev) => {
+      if (prev && ids.includes(prev)) return prev;
+      return rows[0]?.id ?? "";
+    });
+  }
+
+  async function loadFeatures() {
+    const { data, error } = await supabase
+      .from("feature_keys")
+      .select("key, label, description")
+      .order("key", { ascending: true });
+
+    if (error) throw error;
+    setFeatures((data ?? []) as FeatureKeyRow[]);
+  }
 
   async function refresh() {
     if (!patientId) return;
+
     setLoading(true);
     setMsg(null);
+
     try {
+      // Ensure session exists before calling RPC
+      const u = await getSessionUser();
+      if (!u?.id) {
+        setData(null);
+        setMsg("Not signed in (no session).");
+        return;
+      }
+
       // IMPORTANT: param name is pid (matches function signature)
       const { data, error } = await supabase.rpc("permissions_get", { pid: patientId });
       if (error) throw error;
+
       setData(data as PermGet);
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_load_permissions");
       setData(null);
+
+      // This is the exact symptom you saw:
+      // permissions_get raises "Not allowed" if auth.uid() is null or user lacks permissions_manage.
+      setMsg(e?.message ?? "failed_to_load_permissions");
     } finally {
       setLoading(false);
     }
   }
 
+  // Refresh when patientId changes (but only after initial boot)
   useEffect(() => {
-    refresh();
+    if (!bootedRef.current) return;
+    if (!patientId) return;
+    refresh().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
@@ -229,172 +296,187 @@ export default function PermissionsClient() {
           <div>
             <div className="cc-kicker">CareCircle</div>
             <h1 className="cc-h1">Account • Permissions</h1>
-            <div className="cc-subtle">Controller-only management</div>
+            <div className="cc-subtle cc-wrap">Controller-only management</div>
+            {email ? <div className="cc-small cc-subtle cc-wrap">Signed in as: {email}</div> : null}
           </div>
           <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
+            <Link className="cc-btn" href="/app/hub">Hub</Link>
+            <Link className="cc-btn" href="/app/account">Account</Link>
           </div>
         </div>
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
+            <div className="cc-status-error-title">Message</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
 
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-row">
-            <div className="cc-field" style={{ minWidth: 280 }}>
-              <div className="cc-label">Circle</div>
-              <select className="cc-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.display_name ?? p.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button className="cc-btn cc-btn-secondary" onClick={seedDefaults} disabled={!patientId || savingKey === "seed"}>
-              {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
-            </button>
-
-            <button className="cc-btn" onClick={refresh} disabled={!patientId || loading}>
-              {loading ? "Loading…" : "Refresh"}
+        {!uid ? (
+          <div className="cc-card cc-card-pad">
+            <div className="cc-strong">Not signed in</div>
+            <div className="cc-subtle">This page needs an authenticated session to call permissions RPCs.</div>
+            <div className="cc-spacer-12" />
+            <button className="cc-btn" onClick={() => window.location.reload()}>
+              Refresh page
             </button>
           </div>
-        </div>
-
-        {!patientId ? (
-          <div className="cc-card cc-card-pad">Select a circle.</div>
-        ) : !data ? (
-          <div className="cc-card cc-card-pad">No permissions data.</div>
         ) : (
           <>
             <div className="cc-card cc-card-pad cc-stack">
-              <h2 className="cc-h2">Role permissions</h2>
-              <div className="cc-table-wrap">
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Feature</th>
-                      {roles.map((r) => (
-                        <th key={r} style={thStyle}>
-                          {r}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {features.map((f) => (
-                      <tr key={f.key}>
-                        <td style={tdStyle}>
-                          <div className="cc-strong">{f.label ?? f.key}</div>
-                          <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
-                          <div className="cc-small">key: {f.key}</div>
-                        </td>
-                        {roles.map((role) => {
-                          const allowed = roleAllowed(role, f.key);
-                          const busy = savingKey === `role:${role}:${f.key}`;
-                          return (
-                            <td key={`${role}:${f.key}`} style={tdCenter}>
-                              <button
-                                className={`cc-btn ${allowed ? "cc-btn-secondary" : ""}`}
-                                onClick={() => setRolePerm(role, f.key, !allowed)}
-                                disabled={busy}
-                              >
-                                {busy ? "…" : allowed ? "Allowed" : "Denied"}
-                              </button>
-                            </td>
-                          );
-                        })}
-                      </tr>
+              <div className="cc-row">
+                <div className="cc-field" style={{ minWidth: 280 }}>
+                  <div className="cc-label">Circle</div>
+                  <select className="cc-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
+                    {patients.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name ?? p.id}
+                      </option>
                     ))}
-                  </tbody>
-                </table>
+                  </select>
+                </div>
+
+                <button className="cc-btn cc-btn-secondary" onClick={seedDefaults} disabled={!patientId || savingKey === "seed"}>
+                  {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
+                </button>
+
+                <button className="cc-btn" onClick={refresh} disabled={!patientId || loading}>
+                  {loading ? "Loading…" : "Refresh"}
+                </button>
               </div>
             </div>
 
-            <div className="cc-card cc-card-pad cc-stack">
-              <h2 className="cc-h2">Member overrides</h2>
-              <div className="cc-small cc-subtle">
-                Overrides apply on top of role permissions. Controllers cannot be overridden (your RPC enforces this).
+            {!patientId ? (
+              <div className="cc-card cc-card-pad">Select a circle.</div>
+            ) : !data ? (
+              <div className="cc-card cc-card-pad">
+                <div className="cc-strong">No permissions data</div>
+                <div className="cc-subtle">
+                  If you see <code>Not allowed</code>, it usually means the RPC ran without an auth session (auth.uid() = null)
+                  or you don’t currently have <code>permissions_manage</code> for this circle.
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="cc-card cc-card-pad cc-stack">
+                  <h2 className="cc-h2">Role permissions</h2>
 
-              <div className="cc-table-wrap">
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>Feature</th>
-                      {members.map((m) => (
-                        <th key={m.user_id} style={thStyle}>
-                          <span className="cc-wrap">{m.nickname ?? m.email ?? m.user_id}</span>
-                          {m.is_controller ? " (controller)" : ""}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {features.map((f) => (
-                      <tr key={f.key}>
-                        <td style={tdStyle}>
-                          <div className="cc-strong">{f.label ?? f.key}</div>
-                          <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
-                          <div className="cc-small">key: {f.key}</div>
-                        </td>
-
-                        {members.map((m) => {
-                          const ov = memberOverride(m.user_id, f.key);
-                          const busySet = savingKey === `member:${m.user_id}:${f.key}`;
-                          const busyClear = savingKey === `clear:${m.user_id}:${f.key}`;
-
-                          return (
-                            <td key={`${m.user_id}:${f.key}`} style={tdCenter}>
-                              {m.is_controller ? (
-                                <span className="cc-small">—</span>
-                              ) : (
-                                <div className="cc-row" style={{ justifyContent: "center" }}>
-                                  <button
-                                    className={`cc-btn ${ov === true ? "cc-btn-secondary" : ""}`}
-                                    onClick={() => setMemberOverride(m.user_id, f.key, true)}
-                                    disabled={busySet}
-                                  >
-                                    {busySet && ov !== true ? "…" : "Allow"}
-                                  </button>
-
-                                  <button
-                                    className={`cc-btn ${ov === false ? "cc-btn-danger" : ""}`}
-                                    onClick={() => setMemberOverride(m.user_id, f.key, false)}
-                                    disabled={busySet}
-                                  >
-                                    {busySet && ov !== false ? "…" : "Deny"}
-                                  </button>
-
-                                  <button
-                                    className="cc-btn"
-                                    onClick={() => clearMemberOverride(m.user_id, f.key)}
-                                    disabled={ov === null || busyClear}
-                                    style={{ opacity: ov === null ? 0.55 : 1 }}
-                                  >
-                                    {busyClear ? "…" : "Clear"}
-                                  </button>
-                                </div>
-                              )}
+                  <div className="cc-table-wrap">
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th style={thStyle}>Feature</th>
+                          {roles.map((r) => (
+                            <th key={r} style={thStyle}>{r}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {features.map((f) => (
+                          <tr key={f.key}>
+                            <td style={tdStyle}>
+                              <div className="cc-strong">{f.label ?? f.key}</div>
+                              <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
+                              <div className="cc-small">key: {f.key}</div>
                             </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                            {roles.map((role) => {
+                              const allowed = roleAllowed(role, f.key);
+                              const busy = savingKey === `role:${role}:${f.key}`;
+                              return (
+                                <td key={`${role}:${f.key}`} style={tdCenter}>
+                                  <button
+                                    className={`cc-btn ${allowed ? "cc-btn-secondary" : ""}`}
+                                    onClick={() => setRolePerm(role, f.key, !allowed)}
+                                    disabled={busy}
+                                  >
+                                    {busy ? "…" : allowed ? "Allowed" : "Denied"}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="cc-card cc-card-pad cc-stack">
+                  <h2 className="cc-h2">Member overrides</h2>
+                  <div className="cc-small cc-subtle">
+                    Overrides apply on top of role permissions. Controllers cannot be overridden (your RPC enforces this).
+                  </div>
+
+                  <div className="cc-table-wrap">
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th style={thStyle}>Feature</th>
+                          {members.map((m) => (
+                            <th key={m.user_id} style={thStyle}>
+                              <span className="cc-wrap">{m.nickname ?? m.email ?? m.user_id}</span>
+                              {m.is_controller ? " (controller)" : ""}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {features.map((f) => (
+                          <tr key={f.key}>
+                            <td style={tdStyle}>
+                              <div className="cc-strong">{f.label ?? f.key}</div>
+                              <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
+                              <div className="cc-small">key: {f.key}</div>
+                            </td>
+
+                            {members.map((m) => {
+                              const ov = memberOverride(m.user_id, f.key);
+                              const busySet = savingKey === `member:${m.user_id}:${f.key}`;
+                              const busyClear = savingKey === `clear:${m.user_id}:${f.key}`;
+
+                              return (
+                                <td key={`${m.user_id}:${f.key}`} style={tdCenter}>
+                                  {m.is_controller ? (
+                                    <span className="cc-small">—</span>
+                                  ) : (
+                                    <div className="cc-row" style={{ justifyContent: "center" }}>
+                                      <button
+                                        className={`cc-btn ${ov === true ? "cc-btn-secondary" : ""}`}
+                                        onClick={() => setMemberOverride(m.user_id, f.key, true)}
+                                        disabled={busySet}
+                                      >
+                                        {busySet && ov !== true ? "…" : "Allow"}
+                                      </button>
+
+                                      <button
+                                        className={`cc-btn ${ov === false ? "cc-btn-danger" : ""}`}
+                                        onClick={() => setMemberOverride(m.user_id, f.key, false)}
+                                        disabled={busySet}
+                                      >
+                                        {busySet && ov !== false ? "…" : "Deny"}
+                                      </button>
+
+                                      <button
+                                        className="cc-btn"
+                                        onClick={() => clearMemberOverride(m.user_id, f.key)}
+                                        disabled={ov === null || busyClear}
+                                        style={{ opacity: ov === null ? 0.55 : 1 }}
+                                      >
+                                        {busyClear ? "…" : "Clear"}
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
