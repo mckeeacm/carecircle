@@ -44,12 +44,11 @@ export default function PermissionsClient() {
   const [loading, setLoading] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
-  // Read pid from querystring (optional)
   useEffect(() => {
     const preset = sp.get("pid");
     if (preset && !patientId) setPatientId(preset);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sp]);
+  }, []);
 
   // Load controller patients
   useEffect(() => {
@@ -62,6 +61,7 @@ export default function PermissionsClient() {
         return;
       }
 
+      // Controllers only (stable rule)
       const { data: pm, error: pmErr } = await supabase
         .from("patient_members")
         .select("patient_id")
@@ -118,7 +118,8 @@ export default function PermissionsClient() {
     setLoading(true);
     setMsg(null);
     try {
-      const { data, error } = await supabase.rpc("permissions_get", { pid: patientId }); // pid is correct
+      // IMPORTANT: param name is pid (matches function signature)
+      const { data, error } = await supabase.rpc("permissions_get", { pid: patientId });
       if (error) throw error;
       setData(data as PermGet);
     } catch (e: any) {
