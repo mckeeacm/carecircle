@@ -83,42 +83,42 @@ function forgetCachedVaultKey(pid: string, uid: string) {
 }
 
 /**
- * ✅ FIX (ONLY): robustly read device keypair fields to avoid device_keypair_missing_keys.
- * Your deviceKeys helper can return different shapes across versions (pk/sk vs publicKey/secretKey etc).
+ * ✅ ONLY FIX: derive pk from sk so we always use a matched keypair for crypto_box_seal_open.
+ * This prevents "incorrect key pair for the given ciphertext" caused by picking the wrong pk field.
  */
-function pickUint8(
-  kp: any,
-  candidates: string[]
-): Uint8Array | null {
-  for (const k of candidates) {
+function pickUint8(kp: any, keys: string[]): Uint8Array | null {
+  for (const k of keys) {
     const v = kp?.[k];
     if (v instanceof Uint8Array) return v;
-    // Sometimes libraries return { publicKey: Uint8Array } inside another object
-    if (v && typeof v === "object") {
-      if ((v.publicKey instanceof Uint8Array) && candidates.includes("publicKey")) return v.publicKey;
-      if ((v.secretKey instanceof Uint8Array) && candidates.includes("secretKey")) return v.secretKey;
-    }
   }
   return null;
 }
 
-async function getDeviceKeysOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+function normaliseSecretKey(sk: Uint8Array): Uint8Array {
+  // crypto_box keypairs use 32-byte sk. If we ever get a 64-byte form, take first 32 bytes.
+  if (sk.length === 32) return sk;
+  if (sk.length >= 32) return sk.slice(0, 32);
+  return sk;
+}
+
+async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
   const kp: any = await getOrCreateDeviceKeypair();
 
-  // Common names across libs / your earlier code
-  const publicKey =
-    pickUint8(kp, ["publicKey", "public_key", "pk", "public"]) ??
-    null;
+  const rawSk =
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ?? null;
 
-  const privateKey =
-    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ??
-    null;
-
-  if (!(publicKey instanceof Uint8Array)) {
-    throw new Error("device_keypair_missing_public_key");
-  }
-  if (!(privateKey instanceof Uint8Array)) {
+  if (!(rawSk instanceof Uint8Array)) {
     throw new Error("device_keypair_missing_keys");
+  }
+
+  const privateKey = normaliseSecretKey(rawSk);
+
+  const sodium = await getSodium();
+  // For X25519 box keys, pk = scalarMultBase(sk)
+  const publicKey = sodium.crypto_scalarmult_base(privateKey);
+
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
+    throw new Error("device_keypair_missing_public_key");
   }
 
   return { publicKey, privateKey };
@@ -196,7 +196,6 @@ export default function VaultInitClient() {
     if (shareErr) setHasShareRow(null);
     else setHasShareRow(!!share?.wrapped_key);
 
-    // Controller via RPC (authoritative)
     const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid });
     if (ctlErr) throw ctlErr;
     setIsController(ctl === true);
@@ -227,7 +226,6 @@ export default function VaultInitClient() {
     }
   }
 
-  // Boot + auth subscription (prevents “controller=false” race)
   useEffect(() => {
     let alive = true;
 
@@ -264,7 +262,8 @@ export default function VaultInitClient() {
       const user = await getSessionUser();
       if (!user?.id) throw new Error("not_authenticated");
 
-      const { publicKey } = await getDeviceKeysOrThrow();
+      // ✅ derive pk from sk; store pk that *matches* the local sk
+      const { publicKey } = await getMatchedBoxKeypairOrThrow();
 
       const { error } = await supabase.from("user_public_keys").upsert(
         {
@@ -303,8 +302,8 @@ export default function VaultInitClient() {
 
       const wrapped = share.wrapped_key as WrappedKeyV1;
 
-      // ✅ FIX: robust key extraction
-      const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getDeviceKeysOrThrow();
+      // ✅ ONLY FIX: use matched pk/sk derived from sk
+      const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getMatchedBoxKeypairOrThrow();
 
       const vaultKey = await unwrapVaultKeyForMe({ wrapped, myPublicKey, myPrivateKey });
       writeCachedVaultKey(pid, user.id, vaultKey);
@@ -312,7 +311,16 @@ export default function VaultInitClient() {
       setMsg("Vault unlocked on this device.");
       await refreshWithUser({ id: user.id, email: user.email });
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_unlock");
+      // If keys were rotated after share creation, this will still fail.
+      // We keep message transparent and actionable.
+      const m = e?.message ?? "failed_to_unlock";
+      if (typeof m === "string" && m.toLowerCase().includes("incorrect key pair")) {
+        setMsg(
+          "This vault share was encrypted for a different device keypair. Re-enable E2EE on THIS device, then have the controller re-share (or initialise a new vault key)."
+        );
+      } else {
+        setMsg(m);
+      }
     } finally {
       setBusy(null);
     }
@@ -378,8 +386,8 @@ export default function VaultInitClient() {
       const rows = await Promise.all(
         targets.map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
-          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped };
+          const wrapped2 = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
+          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped2 };
         })
       );
 
@@ -427,14 +435,13 @@ export default function VaultInitClient() {
       const sodium = await getSodium();
       const vaultKey = sodium.randombytes_buf(32);
 
-      // cache for controller device
       writeCachedVaultKey(pid, uid, vaultKey);
 
       const rows = await Promise.all(
         (pubKeys ?? []).map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
-          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped };
+          const wrapped2 = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
+          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped2 };
         })
       );
 
@@ -474,17 +481,9 @@ export default function VaultInitClient() {
           </div>
 
           <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
-            {pid ? (
-              <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${pid}/vault`}>
-                Vault
-              </Link>
-            ) : null}
+            <Link className="cc-btn" href="/app/hub">Hub</Link>
+            <Link className="cc-btn" href="/app/account">Account</Link>
+            {pid ? <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${pid}/vault`}>Vault</Link> : null}
           </div>
         </div>
 
@@ -496,21 +495,15 @@ export default function VaultInitClient() {
         ) : null}
 
         <div className="cc-row">
-          <button className="cc-btn" onClick={refresh} disabled={!!busy}>
-            Refresh
-          </button>
-          <button className="cc-btn" onClick={() => router.refresh()} disabled={!!busy}>
-            Hard refresh (Next.js)
-          </button>
+          <button className="cc-btn" onClick={refresh} disabled={!!busy}>Refresh</button>
+          <button className="cc-btn" onClick={() => router.refresh()} disabled={!!busy}>Hard refresh (Next.js)</button>
         </div>
 
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-strong">Vault controls</div>
 
           <div className="cc-row">
-            <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
-              Cache: {hasCached ? "present" : "missing"}
-            </span>
+            <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>Cache: {hasCached ? "present" : "missing"}</span>
             <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
               Share: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
             </span>
