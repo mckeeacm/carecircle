@@ -1,11 +1,7 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
 import VaultInitClient from "./VaultInitClient";
 
 export default function Page({ params }: { params: { id: string } }) {
-  const pid = (params?.id ?? "").trim();
-  if (!pid) return notFound();
-
   return (
     <Suspense
       fallback={
@@ -16,7 +12,7 @@ export default function Page({ params }: { params: { id: string } }) {
         </div>
       }
     >
-      <VaultInitClient pid={pid} />
+      <VaultInitClient pid={params?.id ?? ""} />
     </Suspense>
   );
 }
