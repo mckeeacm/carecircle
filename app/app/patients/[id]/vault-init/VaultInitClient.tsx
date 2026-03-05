@@ -6,7 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { getSodium } from "@/lib/e2ee/sodium";
 import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
-import { unwrapVaultKeyForMe, wrapVaultKeyForRecipient, type WrappedKeyV1 } from "@/lib/e2ee/vaultShares";
+import {
+  unwrapVaultKeyForMe,
+  wrapVaultKeyForRecipient,
+  type WrappedKeyV1,
+} from "@/lib/e2ee/vaultShares";
 
 type CacheRecord = {
   v: 1;
@@ -17,7 +21,9 @@ type CacheRecord = {
 
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 
 function normaliseId(raw: unknown): string {
@@ -76,6 +82,48 @@ function forgetCachedVaultKey(pid: string, uid: string) {
   } catch {}
 }
 
+/**
+ * ✅ FIX (ONLY): robustly read device keypair fields to avoid device_keypair_missing_keys.
+ * Your deviceKeys helper can return different shapes across versions (pk/sk vs publicKey/secretKey etc).
+ */
+function pickUint8(
+  kp: any,
+  candidates: string[]
+): Uint8Array | null {
+  for (const k of candidates) {
+    const v = kp?.[k];
+    if (v instanceof Uint8Array) return v;
+    // Sometimes libraries return { publicKey: Uint8Array } inside another object
+    if (v && typeof v === "object") {
+      if ((v.publicKey instanceof Uint8Array) && candidates.includes("publicKey")) return v.publicKey;
+      if ((v.secretKey instanceof Uint8Array) && candidates.includes("secretKey")) return v.secretKey;
+    }
+  }
+  return null;
+}
+
+async function getDeviceKeysOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+  const kp: any = await getOrCreateDeviceKeypair();
+
+  // Common names across libs / your earlier code
+  const publicKey =
+    pickUint8(kp, ["publicKey", "public_key", "pk", "public"]) ??
+    null;
+
+  const privateKey =
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ??
+    null;
+
+  if (!(publicKey instanceof Uint8Array)) {
+    throw new Error("device_keypair_missing_public_key");
+  }
+  if (!(privateKey instanceof Uint8Array)) {
+    throw new Error("device_keypair_missing_keys");
+  }
+
+  return { publicKey, privateKey };
+}
+
 export default function VaultInitClient() {
   const params = useParams();
   const router = useRouter();
@@ -121,7 +169,6 @@ export default function VaultInitClient() {
 
     const user = userOverride ?? (await getSessionUser());
     if (!user?.id) {
-      // No sign-in button here: you said you don’t want it.
       setUid("");
       setEmail("");
       setHasCached(false);
@@ -217,14 +264,12 @@ export default function VaultInitClient() {
       const user = await getSessionUser();
       if (!user?.id) throw new Error("not_authenticated");
 
-      const kp: any = await getOrCreateDeviceKeypair();
-      const publicKeyBytes: Uint8Array = kp?.publicKey ?? kp?.public_key ?? kp?.pk;
-      if (!publicKeyBytes) throw new Error("device_keypair_missing_public_key");
+      const { publicKey } = await getDeviceKeysOrThrow();
 
       const { error } = await supabase.from("user_public_keys").upsert(
         {
           user_id: user.id,
-          public_key: bytesToBase64(publicKeyBytes),
+          public_key: bytesToBase64(publicKey),
           algorithm: "crypto_box_seal",
         },
         { onConflict: "user_id" }
@@ -258,10 +303,8 @@ export default function VaultInitClient() {
 
       const wrapped = share.wrapped_key as WrappedKeyV1;
 
-      const kp: any = await getOrCreateDeviceKeypair();
-      const myPublicKey: Uint8Array = kp?.publicKey ?? kp?.public_key ?? kp?.pk;
-      const myPrivateKey: Uint8Array = kp?.secretKey ?? kp?.secret_key ?? kp?.sk;
-      if (!myPublicKey || !myPrivateKey) throw new Error("device_keypair_missing_keys");
+      // ✅ FIX: robust key extraction
+      const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getDeviceKeysOrThrow();
 
       const vaultKey = await unwrapVaultKeyForMe({ wrapped, myPublicKey, myPrivateKey });
       writeCachedVaultKey(pid, user.id, vaultKey);
@@ -431,9 +474,17 @@ export default function VaultInitClient() {
           </div>
 
           <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">Hub</Link>
-            <Link className="cc-btn" href="/app/account">Account</Link>
-            {pid ? <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${pid}/vault`}>Vault</Link> : null}
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
+            <Link className="cc-btn" href="/app/account">
+              Account
+            </Link>
+            {pid ? (
+              <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${pid}/vault`}>
+                Vault
+              </Link>
+            ) : null}
           </div>
         </div>
 
@@ -445,15 +496,21 @@ export default function VaultInitClient() {
         ) : null}
 
         <div className="cc-row">
-          <button className="cc-btn" onClick={refresh} disabled={!!busy}>Refresh</button>
-          <button className="cc-btn" onClick={() => router.refresh()} disabled={!!busy}>Hard refresh (Next.js)</button>
+          <button className="cc-btn" onClick={refresh} disabled={!!busy}>
+            Refresh
+          </button>
+          <button className="cc-btn" onClick={() => router.refresh()} disabled={!!busy}>
+            Hard refresh (Next.js)
+          </button>
         </div>
 
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-strong">Vault controls</div>
 
           <div className="cc-row">
-            <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>Cache: {hasCached ? "present" : "missing"}</span>
+            <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
+              Cache: {hasCached ? "present" : "missing"}
+            </span>
             <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
               Share: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
             </span>
