@@ -1,10 +1,16 @@
-import VaultClient from "./VaultClient";
+import { Suspense } from "react";
+import VaultInitClient from "./VaultClient";
 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  return <VaultClient patientId={id} />;
+export default function Page({ params }: { params: { id: string } }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="cc-page">
+          <div className="cc-container cc-card cc-card-pad">Loading vault init…</div>
+        </div>
+      }
+    >
+      <VaultInitClient pid={params.id} />
+    </Suspense>
+  );
 }

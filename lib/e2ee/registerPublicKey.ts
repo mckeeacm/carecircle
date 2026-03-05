@@ -16,21 +16,20 @@ function bytesToB64(bytes: Uint8Array): string {
 export async function registerMyPublicKey(): Promise<void> {
   const supabase = supabaseBrowser();
 
-  const { data: auth, error: authErr } = await supabase.auth.getUser();
-  if (authErr) throw authErr;
-  const uid = auth.user?.id;
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const uid = data.session?.user?.id;
   if (!uid) throw new Error("not_authenticated");
 
   const { publicKey } = await getOrCreateDeviceKeypair();
 
   const row = {
     user_id: uid,
-    public_key: bytesToB64(publicKey), // base64 raw bytes
-    algorithm: "crypto_box_seal",       // matches your WrappedKeyV1 alg
+    public_key: bytesToB64(publicKey),
+    algorithm: "crypto_box_seal",
   };
 
-  // Prefer upsert if you have a unique constraint on user_id.
-  // If you don't, this will error — tell me and I’ll switch to insert+fallback.
-  const { error } = await supabase.from("user_public_keys").upsert(row, { onConflict: "user_id" });
-  if (error) throw error;
+  const { error: upsertErr } = await supabase.from("user_public_keys").upsert(row, { onConflict: "user_id" });
+  if (upsertErr) throw upsertErr;
 }
