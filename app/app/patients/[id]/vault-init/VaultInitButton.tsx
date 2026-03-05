@@ -48,10 +48,9 @@ export default function VaultInitButton({ pid, disabled }: Props) {
   async function registerPublicKey(userId: string) {
     const kp: any = await getOrCreateDeviceKeypair();
 
-    const publicKeyBytes: Uint8Array =
-      kp?.publicKey ?? kp?.public_key ?? kp?.pk;
+    const publicKeyBytes: Uint8Array = kp?.publicKey ?? kp?.public_key ?? kp?.pk;
 
-    if (!publicKeyBytes) {
+    if (!publicKeyBytes || !(publicKeyBytes instanceof Uint8Array)) {
       throw new Error("device_keypair_missing_public_key");
     }
 
@@ -74,16 +73,28 @@ export default function VaultInitButton({ pid, disabled }: Props) {
 
     async function boot() {
       try {
-        if (!pid || disabled) {
+        // IMPORTANT: do NOT hard-error if pid is temporarily missing.
+        // Wait for pid to exist (common during hydration / suspense boundaries).
+        if (disabled) {
           setStatus("error");
-          setMessage("Missing circle ID.");
+          setMessage("This action is currently disabled.");
           return;
         }
 
-        const { data } = await supabase.auth.getSession();
+        if (!pid) {
+          setStatus("checking");
+          setMessage("");
+          return;
+        }
+
+        setStatus("checking");
+        setMessage("");
+
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
 
         const user = data.session?.user;
-        if (!user) {
+        if (!user?.id) {
           setStatus("error");
           setMessage("Please sign in.");
           return;
@@ -94,15 +105,13 @@ export default function VaultInitButton({ pid, disabled }: Props) {
         setUid(user.id);
 
         const ok = await hasPublicKey(user.id);
+        if (cancelled) return;
 
-        if (ok) {
-          setStatus("ready");
-        } else {
-          setStatus("needs_keys");
-        }
+        setStatus(ok ? "ready" : "needs_keys");
       } catch (e: any) {
+        if (cancelled) return;
         setStatus("error");
-        setMessage(e?.message ?? "vault setup failed");
+        setMessage(e?.message ?? "Vault setup failed.");
       }
     }
 
@@ -118,6 +127,7 @@ export default function VaultInitButton({ pid, disabled }: Props) {
     setMessage("");
 
     try {
+      if (!pid) throw new Error("missing_pid");
       if (!uid) throw new Error("not_authenticated");
 
       await registerPublicKey(uid);
@@ -140,52 +150,50 @@ export default function VaultInitButton({ pid, disabled }: Props) {
     try {
       if (!pid) throw new Error("missing_pid");
 
-      const { data: isCtl } = await supabase.rpc("is_patient_controller", {
-        pid,
-      });
+      const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+      if (sessErr) throw sessErr;
 
-      if (!isCtl) {
-        throw new Error("Only a controller can initialise vault.");
-      }
+      const me = sessionData.session?.user;
+      if (!me?.id) throw new Error("not_authenticated");
+      setUid(me.id);
 
-      const { data: members } = await supabase
+      const { data: isCtl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid });
+      if (ctlErr) throw ctlErr;
+
+      if (!isCtl) throw new Error("Only a controller can initialise the vault.");
+
+      const { data: members, error: memErr } = await supabase
         .from("patient_members")
         .select("user_id")
         .eq("patient_id", pid);
 
-      const userIds = (members ?? []).map((m: any) => m.user_id);
+      if (memErr) throw memErr;
 
-      const { data: pubKeys } = await supabase
+      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+      if (userIds.length === 0) throw new Error("No circle members found.");
+
+      const { data: pubKeys, error: pkErr } = await supabase
         .from("user_public_keys")
         .select("user_id, public_key, algorithm")
         .in("user_id", userIds);
 
-      const missing = userIds.filter(
-        (u) => !pubKeys?.some((p) => p.user_id === u)
-      );
+      if (pkErr) throw pkErr;
 
+      const missing = userIds.filter((u) => !pubKeys?.some((p: any) => p.user_id === u));
       if (missing.length) {
-        throw new Error(
-          `${missing.length} member(s) must enable E2EE before vault sharing.`
-        );
+        throw new Error(`${missing.length} member(s) must enable E2EE before vault sharing.`);
       }
 
-      const incompatible = pubKeys?.filter(
-        (p) => p.algorithm !== "crypto_box_seal"
-      );
-
-      if (incompatible?.length) {
-        throw new Error(
-          "Some members have incompatible key algorithms. Ask them to re-enable E2EE."
-        );
+      const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
+      if (incompatible.length) {
+        throw new Error("Some members have incompatible key algorithms. Ask them to re-enable E2EE.");
       }
 
       const sodium = await getSodium();
-
       const vaultKey = sodium.randombytes_buf(32);
 
       const rows = await Promise.all(
-        pubKeys!.map(async (p: any) => {
+        (pubKeys ?? []).map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
 
           const wrapped = await wrapVaultKeyForRecipient({
@@ -201,61 +209,87 @@ export default function VaultInitButton({ pid, disabled }: Props) {
         })
       );
 
-      const { error } = await supabase
+      const { error: upErr } = await supabase
         .from("patient_vault_shares")
         .upsert(rows, { onConflict: "patient_id,user_id" });
 
-      if (error) throw error;
+      if (upErr) throw upErr;
 
       setStatus("done");
       setMessage("Vault initialised successfully.");
 
       router.push(`/app/patients/${pid}/vault`);
+      router.refresh();
     } catch (e: any) {
       setStatus("error");
-      setMessage(e?.message ?? "Vault init failed");
+      setMessage(e?.message ?? "Vault init failed.");
     } finally {
       setBusy(false);
     }
   }
 
   const showSetup = status === "needs_keys";
-  const canInit = status === "ready" && !busy;
+  const canInit = status === "ready" && !busy && !!pid;
 
   return (
-    <div className="cc-card cc-card-pad cc-stack">
+    <div className="cc-stack">
+      <div className="cc-panel-soft cc-stack">
+        <div className="cc-strong">Circle ID</div>
+        <div className="cc-small cc-wrap">{pid || "—"}</div>
+        {!pid ? (
+          <div className="cc-small cc-subtle">
+            Waiting for circle context… If this never appears, you’re not on a route like{" "}
+            <code>/app/patients/&lt;id&gt;/vault-init</code>.
+          </div>
+        ) : null}
+      </div>
 
-      <div className="cc-strong">1. Device encryption keys</div>
-
-      {showSetup ? (
-        <button
-          className="cc-btn cc-btn-primary"
-          onClick={onSetupKeys}
-          disabled={busy}
-        >
-          Enable E2EE on this device
-        </button>
-      ) : (
-        <div className="cc-pill cc-pill-primary">Device keys ready</div>
-      )}
-
-      <div className="cc-strong">2. Create vault</div>
-
-      <button
-        className="cc-btn"
-        onClick={onInitialiseVault}
-        disabled={!canInit}
-      >
-        {status === "initialising"
-          ? "Initialising vault..."
-          : "Initialise encrypted vault"}
-      </button>
-
-      {message && (
-        <div className="cc-panel">
-          {message}
+      <div className="cc-panel-soft cc-stack">
+        <div className="cc-strong">1) Device encryption keys</div>
+        <div className="cc-subtle">
+          Your device generates encryption keys locally. Only the public key is uploaded.
         </div>
-      )}
+
+        {showSetup ? (
+          <button className="cc-btn cc-btn-primary" onClick={onSetupKeys} disabled={busy || !pid}>
+            {busy ? "Enabling…" : "Enable E2EE on this device"}
+          </button>
+        ) : (
+          <div className={`cc-pill ${status === "ready" || status === "initialising" || status === "done" ? "cc-pill-primary" : ""}`}>
+            {status === "checking"
+              ? "Checking…"
+              : status === "ready" || status === "initialising" || status === "done"
+              ? "Device keys ready"
+              : status === "error"
+              ? "Needs attention"
+              : "Device keys"}
+          </div>
+        )}
+      </div>
+
+      <div className="cc-panel-soft cc-stack">
+        <div className="cc-strong">2) Create / share vault</div>
+        <div className="cc-subtle">
+          Creates a vault key on your device and shares it to circle members who have enabled E2EE.
+        </div>
+
+        <button className="cc-btn cc-btn-secondary" onClick={onInitialiseVault} disabled={!canInit}>
+          {status === "initialising" ? "Initialising…" : "Initialise / re-share vault"}
+        </button>
+
+        {status === "error" && message ? (
+          <div className="cc-status cc-status-error">
+            <div className="cc-status-error-title">Error</div>
+            <div className="cc-wrap">{message}</div>
+          </div>
+        ) : null}
+
+        {status !== "error" && message ? (
+          <div className="cc-status cc-status-ok">
+            <div className="cc-wrap">{message}</div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
