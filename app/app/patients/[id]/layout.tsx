@@ -1,16 +1,18 @@
 import React from "react";
 import { PatientVaultProvider } from "@/lib/e2ee/PatientVaultProvider";
 
-export default function PatientLayout({
+export default async function PatientLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  // IMPORTANT: segment is [id] not [pid]
-  const patientId = params.id;
+  const { id } = await params;
 
-  // Provider at layout level => persists across /today /dm /journals etc.
-  return <PatientVaultProvider patientId={patientId}>{children}</PatientVaultProvider>;
+  return (
+    <PatientVaultProvider patientId={id}>
+      {children}
+    </PatientVaultProvider>
+  );
 }
