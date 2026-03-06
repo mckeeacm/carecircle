@@ -74,8 +74,6 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
   const [draft, setDraft] = useState<string>("");
 
-  const [secureAccessNeedsRefresh, setSecureAccessNeedsRefresh] = useState(false);
-
   async function refreshThreads() {
     setMsg(null);
     setLoading(true);
@@ -180,7 +178,6 @@ export default function DMClient({ patientId }: { patientId: string }) {
     } catch (e: any) {
       if (isDecryptMismatchError(e)) {
         setThreadDecryptFailed((p) => ({ ...p, [t.thread_id]: true }));
-        setSecureAccessNeedsRefresh(true);
       } else {
         throw e;
       }
@@ -206,7 +203,6 @@ export default function DMClient({ patientId }: { patientId: string }) {
     } catch (e: any) {
       if (isDecryptMismatchError(e)) {
         setMessageDecryptFailed((p) => ({ ...p, [m.id]: true }));
-        setSecureAccessNeedsRefresh(true);
       } else {
         throw e;
       }
@@ -303,7 +299,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   function threadDisplayTitle(t: ThreadRow) {
     if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
-    if (threadDecryptFailed[t.thread_id]) return "Secure access needs refresh";
+    if (threadDecryptFailed[t.thread_id]) return "Some items on this thread are unreadable here";
     if (t.title_encrypted) return "Encrypted title";
     return "Untitled";
   }
@@ -314,6 +310,11 @@ export default function DMClient({ patientId }: { patientId: string }) {
     if (t.last_message_preview_encrypted) return "Encrypted preview";
     return "";
   }
+
+  const activeThreadHasDecryptIssue =
+    !!activeThreadId &&
+    (threadDecryptFailed[activeThreadId] ||
+      messages.some((m) => m.thread_id === activeThreadId && messageDecryptFailed[m.id]));
 
   return (
     <div className="cc-page">
@@ -354,12 +355,12 @@ export default function DMClient({ patientId }: { patientId: string }) {
           </div>
         ) : null}
 
-        {secureAccessNeedsRefresh ? (
+        {activeThreadHasDecryptIssue ? (
           <div className="cc-status cc-status-loading">
-            <div className="cc-strong">This device’s secure access needs refreshing</div>
+            <div className="cc-strong">Some older messages on this thread can’t be opened on this device</div>
             <div className="cc-subtle">
-              Some messages were encrypted with a different secure key version for this circle.
-              Refresh secure access, then try again.
+              This usually means they were encrypted with a different secure key version.
+              You can still use this thread, but older items may remain unreadable here.
             </div>
             <div className="cc-spacer-12" />
             <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
@@ -489,7 +490,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
                             </div>
                           ) : failed ? (
                             <div className="cc-small cc-subtle">
-                              This message could not be opened on this device. Refresh secure access for this circle, then try again.
+                              This message could not be opened on this device. It may belong to an older secure key version for this circle.
                             </div>
                           ) : (
                             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>

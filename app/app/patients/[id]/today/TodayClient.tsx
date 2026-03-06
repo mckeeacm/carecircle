@@ -1,4 +1,3 @@
-// app/app/patients/[id]/today/TodayClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -37,6 +36,11 @@ type MedicationLogRow = {
   medication_id: string;
 };
 
+type DmThreadPreview = {
+  thread_id: string;
+  last_message_at: string | null;
+};
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -57,7 +61,11 @@ export default function TodayClient({ patientId }: { patientId: string }) {
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
+
   const [dmStatus, setDmStatus] = useState<"ok" | "unavailable" | "loading">("loading");
+  const [dmThreadCount, setDmThreadCount] = useState(0);
+  const [dmLastMessageAt, setDmLastMessageAt] = useState<string | null>(null);
+  const [hasRecentDm, setHasRecentDm] = useState(false);
 
   function log(line: string) {
     setDebug((p) => [...p, `[${ts()}] ${line}`].slice(-200));
@@ -73,6 +81,9 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       setMeds([]);
       setMedLogs([]);
       setDmStatus("loading");
+      setDmThreadCount(0);
+      setDmLastMessageAt(null);
+      setHasRecentDm(false);
 
       if (!patientId || !isUuid(patientId)) {
         setMsg(`invalid patientId: ${String(patientId)}`);
@@ -91,7 +102,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         if (pErr) throw pErr;
         setPatient(p as PatientRow);
 
-        // Journals (newest)
         log(`Loading newest journal_entries…`);
         const { data: j, error: jErr } = await supabase
           .from("journal_entries")
@@ -104,7 +114,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         setJournals((j ?? []) as JournalPreview[]);
         log(`journal_entries loaded: ${(j ?? []).length}`);
 
-        // Appointments (next 24h) — tolerate table missing by catching and showing empty
         const now = new Date();
         const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         log(`Loading appointments next 24h: ${now.toISOString()} -> ${until.toISOString()}`);
@@ -127,7 +136,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
           setAppointments([]);
         }
 
-        // Medications (active)
         log(`Loading active medications…`);
         const { data: m, error: mErr } = await supabase
           .from("medications")
@@ -141,7 +149,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         setMeds((m ?? []) as MedicationRow[]);
         log(`medications loaded: ${(m ?? []).length}`);
 
-        // Medication logs
         log(`Loading recent medication_logs…`);
         const { data: ml, error: mlErr } = await supabase
           .from("medication_logs")
@@ -154,20 +161,40 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         setMedLogs((ml ?? []) as MedicationLogRow[]);
         log(`medication_logs loaded: ${(ml ?? []).length}`);
 
-        // DM threads: don’t crash Today if DM policies are currently broken
         log(`Loading dm_threads (best-effort)…`);
         try {
-          const { error: dmErr } = await supabase
-            .from("dm_threads")
-            .select("id")
-            .eq("patient_id", patientId)
-            .limit(1);
+          const { data: threads, error: dmErr } = await supabase.rpc("dm_list_threads", {
+            p_patient_id: patientId,
+          });
 
           if (dmErr) throw dmErr;
+
+          const rows = (threads ?? []) as DmThreadPreview[];
           setDmStatus("ok");
-          log(`dm_threads ok`);
+          setDmThreadCount(rows.length);
+
+          const latest = rows
+            .map((r) => r.last_message_at)
+            .filter(Boolean)
+            .sort()
+            .reverse()[0] ?? null;
+
+          setDmLastMessageAt(latest);
+
+          if (latest) {
+            const latestMs = new Date(latest).getTime();
+            const recentWindowMs = 24 * 60 * 60 * 1000;
+            setHasRecentDm(Date.now() - latestMs <= recentWindowMs);
+          } else {
+            setHasRecentDm(false);
+          }
+
+          log(`dm_threads ok count=${rows.length} latest=${latest ?? "none"}`);
         } catch (e: any) {
           setDmStatus("unavailable");
+          setDmThreadCount(0);
+          setDmLastMessageAt(null);
+          setHasRecentDm(false);
           log(`dm_threads unavailable: ${e?.message ?? String(e)}`);
         }
 
@@ -279,12 +306,30 @@ export default function TodayClient({ patientId }: { patientId: string }) {
             ) : dmStatus === "unavailable" ? (
               <div className="cc-panel">
                 <div className="cc-strong">DM temporarily unavailable</div>
-                <div className="cc-small">
-                  Your current RLS on <code>dm_thread_members</code> is recursing. Fixing that is a DB policy task; Today won’t crash.
-                </div>
+                <div className="cc-small">Direct messages could not be loaded right now.</div>
               </div>
             ) : (
-              <div className="cc-small">DM ok.</div>
+              <div className="cc-stack">
+                {hasRecentDm ? (
+                  <div className="cc-panel-soft">
+                    <div className="cc-row-between">
+                      <div>
+                        <div className="cc-strong">New message activity</div>
+                        <div className="cc-small">
+                          Latest message: {dmLastMessageAt ? new Date(dmLastMessageAt).toLocaleString() : "—"}
+                        </div>
+                      </div>
+                      <span className="cc-pill cc-pill-primary">New</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="cc-small">No recent message activity.</div>
+                )}
+
+                <div className="cc-small cc-subtle">
+                  Active threads: {dmThreadCount}
+                </div>
+              </div>
             )}
           </div>
         </div>
