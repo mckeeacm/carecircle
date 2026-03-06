@@ -21,7 +21,6 @@ function isUuid(s: unknown): s is string {
 
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
-
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -38,6 +37,7 @@ export default function AccountClient() {
   const [inviteEmailByPid, setInviteEmailByPid] = useState<Record<string, string>>({});
   const [inviteNicknameByPid, setInviteNicknameByPid] = useState<Record<string, string>>({});
   const [inviteUrlByPid, setInviteUrlByPid] = useState<Record<string, string>>({});
+  const [inviteSentEmailByPid, setInviteSentEmailByPid] = useState<Record<string, string>>({});
 
   const [nicknameByPid, setNicknameByPid] = useState<Record<string, string>>({});
   const [nicknameBusyPid, setNicknameBusyPid] = useState<string | null>(null);
@@ -87,7 +87,9 @@ export default function AccountClient() {
     setMemberships(ms);
 
     const nicknameSeed: Record<string, string> = {};
-    for (const m of ms) nicknameSeed[m.patient_id] = m.nickname ?? "";
+    for (const m of ms) {
+      nicknameSeed[m.patient_id] = m.nickname ?? "";
+    }
     setNicknameByPid(nicknameSeed);
 
     const pids = Array.from(new Set(ms.map((m) => m.patient_id))).filter((pid) => isUuid(pid));
@@ -232,10 +234,12 @@ export default function AccountClient() {
 
       const inviteUrl = json?.inviteUrl ?? "";
       setInviteUrlByPid((prev) => ({ ...prev, [patientId]: inviteUrl }));
+      setInviteSentEmailByPid((prev) => ({ ...prev, [patientId]: inviteEmail }));
+
       setMsg(
         inviteNickname
-          ? `Invite created for ${inviteNickname}. An account invite email has been sent to ${inviteEmail}.`
-          : `Invite created. An account invite email has been sent to ${inviteEmail}.`
+          ? `Invite created for ${inviteNickname}. Invite email sent to ${inviteEmail}.`
+          : `Invite created. Invite email sent to ${inviteEmail}.`
       );
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_invite");
@@ -434,7 +438,7 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">Invite a circle member</h2>
               <div className="cc-subtle">
-                This sends an email invite, creates the auth invite on the server, and links the invitee to this circle after they accept.
+                This sends an email invite and also gives you an individual backup invite link for that person.
               </div>
             </div>
           </div>
@@ -454,6 +458,7 @@ export default function AccountClient() {
                   const inviteeEmail = inviteEmailByPid[m.patient_id] ?? "";
                   const inviteeNickname = inviteNicknameByPid[m.patient_id] ?? "";
                   const url = inviteUrlByPid[m.patient_id] ?? "";
+                  const sentEmail = inviteSentEmailByPid[m.patient_id] ?? "";
                   const busy = inviteBusyPid === m.patient_id;
 
                   return (
@@ -553,23 +558,32 @@ export default function AccountClient() {
                       </div>
 
                       {url ? (
-                        <div className="cc-panel">
-                          <div className="cc-small cc-subtle">Backup invite link:</div>
+                        <div className="cc-panel cc-stack">
+                          <div className="cc-small cc-subtle">
+                            Invite email sent to:
+                          </div>
+                          <div className="cc-strong">{sentEmail || inviteeEmail || "—"}</div>
+
+                          <div className="cc-small cc-subtle">
+                            Individual backup invite link:
+                          </div>
+
                           <div className="cc-row-between">
                             <div className="cc-wrap" style={{ fontSize: 13 }}>
                               {url}
                             </div>
                             <button className="cc-btn" onClick={() => copy(url)}>
-                              Copy
+                              Copy link
                             </button>
                           </div>
+
                           <div className="cc-small cc-subtle">
-                            The invite email should already have been sent. This link is just a backup.
+                            The email invite should already have been sent. This link is a backup for this specific invitee.
                           </div>
                         </div>
                       ) : (
                         <div className="cc-small cc-subtle">
-                          Enter email + nickname, then invite the member. Their account invite email will be sent automatically.
+                          Enter email + nickname, then invite the member. An email invite will be sent and you’ll also get a backup individual link.
                         </div>
                       )}
                     </div>

@@ -29,7 +29,6 @@ type MessageRow = {
 };
 
 type Member = {
-  patient_id: string;
   user_id: string;
   role: string | null;
   nickname: string | null;
@@ -62,6 +61,23 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
   const [draft, setDraft] = useState<string>("");
 
+  async function loadMembers(uid: string) {
+    const { data, error } = await supabase
+      .from("patient_members")
+      .select("user_id, role, nickname, is_controller, created_at")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+
+    const allMembers = ((data ?? []) as Member[]).filter((m) => m.user_id !== uid);
+    setMembers(allMembers);
+
+    if (!selectedRecipientId && allMembers[0]?.user_id) {
+      setSelectedRecipientId(allMembers[0].user_id);
+    }
+  }
+
   async function refreshThreads() {
     setMsg(null);
     setLoading(true);
@@ -78,18 +94,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (!uid) throw new Error("not_authenticated");
       setCurrentUserId(uid);
 
-      const { data: memberRows, error: memberErr } = await supabase.rpc("permissions_members_list", {
-        pid: patientId,
-      });
-
-      if (memberErr) throw memberErr;
-
-      const allMembers = ((memberRows ?? []) as Member[]).filter((m) => m.user_id !== uid);
-      setMembers(allMembers);
-
-      if (!selectedRecipientId && allMembers[0]?.user_id) {
-        setSelectedRecipientId(allMembers[0].user_id);
-      }
+      await loadMembers(uid);
 
       const { data: threadRows, error: threadErr } = await supabase.rpc("dm_list_threads", {
         p_patient_id: patientId,
@@ -243,7 +248,13 @@ export default function DMClient({ patientId }: { patientId: string }) {
   }
 
   function memberLabel(m: Member) {
-    return `${m.nickname ?? m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
+    return `${m.nickname?.trim() || m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
+  }
+
+  function senderLabel(senderId: string) {
+    if (senderId === currentUserId) return "You";
+    const found = members.find((m) => m.user_id === senderId);
+    return found?.nickname?.trim() || senderId;
   }
 
   return (
@@ -275,7 +286,9 @@ export default function DMClient({ patientId }: { patientId: string }) {
         {!vaultKey ? (
           <div className="cc-status cc-status-loading">
             <div className="cc-strong">Vault key not available on this device</div>
-            <div className="cc-subtle">Threads and messages are E2EE and can’t be decrypted or sent without vault access.</div>
+            <div className="cc-subtle">
+              Threads and messages are E2EE and can’t be decrypted or sent without vault access.
+            </div>
           </div>
         ) : null}
 
@@ -384,15 +397,18 @@ export default function DMClient({ patientId }: { patientId: string }) {
                   ) : (
                     messages.map((m) => {
                       const plain = bodyPlain[m.id];
-                      const isMine = m.sender_id === currentUserId;
 
                       return (
                         <div key={m.id} className="cc-panel-soft">
                           <div className="cc-row-between">
                             <div className="cc-small cc-wrap">
-                              <b>{isMine ? "You" : m.sender_id}</b> • {new Date(m.sent_at).toLocaleString()}
+                              <b>{senderLabel(m.sender_id)}</b> • {new Date(m.sent_at).toLocaleString()}
                             </div>
-                            <button className="cc-btn" onClick={() => decryptMessageIfNeeded(m)} disabled={!vaultKey || !!plain}>
+                            <button
+                              className="cc-btn"
+                              onClick={() => decryptMessageIfNeeded(m)}
+                              disabled={!vaultKey || !!plain}
+                            >
                               {plain ? "Decrypted" : "Decrypt"}
                             </button>
                           </div>
@@ -409,7 +425,12 @@ export default function DMClient({ patientId }: { patientId: string }) {
                 <div className="cc-panel-green cc-stack">
                   <div className="cc-field">
                     <div className="cc-label">New message (E2EE)</div>
-                    <textarea className="cc-textarea" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!vaultKey} />
+                    <textarea
+                      className="cc-textarea"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      disabled={!vaultKey}
+                    />
                   </div>
                   <button className="cc-btn cc-btn-primary" onClick={sendMessage} disabled={!vaultKey}>
                     Send
