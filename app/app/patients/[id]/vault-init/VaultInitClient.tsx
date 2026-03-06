@@ -19,6 +19,15 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
+type PermissionsMemberRow = {
+  patient_id: string;
+  user_id: string;
+  role: string | null;
+  nickname: string | null;
+  is_controller: boolean | null;
+  created_at: string | null;
+};
+
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -82,10 +91,6 @@ function forgetCachedVaultKey(pid: string, uid: string) {
   } catch {}
 }
 
-/**
- * ✅ ONLY FIX: derive pk from sk so we always use a matched keypair for crypto_box_seal_open.
- * This prevents "incorrect key pair for the given ciphertext" caused by picking the wrong pk field.
- */
 function pickUint8(kp: any, keys: string[]): Uint8Array | null {
   for (const k of keys) {
     const v = kp?.[k];
@@ -95,7 +100,6 @@ function pickUint8(kp: any, keys: string[]): Uint8Array | null {
 }
 
 function normaliseSecretKey(sk: Uint8Array): Uint8Array {
-  // crypto_box keypairs use 32-byte sk. If we ever get a 64-byte form, take first 32 bytes.
   if (sk.length === 32) return sk;
   if (sk.length >= 32) return sk.slice(0, 32);
   return sk;
@@ -114,7 +118,6 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; p
   const privateKey = normaliseSecretKey(rawSk);
 
   const sodium = await getSodium();
-  // For X25519 box keys, pk = scalarMultBase(sk)
   const publicKey = sodium.crypto_scalarmult_base(privateKey);
 
   if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
@@ -146,9 +149,9 @@ export default function VaultInitClient() {
   const [myAlg, setMyAlg] = useState<string>("");
 
   async function getSessionUser() {
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getUser();
     if (error) throw error;
-    return data.session?.user ?? null;
+    return data.user ?? null;
   }
 
   async function refreshWithUser(userOverride?: { id: string; email?: string | null }) {
@@ -262,7 +265,6 @@ export default function VaultInitClient() {
       const user = await getSessionUser();
       if (!user?.id) throw new Error("not_authenticated");
 
-      // ✅ derive pk from sk; store pk that *matches* the local sk
       const { publicKey } = await getMatchedBoxKeypairOrThrow();
 
       const { error } = await supabase.from("user_public_keys").upsert(
@@ -297,12 +299,11 @@ export default function VaultInitClient() {
         .eq("patient_id", pid)
         .eq("user_id", user.id)
         .maybeSingle();
+
       if (shareErr) throw shareErr;
       if (!share?.wrapped_key) throw new Error("No vault share found. Ask controller to share the key.");
 
       const wrapped = share.wrapped_key as WrappedKeyV1;
-
-      // ✅ ONLY FIX: use matched pk/sk derived from sk
       const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getMatchedBoxKeypairOrThrow();
 
       const vaultKey = await unwrapVaultKeyForMe({ wrapped, myPublicKey, myPrivateKey });
@@ -311,8 +312,6 @@ export default function VaultInitClient() {
       setMsg("Vault unlocked on this device.");
       await refreshWithUser({ id: user.id, email: user.email });
     } catch (e: any) {
-      // If keys were rotated after share creation, this will still fail.
-      // We keep message transparent and actionable.
       const m = e?.message ?? "failed_to_unlock";
       if (typeof m === "string" && m.toLowerCase().includes("incorrect key pair")) {
         setMsg(
@@ -339,9 +338,16 @@ export default function VaultInitClient() {
     }
   }
 
+  async function loadManageableMembers(): Promise<PermissionsMemberRow[]> {
+    const { data, error } = await supabase.rpc("permissions_members_list", { pid });
+    if (error) throw error;
+    return (data ?? []) as PermissionsMemberRow[];
+  }
+
   async function shareKeyToNewMembers() {
     setBusy("share");
     setMsg(null);
+
     try {
       if (isController !== true) throw new Error("Only a controller can share the vault key.");
       if (!uid) throw new Error("not_authenticated");
@@ -349,18 +355,18 @@ export default function VaultInitClient() {
       const vaultKey = readCachedVaultKey(pid, uid);
       if (!vaultKey) throw new Error("Unlock vault on this device first (so the key is cached).");
 
-      const { data: members, error: memErr } = await supabase
-        .from("patient_members")
-        .select("user_id")
-        .eq("patient_id", pid);
-      if (memErr) throw memErr;
+      const members = await loadManageableMembers();
+      const userIds = members.map((m) => m.user_id).filter(Boolean);
 
-      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+      if (userIds.length === 0) {
+        throw new Error("No members found for this circle.");
+      }
 
       const { data: pubKeys, error: pkErr } = await supabase
         .from("user_public_keys")
         .select("user_id, public_key, algorithm")
         .in("user_id", userIds);
+
       if (pkErr) throw pkErr;
 
       const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
@@ -373,6 +379,7 @@ export default function VaultInitClient() {
         .from("patient_vault_shares")
         .select("user_id")
         .eq("patient_id", pid);
+
       if (exErr) throw exErr;
 
       const existingSet = new Set((existing ?? []).map((r: any) => r.user_id).filter(Boolean));
@@ -386,14 +393,22 @@ export default function VaultInitClient() {
       const rows = await Promise.all(
         targets.map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped2 = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
-          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped2 };
+          const wrapped2 = await wrapVaultKeyForRecipient({
+            vaultKey,
+            recipientPublicKey: recipientPk,
+          });
+          return {
+            patient_id: pid,
+            user_id: p.user_id,
+            wrapped_key: wrapped2,
+          };
         })
       );
 
       const { error: upErr } = await supabase
         .from("patient_vault_shares")
         .upsert(rows, { onConflict: "patient_id,user_id" });
+
       if (upErr) throw upErr;
 
       setMsg(`Shared key to ${rows.length} new member(s).`);
@@ -408,22 +423,23 @@ export default function VaultInitClient() {
   async function initialiseNewVaultKey() {
     setBusy("init");
     setMsg(null);
+
     try {
       if (isController !== true) throw new Error("Only a controller can initialise a new vault key.");
       if (!uid) throw new Error("not_authenticated");
 
-      const { data: members, error: memErr } = await supabase
-        .from("patient_members")
-        .select("user_id")
-        .eq("patient_id", pid);
-      if (memErr) throw memErr;
+      const members = await loadManageableMembers();
+      const userIds = members.map((m) => m.user_id).filter(Boolean);
 
-      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+      if (userIds.length === 0) {
+        throw new Error("No members found for this circle.");
+      }
 
       const { data: pubKeys, error: pkErr } = await supabase
         .from("user_public_keys")
         .select("user_id, public_key, algorithm")
         .in("user_id", userIds);
+
       if (pkErr) throw pkErr;
 
       const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
@@ -440,14 +456,22 @@ export default function VaultInitClient() {
       const rows = await Promise.all(
         (pubKeys ?? []).map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped2 = await wrapVaultKeyForRecipient({ vaultKey, recipientPublicKey: recipientPk });
-          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped2 };
+          const wrapped2 = await wrapVaultKeyForRecipient({
+            vaultKey,
+            recipientPublicKey: recipientPk,
+          });
+          return {
+            patient_id: pid,
+            user_id: p.user_id,
+            wrapped_key: wrapped2,
+          };
         })
       );
 
       const { error: upErr } = await supabase
         .from("patient_vault_shares")
         .upsert(rows, { onConflict: "patient_id,user_id" });
+
       if (upErr) throw upErr;
 
       setMsg("Initialised a NEW vault key and shared it.");

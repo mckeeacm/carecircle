@@ -14,36 +14,17 @@ type Membership = {
 type PatientRow = { id: string; display_name: string };
 
 type PermGet = {
-  roles: string[];
-  members: {
-    user_id: string;
-    role: string | null;
-    nickname: string | null;
-    is_controller: boolean | null;
-    email: string | null;
-  }[];
-  role_perms: { patient_id: string; role: string; feature_key: string; allowed: boolean }[];
-  member_perms: { patient_id: string; user_id: string; feature_key: string; allowed: boolean }[];
+  patient_id: string;
+  user_id: string;
+  role: string;
+  is_controller: boolean;
+  role_permissions: Record<string, boolean>;
+  member_overrides: Record<string, boolean>;
+  effective: Record<string, boolean>;
 };
 
 function truthy(v: unknown) {
   return v === true;
-}
-
-function hasRolePermission(data: PermGet | null, role: string, key: string): boolean {
-  const rp = data?.role_perms?.find((r) => r.role === role && r.feature_key === key);
-  return rp ? truthy(rp.allowed) : false;
-}
-
-function getMemberOverride(data: PermGet | null, userId: string, key: string): boolean | null {
-  const mp = data?.member_perms?.find((m) => m.user_id === userId && m.feature_key === key);
-  return mp ? truthy(mp.allowed) : null;
-}
-
-function effectiveAllowed(data: PermGet | null, userId: string, role: string, key: string): boolean {
-  const ov = getMemberOverride(data, userId, key);
-  if (ov !== null) return ov;
-  return hasRolePermission(data, role, key);
 }
 
 function nowIso() {
@@ -78,11 +59,13 @@ export default function HubClient() {
         setMsg(authErr.message);
         return;
       }
+
       const uid = auth.user?.id;
       if (!uid) {
         setMsg("not_authenticated");
         return;
       }
+
       setUserId(uid);
 
       log("Loading patient_members for current user...");
@@ -121,17 +104,21 @@ export default function HubClient() {
 
       log("Loading permissions per circle (permissions_get)...");
       const nextPerms: Record<string, PermGet | null> = {};
+
       for (const pid of pids) {
         const { data, error } = await supabase.rpc("permissions_get", { pid });
+
         if (error) {
           log(`permissions_get ERROR pid=${pid}: ${error.message}`);
           nextPerms[pid] = null;
         } else {
-          nextPerms[pid] = data as PermGet;
-          const keys = (data as any)?.role_perms?.length ?? 0;
-          log(`permissions_get OK pid=${pid} keys=${keys}`);
+          const shaped = data as PermGet;
+          nextPerms[pid] = shaped;
+          const effectiveKeys = Object.keys(shaped?.effective ?? {}).length;
+          log(`permissions_get OK pid=${pid} effective_keys=${effectiveKeys}`);
         }
       }
+
       setPermsByPid(nextPerms);
     })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_hub"));
   }, [supabase]);
@@ -169,17 +156,17 @@ export default function HubClient() {
             {memberships.map((m) => {
               const p = patientsById[m.patient_id];
               const perms = permsByPid[m.patient_id] ?? null;
+              const effective = perms?.effective ?? {};
 
-              // Feature key mapping
-              const canToday = true; // Today is a hub dashboard; keep accessible if member
-              const canSummary = effectiveAllowed(perms, userId, m.role, "summary_view");
-              const canProfile = effectiveAllowed(perms, userId, m.role, "profile_view");
-              const canMeds = effectiveAllowed(perms, userId, m.role, "meds_view");
-              const canJournals = effectiveAllowed(perms, userId, m.role, "journals_view");
-              const canAppointments = effectiveAllowed(perms, userId, m.role, "appointments_view");
-              const canDm = effectiveAllowed(perms, userId, m.role, "dm_view");
-              const canSobriety = effectiveAllowed(perms, userId, m.role, "trackers_view");
-              const canPerms = m.is_controller || m.role === "patient";
+              const canToday = true;
+              const canSummary = truthy(effective.summary_view);
+              const canProfile = truthy(effective.profile_view);
+              const canMeds = truthy(effective.meds_view);
+              const canJournals = truthy(effective.journals_view);
+              const canAppointments = truthy(effective.appointments_view);
+              const canDm = truthy(effective.dm_view);
+              const canSobriety = truthy(effective.trackers_view);
+              const canPerms = truthy(effective.permissions_manage);
 
               return (
                 <div key={m.patient_id} className="cc-card cc-card-pad cc-stack">
@@ -193,7 +180,9 @@ export default function HubClient() {
                     </div>
 
                     <div className="cc-row">
-                      <span className="cc-pill cc-pill-primary">Perms: {perms ? "loaded" : "—"}</span>
+                      <span className={`cc-pill ${perms ? "cc-pill-primary" : ""}`}>
+                        Perms: {perms ? "loaded" : "—"}
+                      </span>
                     </div>
                   </div>
 
@@ -202,47 +191,61 @@ export default function HubClient() {
                       Today
                     </Link>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/summary`} aria-disabled={!canSummary}>
-                      <button className="cc-btn" disabled={!canSummary} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Summary
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canSummary}
+                      onClick={() => canSummary && (window.location.href = `/app/patients/${m.patient_id}/summary`)}
+                    >
+                      Summary
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/profile`}>
-                      <button className="cc-btn" disabled={!canProfile} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Profile
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canProfile}
+                      onClick={() => canProfile && (window.location.href = `/app/patients/${m.patient_id}/profile`)}
+                    >
+                      Profile
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/medication-logs`}>
-                      <button className="cc-btn" disabled={!canMeds} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Medication logs
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canMeds}
+                      onClick={() => canMeds && (window.location.href = `/app/patients/${m.patient_id}/medication-logs`)}
+                    >
+                      Medication logs
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/journals`}>
-                      <button className="cc-btn" disabled={!canJournals} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Journals
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canJournals}
+                      onClick={() => canJournals && (window.location.href = `/app/patients/${m.patient_id}/journals`)}
+                    >
+                      Journals
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/appointments`}>
-                      <button className="cc-btn" disabled={!canAppointments} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Appointments
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canAppointments}
+                      onClick={() => canAppointments && (window.location.href = `/app/patients/${m.patient_id}/appointments`)}
+                    >
+                      Appointments
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/dm`}>
-                      <button className="cc-btn" disabled={!canDm} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        DMs
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canDm}
+                      onClick={() => canDm && (window.location.href = `/app/patients/${m.patient_id}/dm`)}
+                    >
+                      DMs
+                    </button>
 
-                    <Link className="cc-btn" href={`/app/patients/${m.patient_id}/sobriety`}>
-                      <button className="cc-btn" disabled={!canSobriety} style={{ padding: 0, border: "none", background: "transparent" }}>
-                        Sobriety
-                      </button>
-                    </Link>
+                    <button
+                      className="cc-btn"
+                      disabled={!canSobriety}
+                      onClick={() => canSobriety && (window.location.href = `/app/patients/${m.patient_id}/sobriety`)}
+                    >
+                      Sobriety
+                    </button>
 
                     {canPerms ? (
                       <Link className="cc-btn cc-btn-secondary" href={`/app/account/permissions?pid=${m.patient_id}`}>
@@ -252,7 +255,7 @@ export default function HubClient() {
                   </div>
 
                   <div className="cc-small cc-subtle">
-                    Buttons are enabled only if your effective permission allows that feature (role defaults + member overrides).
+                    Buttons are enabled only if your effective permission allows that feature.
                   </div>
                 </div>
               );
