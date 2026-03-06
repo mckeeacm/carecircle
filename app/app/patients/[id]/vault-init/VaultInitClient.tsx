@@ -344,6 +344,16 @@ export default function VaultInitClient() {
     return (data ?? []) as PermissionsMemberRow[];
   }
 
+  async function upsertWrappedShares(rows: Array<{ user_id: string; wrapped_key: WrappedKeyV1 }>) {
+    const { data, error } = await supabase.rpc("patient_vault_shares_upsert", {
+      pid,
+      p_rows: rows,
+    });
+
+    if (error) throw error;
+    return Number(data ?? 0);
+  }
+
   async function shareKeyToNewMembers() {
     setBusy("share");
     setMsg(null);
@@ -393,25 +403,19 @@ export default function VaultInitClient() {
       const rows = await Promise.all(
         targets.map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped2 = await wrapVaultKeyForRecipient({
+          const wrapped_key = await wrapVaultKeyForRecipient({
             vaultKey,
             recipientPublicKey: recipientPk,
           });
           return {
-            patient_id: pid,
             user_id: p.user_id,
-            wrapped_key: wrapped2,
+            wrapped_key,
           };
         })
       );
 
-      const { error: upErr } = await supabase
-        .from("patient_vault_shares")
-        .upsert(rows, { onConflict: "patient_id,user_id" });
-
-      if (upErr) throw upErr;
-
-      setMsg(`Shared key to ${rows.length} new member(s).`);
+      const count = await upsertWrappedShares(rows);
+      setMsg(`Shared key to ${count} new member(s).`);
       await refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_share");
@@ -456,25 +460,19 @@ export default function VaultInitClient() {
       const rows = await Promise.all(
         (pubKeys ?? []).map(async (p: any) => {
           const recipientPk = base64ToBytes(p.public_key);
-          const wrapped2 = await wrapVaultKeyForRecipient({
+          const wrapped_key = await wrapVaultKeyForRecipient({
             vaultKey,
             recipientPublicKey: recipientPk,
           });
           return {
-            patient_id: pid,
             user_id: p.user_id,
-            wrapped_key: wrapped2,
+            wrapped_key,
           };
         })
       );
 
-      const { error: upErr } = await supabase
-        .from("patient_vault_shares")
-        .upsert(rows, { onConflict: "patient_id,user_id" });
-
-      if (upErr) throw upErr;
-
-      setMsg("Initialised a NEW vault key and shared it.");
+      const count = await upsertWrappedShares(rows);
+      setMsg(`Initialised a NEW vault key and shared it to ${count} member(s).`);
       await refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_init_new_vault");
