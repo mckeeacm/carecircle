@@ -1,4 +1,3 @@
-// app/app/patients/[id]/summary/SummaryClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,6 +15,8 @@ type PatientProfileRow = {
   communication_notes_encrypted: CipherEnvelopeV1 | null;
   allergies_encrypted: CipherEnvelopeV1 | null;
   safety_notes_encrypted: CipherEnvelopeV1 | null;
+  diagnoses_encrypted: CipherEnvelopeV1 | null;
+  languages_spoken_encrypted: CipherEnvelopeV1 | null;
 };
 
 type MedicationRow = {
@@ -44,6 +45,16 @@ function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
+function isDecryptMismatchError(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("ciphertext cannot be decrypted using that key") ||
+    m.includes("incorrect key pair") ||
+    m.includes("failed to decrypt") ||
+    m.includes("decrypt")
+  );
+}
+
 export default function SummaryClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -54,6 +65,8 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
   const [commNotes, setCommNotes] = useState<string>("");
   const [allergies, setAllergies] = useState<string>("");
   const [safetyNotes, setSafetyNotes] = useState<string>("");
+  const [diagnoses, setDiagnoses] = useState<string>("");
+  const [languagesSpoken, setLanguagesSpoken] = useState<string>("");
   const [profileUpdatedAt, setProfileUpdatedAt] = useState<string | null>(null);
 
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
@@ -61,6 +74,35 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
   const [sharedJournals, setSharedJournals] = useState<JournalPreview[]>([]);
 
   const [loading, setLoading] = useState(false);
+
+  async function decryptProfileField(params: {
+    env: CipherEnvelopeV1 | null;
+    column:
+      | "communication_notes_encrypted"
+      | "allergies_encrypted"
+      | "safety_notes_encrypted"
+      | "diagnoses_encrypted"
+      | "languages_spoken_encrypted";
+  }) {
+    if (!params.env || !vaultKey) return "";
+
+    try {
+      return await decryptStringWithLocalCache({
+        patientId,
+        table: "patient_profiles",
+        rowId: patientId,
+        column: params.column,
+        env: params.env,
+        vaultKey,
+      });
+    } catch (e: any) {
+      const text = e?.message ?? String(e);
+      if (isDecryptMismatchError(text)) {
+        return "";
+      }
+      throw e;
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -77,11 +119,10 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       if (pErr) throw pErr;
       setPatient(p as PatientRow);
 
-      // Patient profile (encrypted fields)
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted"
+          "patient_id, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
@@ -90,51 +131,43 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       const row = (pr ?? null) as PatientProfileRow | null;
       setProfileUpdatedAt(row?.updated_at ?? null);
 
-      // show placeholders if no vaultKey
       if (!row || !vaultKey) {
         setCommNotes("");
         setAllergies("");
         setSafetyNotes("");
+        setDiagnoses("");
+        setLanguagesSpoken("");
       } else {
-        const cn = row.communication_notes_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "communication_notes_encrypted",
-              env: row.communication_notes_encrypted,
-              vaultKey,
-            })
-          : "";
-
-        const al = row.allergies_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "allergies_encrypted",
-              env: row.allergies_encrypted,
-              vaultKey,
-            })
-          : "";
-
-        const sn = row.safety_notes_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "safety_notes_encrypted",
-              env: row.safety_notes_encrypted,
-              vaultKey,
-            })
-          : "";
+        const [cn, al, sn, dg, ls] = await Promise.all([
+          decryptProfileField({
+            env: row.communication_notes_encrypted,
+            column: "communication_notes_encrypted",
+          }),
+          decryptProfileField({
+            env: row.allergies_encrypted,
+            column: "allergies_encrypted",
+          }),
+          decryptProfileField({
+            env: row.safety_notes_encrypted,
+            column: "safety_notes_encrypted",
+          }),
+          decryptProfileField({
+            env: row.diagnoses_encrypted,
+            column: "diagnoses_encrypted",
+          }),
+          decryptProfileField({
+            env: row.languages_spoken_encrypted,
+            column: "languages_spoken_encrypted",
+          }),
+        ]);
 
         setCommNotes(cn || "");
         setAllergies(al || "");
         setSafetyNotes(sn || "");
+        setDiagnoses(dg || "");
+        setLanguagesSpoken(ls || "");
       }
 
-      // Upcoming appointments (best effort)
       try {
         const { data: a, error: aErr } = await supabase
           .from("appointments")
@@ -149,7 +182,6 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
         setAppointments([]);
       }
 
-      // Active meds
       const { data: m, error: mErr } = await supabase
         .from("medications")
         .select("id, name, dosage, schedule_text")
@@ -161,7 +193,6 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       if (mErr) throw mErr;
       setMeds((m ?? []) as MedicationRow[]);
 
-      // Recent shared journals (metadata only, no decrypt)
       const { data: j, error: jErr } = await supabase
         .from("journal_entries")
         .select("id, created_at, journal_type, pain_level, shared_to_circle")
@@ -235,9 +266,9 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
             <div className="cc-spacer-12" />
 
-            <div className="cc-small cc-strong">Allergies</div>
+            <div className="cc-small cc-strong">Languages spoken</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (allergies || "—") : "—"}
+              {vaultKey ? (languagesSpoken || "—") : "—"}
             </div>
 
             <div className="cc-spacer-12" />
@@ -248,7 +279,26 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-spacer-12" />
-            <div className="cc-small">Last updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}</div>
+            <div className="cc-small">
+              Last updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}
+            </div>
+          </div>
+
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Clinical notes</h2>
+            <div className="cc-spacer-12" />
+
+            <div className="cc-small cc-strong">Diagnoses</div>
+            <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {vaultKey ? (diagnoses || "—") : "—"}
+            </div>
+
+            <div className="cc-spacer-12" />
+
+            <div className="cc-small cc-strong">Allergies</div>
+            <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {vaultKey ? (allergies || "—") : "—"}
+            </div>
           </div>
 
           <div className="cc-card cc-card-pad">
@@ -269,7 +319,9 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
               </div>
             )}
           </div>
+        </div>
 
+        <div className="cc-grid-2-125">
           <div className="cc-card cc-card-pad">
             <h2 className="cc-h2">Active medications</h2>
             <div className="cc-spacer-12" />
@@ -288,42 +340,42 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
               </div>
             )}
           </div>
-        </div>
 
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <h2 className="cc-h2">Recent shared journal entries</h2>
-            <Link className="cc-btn" href={`/app/patients/${patientId}/journals`}>
-              Open journals
-            </Link>
-          </div>
+          <div className="cc-card cc-card-pad">
+            <div className="cc-row-between">
+              <h2 className="cc-h2">Recent shared journal entries</h2>
+              <Link className="cc-btn" href={`/app/patients/${patientId}/journals`}>
+                Open journals
+              </Link>
+            </div>
 
-          <div className="cc-spacer-12" />
+            <div className="cc-spacer-12" />
 
-          {sharedJournals.length === 0 ? (
-            <div className="cc-small">No shared journal entries.</div>
-          ) : (
-            <div className="cc-stack">
-              {sharedJournals.map((j) => (
-                <div key={j.id} className="cc-panel-soft">
-                  <div className="cc-row-between">
-                    <div>
-                      <div className="cc-strong">{j.journal_type}</div>
-                      <div className="cc-small">{new Date(j.created_at).toLocaleString()}</div>
-                    </div>
-                    <div className="cc-row">
-                      {j.pain_level != null ? <span className="cc-pill">pain: {j.pain_level}</span> : null}
-                      <span className="cc-pill cc-pill-primary">shared</span>
+            {sharedJournals.length === 0 ? (
+              <div className="cc-small">No shared journal entries.</div>
+            ) : (
+              <div className="cc-stack">
+                {sharedJournals.map((j) => (
+                  <div key={j.id} className="cc-panel-soft">
+                    <div className="cc-row-between">
+                      <div>
+                        <div className="cc-strong">{j.journal_type}</div>
+                        <div className="cc-small">{new Date(j.created_at).toLocaleString()}</div>
+                      </div>
+                      <div className="cc-row">
+                        {j.pain_level != null ? <span className="cc-pill">pain: {j.pain_level}</span> : null}
+                        <span className="cc-pill cc-pill-primary">shared</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          <div className="cc-spacer-12" />
-          <div className="cc-small cc-subtle">
-            Note: journal content is end-to-end encrypted and may not be shown here unless you enable decrypt with vault access.
+            <div className="cc-spacer-12" />
+            <div className="cc-small cc-subtle">
+              Note: journal content is end-to-end encrypted and may not be shown here unless you enable decrypt with vault access.
+            </div>
           </div>
         </div>
 

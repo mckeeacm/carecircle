@@ -1,4 +1,3 @@
-// app/app/patients/[id]/journals/JournalsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,6 +22,25 @@ type JournalRow = {
   mood_encrypted: CipherEnvelopeV1 | null;
 };
 
+type SobrietyRow = {
+  id: string;
+  patient_id: string;
+  occurred_at: string;
+  status: string;
+  substance: string | null;
+  intensity: number | null;
+  note_encrypted: CipherEnvelopeV1 | null;
+  created_by: string;
+  created_at: string;
+};
+
+type MembershipRow = {
+  user_id: string;
+  nickname: string | null;
+  role: string | null;
+  is_controller: boolean | null;
+};
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -32,14 +50,25 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const { vaultKey } = usePatientVault();
 
   const [rows, setRows] = useState<JournalRow[]>([]);
+  const [sobrietyRows, setSobrietyRows] = useState<SobrietyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"all" | "shared">("all");
+
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [myRole, setMyRole] = useState<string>("");
+  const [isPatientRole, setIsPatientRole] = useState(false);
 
   const [journalType, setJournalType] = useState("journal");
   const [mood, setMood] = useState("");
   const [content, setContent] = useState("");
   const [painLevel, setPainLevel] = useState<number | "">("");
   const [sharedToCircle, setSharedToCircle] = useState(true);
+
+  const [trackerMood, setTrackerMood] = useState<string>("");
+  const [trackerPain, setTrackerPain] = useState<number | null>(null);
+  const [trackerSobriety, setTrackerSobriety] = useState<"yes" | "no" | "">("");
+  const [trackerShare, setTrackerShare] = useState(true);
+
   const [msg, setMsg] = useState<string | null>(null);
 
   async function refresh() {
@@ -52,6 +81,25 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     setMsg(null);
 
     try {
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id ?? "";
+      setCurrentUserId(uid);
+
+      const { data: myMemberRows, error: myMemberErr } = await supabase
+        .from("patient_members")
+        .select("user_id, nickname, role, is_controller")
+        .eq("patient_id", patientId)
+        .eq("user_id", uid)
+        .limit(1);
+
+      if (myMemberErr) throw myMemberErr;
+
+      const me = ((myMemberRows ?? [])[0] ?? null) as MembershipRow | null;
+      const role = me?.role ?? "";
+      setMyRole(role);
+      setIsPatientRole(role === "patient");
+
       let query = supabase
         .from("journal_entries")
         .select(
@@ -66,7 +114,22 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       const { data, error } = await query;
       if (error) throw error;
 
-      setRows((data ?? []) as unknown as JournalRow[]);
+      setRows((data ?? []) as JournalRow[]);
+
+      const { data: sobriety, error: sErr } = await supabase
+        .from("sobriety_logs")
+        .select(
+          "id, patient_id, occurred_at, status, substance, intensity, note_encrypted, created_by, created_at"
+        )
+        .eq("patient_id", patientId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (!sErr) {
+        setSobrietyRows((sobriety ?? []) as SobrietyRow[]);
+      } else {
+        setSobrietyRows([]);
+      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_journals");
     } finally {
@@ -89,6 +152,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         { event: "INSERT", schema: "public", table: "journal_entries", filter: `patient_id=eq.${patientId}` },
         () => refresh()
       )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "sobriety_logs", filter: `patient_id=eq.${patientId}` },
+        () => refresh()
+      )
       .subscribe();
 
     return () => {
@@ -105,6 +173,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     setMsg(null);
 
     try {
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+
       const contentEnv = await vaultEncryptString({
         vaultKey,
         plaintext: content,
@@ -117,11 +190,14 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
       });
 
+      const effectiveSharedToCircle = isPatientRole ? sharedToCircle : true;
+
       const { error } = await supabase.from("journal_entries").insert({
         patient_id: patientId,
         journal_type: journalType,
         occurred_at: new Date().toISOString(),
-        shared_to_circle: sharedToCircle,
+        created_by: uid,
+        shared_to_circle: effectiveSharedToCircle,
         pain_level: painLevel === "" ? null : painLevel,
         include_in_clinician_summary: false,
         content_encrypted: contentEnv,
@@ -137,6 +213,112 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       await refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_journal");
+    }
+  }
+
+  async function saveTrackers() {
+    if (!vaultKey) return setMsg("no_vault_share");
+    if (!isPatientRole) return setMsg("only_patient_can_log_trackers");
+    if (!patientId || !isUuid(patientId)) return setMsg(`invalid patientId: ${String(patientId)}`);
+    if (!trackerMood && trackerPain == null && !trackerSobriety) return setMsg("choose_at_least_one_tracker");
+
+    setMsg(null);
+
+    try {
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+
+      if (trackerMood || trackerPain != null) {
+        const contentParts: string[] = [];
+        if (trackerMood) contentParts.push(`Mood: ${trackerMood}`);
+        if (trackerPain != null) contentParts.push(`Pain: ${trackerPain}/10`);
+
+        const contentEnv = await vaultEncryptString({
+          vaultKey,
+          plaintext: contentParts.join("\n"),
+          aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
+        });
+
+        const moodEnv = await vaultEncryptString({
+          vaultKey,
+          plaintext: trackerMood || "",
+          aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
+        });
+
+        const { error: jErr } = await supabase.from("journal_entries").insert({
+          patient_id: patientId,
+          journal_type: "tracker",
+          occurred_at: new Date().toISOString(),
+          created_by: uid,
+          shared_to_circle: trackerShare,
+          pain_level: trackerPain,
+          include_in_clinician_summary: false,
+          content_encrypted: contentEnv,
+          mood_encrypted: moodEnv,
+        });
+
+        if (jErr) throw jErr;
+      }
+
+      if (trackerSobriety) {
+        const noteText = trackerSobriety === "yes" ? "Sobriety maintained" : "Sobriety concern logged";
+
+        const noteEnv = await vaultEncryptString({
+          vaultKey,
+          plaintext: noteText,
+          aad: { table: "sobriety_logs", column: "note_encrypted", patient_id: patientId },
+        });
+
+        const { error: sErr } = await supabase.from("sobriety_logs").insert({
+          patient_id: patientId,
+          occurred_at: new Date().toISOString(),
+          status: trackerSobriety === "yes" ? "yes" : "no",
+          substance: null,
+          intensity: null,
+          note_encrypted: noteEnv,
+          created_by: uid,
+        });
+
+        if (sErr) throw sErr;
+
+        if (trackerShare) {
+          const contentEnv = await vaultEncryptString({
+            vaultKey,
+            plaintext: `Sobriety today: ${trackerSobriety === "yes" ? "Yes" : "No"}`,
+            aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
+          });
+
+          const moodEnv = await vaultEncryptString({
+            vaultKey,
+            plaintext: "",
+            aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
+          });
+
+          const { error: shareErr } = await supabase.from("journal_entries").insert({
+            patient_id: patientId,
+            journal_type: "sobriety-tracker",
+            occurred_at: new Date().toISOString(),
+            created_by: uid,
+            shared_to_circle: true,
+            pain_level: null,
+            include_in_clinician_summary: false,
+            content_encrypted: contentEnv,
+            mood_encrypted: moodEnv,
+          });
+
+          if (shareErr) throw shareErr;
+        }
+      }
+
+      setTrackerMood("");
+      setTrackerPain(null);
+      setTrackerSobriety("");
+      setTrackerShare(true);
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_save_trackers");
     }
   }
 
@@ -191,6 +373,76 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           </button>
         </div>
 
+        {isPatientRole ? (
+          <div className="cc-card cc-card-pad cc-stack">
+            <h2 className="cc-h2">Trackers</h2>
+            <div className="cc-subtle">
+              Simple daily patient inputs. You can also share them to the circle journal.
+            </div>
+
+            <div className="cc-grid-3">
+              <div className="cc-panel-soft cc-stack">
+                <div className="cc-strong">Mood</div>
+                <div className="cc-row">
+                  {["😞", "🙁", "😐", "🙂", "😄"].map((emoji) => (
+                    <button
+                      key={emoji}
+                      className={`cc-btn ${trackerMood === emoji ? "cc-btn-primary" : ""}`}
+                      onClick={() => setTrackerMood(emoji)}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="cc-panel-soft cc-stack">
+                <div className="cc-strong">Pain</div>
+                <div className="cc-row" style={{ flexWrap: "wrap" }}>
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                    <button
+                      key={n}
+                      className={`cc-btn ${trackerPain === n ? "cc-btn-primary" : ""}`}
+                      onClick={() => setTrackerPain(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="cc-panel-soft cc-stack">
+                <div className="cc-strong">Sobriety</div>
+                <div className="cc-row">
+                  <button
+                    className={`cc-btn ${trackerSobriety === "yes" ? "cc-btn-primary" : ""}`}
+                    onClick={() => setTrackerSobriety("yes")}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className={`cc-btn ${trackerSobriety === "no" ? "cc-btn-danger" : ""}`}
+                    onClick={() => setTrackerSobriety("no")}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <label className="cc-check">
+              <input type="checkbox" checked={trackerShare} onChange={(e) => setTrackerShare(e.target.checked)} />
+              <span className="cc-label">Share trackers to circle journal</span>
+            </label>
+
+            <div className="cc-row">
+              <button className="cc-btn cc-btn-primary" onClick={saveTrackers} disabled={!vaultKey}>
+                Save trackers
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="cc-card cc-card-pad cc-stack">
           <h2 className="cc-h2">New entry</h2>
 
@@ -210,15 +462,21 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
               <input
                 className="cc-input"
                 type="number"
+                min={0}
+                max={10}
                 value={painLevel}
                 onChange={(e) => setPainLevel(e.target.value === "" ? "" : Number(e.target.value))}
               />
             </div>
 
-            <label className="cc-check">
-              <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
-              <span className="cc-label">Share to circle</span>
-            </label>
+            {isPatientRole ? (
+              <label className="cc-check">
+                <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
+                <span className="cc-label">Share to circle</span>
+              </label>
+            ) : (
+              <div className="cc-small cc-subtle">Entries from non-patient members are always shared to the circle.</div>
+            )}
           </div>
 
           <div className="cc-field">
@@ -247,6 +505,18 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             </div>
           )}
         </div>
+
+        {sobrietyRows.length > 0 ? (
+          <div className="cc-card cc-card-pad">
+            <h2 className="cc-h2">Recent sobriety tracker logs</h2>
+            <div className="cc-spacer-12" />
+            <div className="cc-stack">
+              {sobrietyRows.map((r) => (
+                <SobrietyCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -330,6 +600,56 @@ function JournalCard({
           <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
             {ptContent || "—"}
           </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SobrietyCard({
+  row,
+  patientId,
+  vaultKey,
+}: {
+  row: SobrietyRow;
+  patientId: string;
+  vaultKey: Uint8Array | null;
+}) {
+  const [plain, setPlain] = useState("");
+
+  async function decrypt() {
+    if (!vaultKey || !row.note_encrypted || plain) return;
+
+    const text = await decryptStringWithLocalCache({
+      patientId,
+      table: "sobriety_logs",
+      rowId: row.id,
+      column: "note_encrypted",
+      env: row.note_encrypted,
+      vaultKey,
+    });
+
+    setPlain(text);
+  }
+
+  return (
+    <div className="cc-panel-soft">
+      <div className="cc-row-between">
+        <div className="cc-wrap">
+          <div className="cc-strong">
+            Sobriety: {row.status}
+            <span className="cc-small"> • {new Date(row.created_at).toLocaleString()}</span>
+          </div>
+        </div>
+
+        <button className="cc-btn" onClick={decrypt} disabled={!vaultKey || !row.note_encrypted || !!plain}>
+          {plain ? "Decrypted" : row.note_encrypted ? "Decrypt" : "No note"}
+        </button>
+      </div>
+
+      {plain ? (
+        <div className="cc-spacer-12">
+          <div className="cc-panel">{plain}</div>
         </div>
       ) : null}
     </div>

@@ -1,4 +1,3 @@
-// app/app/patients/[id]/medication-logs/MedicationLogsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -27,6 +26,13 @@ type MedicationLogRow = {
   created_at: string;
 };
 
+type MemberBasic = {
+  user_id: string;
+  nickname: string | null;
+  role: string | null;
+  is_controller: boolean | null;
+};
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -37,6 +43,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [logs, setLogs] = useState<MedicationLogRow[]>([]);
+  const [membersById, setMembersById] = useState<Record<string, MemberBasic>>({});
   const [notePlainById, setNotePlainById] = useState<Record<string, string>>({});
 
   const [msg, setMsg] = useState<string | null>(null);
@@ -53,6 +60,15 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
     try {
       if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
+      const { data: memberRows, error: memberErr } = await supabase.rpc("patient_members_basic_list", {
+        pid: patientId,
+      });
+      if (!memberErr) {
+        const map: Record<string, MemberBasic> = {};
+        for (const r of (memberRows ?? []) as MemberBasic[]) map[r.user_id] = r;
+        setMembersById(map);
+      }
 
       const { data: m, error: mErr } = await supabase
         .from("medications")
@@ -97,6 +113,11 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     try {
       if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
 
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+
       const noteEnv = await vaultEncryptString({
         vaultKey,
         plaintext: note,
@@ -107,6 +128,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
         patient_id: patientId,
         medication_id: medicationId,
         status,
+        created_by: uid,
         note_encrypted: noteEnv,
       });
 
@@ -136,6 +158,18 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     });
 
     setNotePlainById((prev) => ({ ...prev, [l.id]: plain }));
+  }
+
+  function whoLabel(createdBy: string) {
+    const m = membersById[createdBy];
+    if (!m) return createdBy;
+    return m.nickname?.trim() || createdBy;
+  }
+
+  function medLabel(medicationId: string) {
+    const m = meds.find((x) => x.id === medicationId);
+    if (!m) return medicationId;
+    return `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`;
   }
 
   return (
@@ -192,7 +226,12 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
             <div className="cc-field" style={{ minWidth: 220 }}>
               <div className="cc-label">Status</div>
-              <input className="cc-input" value={status} onChange={(e) => setStatus(e.target.value)} />
+              <select className="cc-select" value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="taken">taken</option>
+                <option value="missed">missed</option>
+                <option value="refused">refused</option>
+                <option value="delayed">delayed</option>
+              </select>
             </div>
           </div>
 
@@ -236,7 +275,10 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       <div className="cc-wrap">
                         <div className="cc-strong">{l.status ?? "—"}</div>
                         <div className="cc-small">{new Date(l.created_at).toLocaleString()}</div>
-                        <div className="cc-small cc-wrap">medication_id: {l.medication_id}</div>
+                        <div className="cc-small cc-wrap">Medication: {medLabel(l.medication_id)}</div>
+                        <div className="cc-small cc-wrap">
+                          Logged by: <b>{whoLabel(l.created_by)}</b>
+                        </div>
                       </div>
 
                       <button
