@@ -62,15 +62,22 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [draft, setDraft] = useState<string>("");
 
   async function loadMembers(uid: string) {
-    const { data, error } = await supabase
-      .from("patient_members")
-      .select("user_id, role, nickname, is_controller, created_at")
-      .eq("patient_id", patientId)
-      .order("created_at", { ascending: true });
+    const { data, error } = await supabase.rpc("patient_members_basic_list", {
+      pid: patientId,
+    });
 
     if (error) throw error;
 
-    const allMembers = ((data ?? []) as Member[]).filter((m) => m.user_id !== uid);
+    const allMembers = ((data ?? []) as any[])
+      .filter((m) => m.user_id !== uid)
+      .map((m) => ({
+        user_id: m.user_id as string,
+        role: m.role ?? null,
+        nickname: m.nickname ?? null,
+        is_controller: m.is_controller ?? false,
+        created_at: null,
+      }));
+
     setMembers(allMembers);
 
     if (!selectedRecipientId && allMembers[0]?.user_id) {

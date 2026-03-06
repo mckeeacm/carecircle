@@ -21,6 +21,7 @@ function isUuid(s: unknown): s is string {
 
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
+
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -61,7 +62,10 @@ export default function AccountClient() {
     setMsg(null);
 
     const { data, error } = await supabase.auth.getUser();
-    if (error) return setMsg(error.message);
+    if (error) {
+      setMsg(error.message);
+      return;
+    }
 
     const uid = data.user?.id;
     setEmail(data.user?.email ?? "");
@@ -147,6 +151,7 @@ export default function AccountClient() {
   async function enableE2EEOnThisDevice() {
     setMsg(null);
     setE2eeBusy(true);
+
     try {
       await registerMyPublicKey();
       setHasPublicKey(true);
@@ -213,9 +218,18 @@ export default function AccountClient() {
     setInviteUrlByPid((prev) => ({ ...prev, [patientId]: "" }));
 
     try {
+      const { data: auth, error: authErr } = await supabase.auth.getSession();
+      if (authErr) throw authErr;
+
+      const accessToken = auth.session?.access_token;
+      if (!accessToken) throw new Error("missing_auth_session");
+
       const res = await fetch("/api/circle-invite", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({
           patientId,
           role,
@@ -233,14 +247,25 @@ export default function AccountClient() {
       }
 
       const inviteUrl = json?.inviteUrl ?? "";
+      const emailSent = json?.emailSent === true;
+      const emailError = json?.emailError ?? null;
+
       setInviteUrlByPid((prev) => ({ ...prev, [patientId]: inviteUrl }));
       setInviteSentEmailByPid((prev) => ({ ...prev, [patientId]: inviteEmail }));
 
-      setMsg(
-        inviteNickname
-          ? `Invite created for ${inviteNickname}. Invite email sent to ${inviteEmail}.`
-          : `Invite created. Invite email sent to ${inviteEmail}.`
-      );
+      if (emailSent) {
+        setMsg(
+          inviteNickname
+            ? `Invite created for ${inviteNickname}. Email sent to ${inviteEmail}.`
+            : `Invite created. Email sent to ${inviteEmail}.`
+        );
+      } else {
+        setMsg(
+          inviteNickname
+            ? `Invite created for ${inviteNickname}. Email send failed, but the individual invite link is ready. ${emailError ? `(${emailError})` : ""}`
+            : `Invite created. Email send failed, but the individual invite link is ready. ${emailError ? `(${emailError})` : ""}`
+        );
+      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_invite");
     } finally {
@@ -306,7 +331,11 @@ export default function AccountClient() {
 
             <div className="cc-row">
               <span className="cc-pill cc-pill-primary">
-                {hasPublicKey === true ? "Public key: OK" : hasPublicKey === false ? "Public key: missing" : "Public key: unknown"}
+                {hasPublicKey === true
+                  ? "Public key: OK"
+                  : hasPublicKey === false
+                  ? "Public key: missing"
+                  : "Public key: unknown"}
               </span>
 
               <button
@@ -314,7 +343,11 @@ export default function AccountClient() {
                 onClick={enableE2EEOnThisDevice}
                 disabled={e2eeBusy || hasPublicKey === true}
               >
-                {hasPublicKey === true ? "Enabled" : e2eeBusy ? "Enabling…" : "Enable E2EE on this device"}
+                {hasPublicKey === true
+                  ? "Enabled"
+                  : e2eeBusy
+                  ? "Enabling…"
+                  : "Enable E2EE on this device"}
               </button>
             </div>
           </div>
@@ -438,7 +471,7 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">Invite a circle member</h2>
               <div className="cc-subtle">
-                This sends an email invite and also gives you an individual backup invite link for that person.
+                This sends an email invite and also gives you an individual backup invite link for that invite.
               </div>
             </div>
           </div>
@@ -537,7 +570,10 @@ export default function AccountClient() {
                             value={days}
                             disabled={!pidOk}
                             onChange={(e) =>
-                              setInviteDaysByPid((prev) => ({ ...prev, [m.patient_id]: Number(e.target.value || 7) }))
+                              setInviteDaysByPid((prev) => ({
+                                ...prev,
+                                [m.patient_id]: Number(e.target.value || 7),
+                              }))
                             }
                           />
                         </div>
@@ -551,7 +587,10 @@ export default function AccountClient() {
                             value={maxUses}
                             disabled={!pidOk}
                             onChange={(e) =>
-                              setInviteMaxUsesByPid((prev) => ({ ...prev, [m.patient_id]: Number(e.target.value || 1) }))
+                              setInviteMaxUsesByPid((prev) => ({
+                                ...prev,
+                                [m.patient_id]: Number(e.target.value || 1),
+                              }))
                             }
                           />
                         </div>
@@ -559,15 +598,10 @@ export default function AccountClient() {
 
                       {url ? (
                         <div className="cc-panel cc-stack">
-                          <div className="cc-small cc-subtle">
-                            Invite email sent to:
-                          </div>
+                          <div className="cc-small cc-subtle">Invitee email</div>
                           <div className="cc-strong">{sentEmail || inviteeEmail || "—"}</div>
 
-                          <div className="cc-small cc-subtle">
-                            Individual backup invite link:
-                          </div>
-
+                          <div className="cc-small cc-subtle">Individual backup invite link</div>
                           <div className="cc-row-between">
                             <div className="cc-wrap" style={{ fontSize: 13 }}>
                               {url}
@@ -578,12 +612,12 @@ export default function AccountClient() {
                           </div>
 
                           <div className="cc-small cc-subtle">
-                            The email invite should already have been sent. This link is a backup for this specific invitee.
+                            This link is unique to this invite. The email invite is attempted automatically as part of the same action.
                           </div>
                         </div>
                       ) : (
                         <div className="cc-small cc-subtle">
-                          Enter email + nickname, then invite the member. An email invite will be sent and you’ll also get a backup individual link.
+                          Enter email + nickname, then invite the member. This creates a unique invite link and also attempts to send the email automatically.
                         </div>
                       )}
                     </div>

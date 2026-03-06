@@ -37,20 +37,34 @@ export async function POST(req: Request) {
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!supabaseUrl || !serviceRoleKey) {
-      return NextResponse.json(
-        { error: "missing_server_supabase_env" },
-        { status: 500 }
-      );
+    if (!supabaseUrl || !anonKey) {
+      return NextResponse.json({ error: "missing_public_supabase_env" }, { status: 500 });
     }
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
+    const authHeader = req.headers.get("authorization");
+    const accessToken =
+      authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
+
+    if (!accessToken) {
+      return NextResponse.json({ error: "missing_auth_session" }, { status: 401 });
+    }
+
+    const callerClient = createClient(supabaseUrl, anonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
     });
 
-    const { data: inviteData, error: inviteErr } = await admin.rpc("patient_invite_create", {
+    const { data: inviteData, error: inviteErr } = await callerClient.rpc("patient_invite_create", {
       pid: patientId,
       p_role: role,
       p_expires_in_days: expiresInDays,
@@ -66,26 +80,46 @@ export async function POST(req: Request) {
     const siteUrl =
       process.env.NEXT_PUBLIC_SITE_URL ||
       process.env.NEXT_PUBLIC_APP_URL ||
-      "http://localhost:3000";
+      new URL(req.url).origin;
 
     const onboardingPath = `/app/onboarding?invite=${encodeURIComponent(invite.token)}`;
+    const inviteUrl = `${siteUrl}${onboardingPath}`;
     const redirectTo = `${siteUrl}/auth/confirm?next=${encodeURIComponent(onboardingPath)}`;
 
-    const { data: authInvite, error: authErr } = await admin.auth.admin.inviteUserByEmail(
-      inviteeEmail,
-      {
-        redirectTo,
-        data: {
-          circle_patient_id: patientId,
-          circle_role: role,
-          circle_invite_token: invite.token,
-          circle_nickname: inviteeNickname,
-        },
-      }
-    );
+    let emailSent = false;
+    let emailError: string | null = null;
+    let invitedUserId: string | null = null;
 
-    if (authErr) {
-      return NextResponse.json({ error: authErr.message }, { status: 400 });
+    if (serviceRoleKey) {
+      try {
+        const admin = createClient(supabaseUrl, serviceRoleKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        });
+
+        const { data: authInvite, error: authErr } = await admin.auth.admin.inviteUserByEmail(
+          inviteeEmail,
+          {
+            redirectTo,
+            data: {
+              circle_patient_id: patientId,
+              circle_role: role,
+              circle_invite_token: invite.token,
+              circle_nickname: inviteeNickname,
+            },
+          }
+        );
+
+        if (authErr) {
+          emailError = authErr.message;
+        } else {
+          emailSent = true;
+          invitedUserId = authInvite.user?.id ?? null;
+        }
+      } catch (e: any) {
+        emailError = e?.message ?? "failed_to_send_email_invite";
+      }
+    } else {
+      emailError = "SUPABASE_SERVICE_ROLE_KEY not configured";
     }
 
     return NextResponse.json({
@@ -94,9 +128,12 @@ export async function POST(req: Request) {
       patientId: invite.patient_id,
       role: invite.role,
       expiresAt: invite.expires_at,
-      inviteUrl: `${siteUrl}${onboardingPath}`,
-      emailedRedirect: redirectTo,
-      invitedUserId: authInvite.user?.id ?? null,
+      inviteUrl,
+      inviteeEmail,
+      inviteeNickname,
+      emailSent,
+      emailError,
+      invitedUserId,
     });
   } catch (e: any) {
     return NextResponse.json(
