@@ -17,6 +17,8 @@ type PatientProfileRow = {
   communication_notes_encrypted: CipherEnvelopeV1 | null;
   allergies_encrypted: CipherEnvelopeV1 | null;
   safety_notes_encrypted: CipherEnvelopeV1 | null;
+  diagnoses_encrypted: CipherEnvelopeV1 | null;
+  languages_spoken_encrypted: CipherEnvelopeV1 | null;
 };
 
 type MedicationRow = {
@@ -34,6 +36,16 @@ function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
+function isDecryptMismatchError(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("ciphertext cannot be decrypted using that key") ||
+    m.includes("incorrect key pair") ||
+    m.includes("failed to decrypt") ||
+    m.includes("decrypt")
+  );
+}
+
 export default function ProfileClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -46,12 +58,12 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   const [patient, setPatient] = useState<PatientRow | null>(null);
   const [profile, setProfile] = useState<PatientProfileRow | null>(null);
 
-  // plaintext fields (what user edits)
   const [communicationNotes, setCommunicationNotes] = useState("");
   const [allergies, setAllergies] = useState("");
   const [safetyNotes, setSafetyNotes] = useState("");
+  const [diagnoses, setDiagnoses] = useState("");
+  const [languagesSpoken, setLanguagesSpoken] = useState("");
 
-  // medications
   const [medsLoading, setMedsLoading] = useState(false);
   const [medsSaving, setMedsSaving] = useState<string | null>(null);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
@@ -59,6 +71,33 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   const [newName, setNewName] = useState("");
   const [newDosage, setNewDosage] = useState("");
   const [newScheduleText, setNewScheduleText] = useState("");
+
+  async function decryptProfileField(params: {
+    env: CipherEnvelopeV1 | null;
+    column:
+      | "communication_notes_encrypted"
+      | "allergies_encrypted"
+      | "safety_notes_encrypted"
+      | "diagnoses_encrypted"
+      | "languages_spoken_encrypted";
+  }) {
+    if (!params.env || !vaultKey) return "";
+
+    try {
+      return await decryptStringWithLocalCache({
+        patientId,
+        table: "patient_profiles",
+        rowId: patientId,
+        column: params.column,
+        env: params.env,
+        vaultKey,
+      });
+    } catch (e: any) {
+      const text = e?.message ?? String(e);
+      if (isDecryptMismatchError(text)) return "";
+      throw e;
+    }
+  }
 
   async function loadProfile() {
     setLoading(true);
@@ -78,7 +117,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted"
+          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
@@ -89,48 +128,40 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       setProfile(row);
 
       if (row && vaultKey) {
-        const cn = row.communication_notes_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "communication_notes_encrypted",
-              env: row.communication_notes_encrypted,
-              vaultKey,
-            })
-          : "";
-
-        const al = row.allergies_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "allergies_encrypted",
-              env: row.allergies_encrypted,
-              vaultKey,
-            })
-          : "";
-
-        const sn = row.safety_notes_encrypted
-          ? await decryptStringWithLocalCache({
-              patientId,
-              table: "patient_profiles",
-              rowId: patientId,
-              column: "safety_notes_encrypted",
-              env: row.safety_notes_encrypted,
-              vaultKey,
-            })
-          : "";
+        const [cn, al, sn, dg, ls] = await Promise.all([
+          decryptProfileField({
+            env: row.communication_notes_encrypted,
+            column: "communication_notes_encrypted",
+          }),
+          decryptProfileField({
+            env: row.allergies_encrypted,
+            column: "allergies_encrypted",
+          }),
+          decryptProfileField({
+            env: row.safety_notes_encrypted,
+            column: "safety_notes_encrypted",
+          }),
+          decryptProfileField({
+            env: row.diagnoses_encrypted,
+            column: "diagnoses_encrypted",
+          }),
+          decryptProfileField({
+            env: row.languages_spoken_encrypted,
+            column: "languages_spoken_encrypted",
+          }),
+        ]);
 
         setCommunicationNotes(cn || "");
         setAllergies(al || "");
         setSafetyNotes(sn || "");
-      } else {
-        if (!row) {
-          setCommunicationNotes("");
-          setAllergies("");
-          setSafetyNotes("");
-        }
+        setDiagnoses(dg || "");
+        setLanguagesSpoken(ls || "");
+      } else if (!row) {
+        setCommunicationNotes("");
+        setAllergies("");
+        setSafetyNotes("");
+        setDiagnoses("");
+        setLanguagesSpoken("");
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_profile");
@@ -147,23 +178,33 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
       if (!vaultKey) throw new Error("no_vault_share");
 
-      const cnEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: communicationNotes,
-        aad: { table: "patient_profiles", column: "communication_notes_encrypted", patient_id: patientId },
-      });
-
-      const alEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: allergies,
-        aad: { table: "patient_profiles", column: "allergies_encrypted", patient_id: patientId },
-      });
-
-      const snEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: safetyNotes,
-        aad: { table: "patient_profiles", column: "safety_notes_encrypted", patient_id: patientId },
-      });
+      const [cnEnv, alEnv, snEnv, dgEnv, lsEnv] = await Promise.all([
+        vaultEncryptString({
+          vaultKey,
+          plaintext: communicationNotes,
+          aad: { table: "patient_profiles", column: "communication_notes_encrypted", patient_id: patientId },
+        }),
+        vaultEncryptString({
+          vaultKey,
+          plaintext: allergies,
+          aad: { table: "patient_profiles", column: "allergies_encrypted", patient_id: patientId },
+        }),
+        vaultEncryptString({
+          vaultKey,
+          plaintext: safetyNotes,
+          aad: { table: "patient_profiles", column: "safety_notes_encrypted", patient_id: patientId },
+        }),
+        vaultEncryptString({
+          vaultKey,
+          plaintext: diagnoses,
+          aad: { table: "patient_profiles", column: "diagnoses_encrypted", patient_id: patientId },
+        }),
+        vaultEncryptString({
+          vaultKey,
+          plaintext: languagesSpoken,
+          aad: { table: "patient_profiles", column: "languages_spoken_encrypted", patient_id: patientId },
+        }),
+      ]);
 
       const { error } = await supabase.from("patient_profiles").upsert(
         {
@@ -171,6 +212,8 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           communication_notes_encrypted: cnEnv,
           allergies_encrypted: alEnv,
           safety_notes_encrypted: snEnv,
+          diagnoses_encrypted: dgEnv,
+          languages_spoken_encrypted: lsEnv,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "patient_id" }
@@ -223,7 +266,6 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
     setMedsSaving("create");
     try {
-      // created_by is NOT NULL in your schema → must set it unless you have a DB default/trigger.
       const { data: auth, error: authErr } = await supabase.auth.getUser();
       if (authErr) throw authErr;
       const uid = auth.user?.id;
@@ -307,7 +349,6 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         ) : null}
 
         <div className="cc-grid-2-125">
-          {/* Profile E2EE panel */}
           <div className="cc-card cc-card-pad cc-stack">
             <h2 className="cc-h2">Encrypted profile notes</h2>
 
@@ -330,6 +371,30 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
                   value={allergies}
                   onChange={(e) => setAllergies(e.target.value)}
                   placeholder={vaultKey ? "Encrypted allergies…" : "Encrypted allergies (vault needed)…"}
+                  disabled={!vaultKey}
+                />
+              </div>
+            </div>
+
+            <div className="cc-grid-2">
+              <div className="cc-field">
+                <div className="cc-label">Diagnoses (E2EE)</div>
+                <textarea
+                  className="cc-textarea"
+                  value={diagnoses}
+                  onChange={(e) => setDiagnoses(e.target.value)}
+                  placeholder={vaultKey ? "Encrypted diagnoses…" : "Encrypted diagnoses (vault needed)…"}
+                  disabled={!vaultKey}
+                />
+              </div>
+
+              <div className="cc-field">
+                <div className="cc-label">Languages spoken (E2EE)</div>
+                <textarea
+                  className="cc-textarea"
+                  value={languagesSpoken}
+                  onChange={(e) => setLanguagesSpoken(e.target.value)}
+                  placeholder={vaultKey ? "Encrypted languages spoken…" : "Encrypted languages spoken (vault needed)…"}
                   disabled={!vaultKey}
                 />
               </div>
@@ -362,7 +427,6 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             </div>
           </div>
 
-          {/* Medications panel */}
           <div className="cc-card cc-card-pad cc-stack">
             <div className="cc-row-between">
               <div>
