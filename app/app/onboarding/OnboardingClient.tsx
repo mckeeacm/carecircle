@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { getSodium } from "@/lib/e2ee/sodium";
+import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
+import {
+  unwrapVaultKeyForMe,
+  wrapVaultKeyForRecipient,
+  type WrappedKeyV1,
+} from "@/lib/e2ee/vaultShares";
 
 type CircleMembership = {
   patient_id: string;
@@ -20,26 +27,150 @@ type PatientRow = {
   created_at: string;
 };
 
-type StepId = "invite" | "circle" | "vault" | "permissions" | "finish";
-
 type InviteAcceptResult = {
   patient_id: string;
   role: string;
   already_member: boolean;
 };
 
+type StepId = "invite" | "circle" | "vault" | "permissions" | "finish";
+
+type CacheRecord = {
+  v: 1;
+  createdAt: number;
+  expiresAt: number;
+  vaultKeyB64: string;
+};
+
+function isUuid(s: unknown): s is string {
+  if (typeof s !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
 function safeBool(v: unknown) {
   return v === true;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+function cacheKey(pid: string, uid: string) {
+  return `carecircle:vaultkey:v1:${pid}:${uid}`;
+}
+
+function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(pid, uid));
+    if (!raw) return null;
+    const rec = JSON.parse(raw) as CacheRecord;
+    if (!rec || rec.v !== 1) return null;
+    if (!rec.expiresAt || Date.now() > rec.expiresAt) {
+      localStorage.removeItem(cacheKey(pid, uid));
+      return null;
+    }
+    return base64ToBytes(rec.vaultKeyB64);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedVaultKey(pid: string, uid: string, vaultKey: Uint8Array) {
+  const now = Date.now();
+  const ttlDays = 30;
+  const rec: CacheRecord = {
+    v: 1,
+    createdAt: now,
+    expiresAt: now + ttlDays * 24 * 60 * 60 * 1000,
+    vaultKeyB64: bytesToBase64(vaultKey),
+  };
+  try {
+    localStorage.setItem(cacheKey(pid, uid), JSON.stringify(rec));
+  } catch {}
+}
+
+function forgetCachedVaultKey(pid: string, uid: string) {
+  try {
+    localStorage.removeItem(cacheKey(pid, uid));
+  } catch {}
+}
+
+function pickUint8(kp: any, keys: string[]): Uint8Array | null {
+  for (const k of keys) {
+    const v = kp?.[k];
+    if (v instanceof Uint8Array) return v;
+  }
+  return null;
+}
+
+function normaliseSecretKey(sk: Uint8Array): Uint8Array {
+  if (sk.length === 32) return sk;
+  if (sk.length >= 32) return sk.slice(0, 32);
+  return sk;
+}
+
+async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+  const kp: any = await getOrCreateDeviceKeypair();
+
+  const rawSk =
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ?? null;
+
+  if (!(rawSk instanceof Uint8Array)) {
+    throw new Error("device_keypair_missing_keys");
+  }
+
+  const privateKey = normaliseSecretKey(rawSk);
+  const sodium = await getSodium();
+  const publicKey = sodium.crypto_scalarmult_base(privateKey);
+
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
+    throw new Error("device_keypair_missing_public_key");
+  }
+
+  return { publicKey, privateKey };
+}
+
+function StepRow({
+  label,
+  active,
+  done,
+}: {
+  label: string;
+  active: boolean;
+  done: boolean;
+}) {
+  return (
+    <div
+      className={`cc-panel-soft cc-row ${active ? "cc-panel-blue" : ""}`}
+      style={{ justifyContent: "flex-start" }}
+    >
+      <span
+        className={`cc-pill ${done ? "cc-pill-primary" : ""}`}
+        style={{ minWidth: 34, textAlign: "center" }}
+      >
+        {done ? "✓" : "•"}
+      </span>
+      <div style={{ fontWeight: active ? 900 : 800, opacity: done ? 0.9 : 0.85 }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
 export default function OnboardingClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const router = useRouter();
   const sp = useSearchParams();
 
   const inviteToken = (sp.get("invite") ?? "").trim();
 
-  const [uid, setUid] = useState<string | null>(null);
+  const [uid, setUid] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -47,10 +178,12 @@ export default function OnboardingClient() {
 
   const [memberships, setMemberships] = useState<CircleMembership[]>([]);
   const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
-
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
 
+  const [hasPublicKey, setHasPublicKey] = useState<boolean | null>(null);
+  const [myAlg, setMyAlg] = useState<string>("");
   const [hasVaultShare, setHasVaultShare] = useState<boolean>(false);
+  const [hasCachedVault, setHasCachedVault] = useState<boolean>(false);
 
   const [inviteStatus, setInviteStatus] = useState<
     "idle" | "checking" | "need_auth" | "accepting" | "accepted" | "error"
@@ -59,91 +192,51 @@ export default function OnboardingClient() {
 
   const [newCircleName, setNewCircleName] = useState<string>("");
 
-  const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
+  const selectedMembership =
+    memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
   const isController = safeBool(selectedMembership?.is_controller);
+  const keyOk = hasPublicKey === true && (myAlg === "" || myAlg === "crypto_box_seal");
 
   const currentStep: StepId = useMemo(() => {
-    if (inviteToken) {
-      if (inviteStatus === "accepted") {
-        // continue normal flow
-      } else {
-        return "invite";
-      }
-    }
-
+    if (inviteToken && inviteStatus !== "accepted") return "invite";
     if (!selectedPatientId) return "circle";
-    if (!hasVaultShare) return "vault";
+    if (!keyOk || !hasCachedVault) return "vault";
     if (isController) return "permissions";
     return "finish";
-  }, [inviteToken, inviteStatus, selectedPatientId, hasVaultShare, isController]);
+  }, [inviteToken, inviteStatus, selectedPatientId, keyOk, hasCachedVault, isController]);
 
-  async function refresh() {
-    setLoading(true);
-    setMsg(null);
+  async function getSessionUser() {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw error;
+    return data.user ?? null;
+  }
 
+  async function refreshPublicKey(userId: string) {
     try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
+      const { data, error } = await supabase
+        .from("user_public_keys")
+        .select("user_id, algorithm")
+        .eq("user_id", userId)
+        .maybeSingle();
 
-      const me = auth.user;
-      if (!me) {
-        setUid(null);
-        setInviteStatus(inviteToken ? "need_auth" : "idle");
-        router.push("/");
-        return;
-      }
-
-      setUid(me.id);
-
-      const { data: mem, error: memErr } = await supabase
-        .from("patient_members")
-        .select("patient_id, role, nickname, is_controller, created_at")
-        .eq("user_id", me.id)
-        .order("created_at", { ascending: true });
-
-      if (memErr) throw memErr;
-
-      const ms = (mem ?? []) as CircleMembership[];
-      setMemberships(ms);
-
-      const ids = Array.from(new Set(ms.map((m) => m.patient_id)));
-
-      if (ids.length === 0) {
-        setPatientsById({});
-        setSelectedPatientId("");
-        setHasVaultShare(false);
-        return;
-      }
-
-      const { data: pts, error: pErr } = await supabase
-        .from("patients")
-        .select("id, display_name, created_by, created_at")
-        .in("id", ids);
-
-      if (pErr) throw pErr;
-
-      const map: Record<string, PatientRow> = {};
-      (pts ?? []).forEach((p: any) => (map[p.id] = p as PatientRow));
-      setPatientsById(map);
-
-      if (!selectedPatientId) {
-        const controller = ms.find((m) => safeBool(m.is_controller));
-        setSelectedPatientId(controller?.patient_id ?? ms[0].patient_id);
-      }
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_load_onboarding");
-    } finally {
-      setLoading(false);
+      if (error) throw error;
+      setHasPublicKey(!!data?.user_id);
+      setMyAlg((data as any)?.algorithm ?? "");
+    } catch {
+      setHasPublicKey(null);
+      setMyAlg("");
     }
   }
 
-  async function refreshVaultShare(patientId: string, userId: string) {
+  async function refreshVaultStatus(patientId: string, userId: string) {
     setHasVaultShare(false);
+    setHasCachedVault(!!readCachedVaultKey(patientId, userId));
+
     try {
       const { data, error } = await supabase
         .from("patient_vault_shares")
-        .select("id")
+        .select("user_id")
         .eq("patient_id", patientId)
         .eq("user_id", userId)
         .limit(1);
@@ -155,6 +248,83 @@ export default function OnboardingClient() {
     }
   }
 
+  async function refreshAll(preferredPid?: string) {
+    setLoading(true);
+    setMsg(null);
+
+    try {
+      const user = await getSessionUser();
+
+      if (!user?.id) {
+        setUid("");
+        setEmail("");
+        setMemberships([]);
+        setPatientsById({});
+        setSelectedPatientId("");
+        setHasPublicKey(null);
+        setMyAlg("");
+        setHasVaultShare(false);
+        setHasCachedVault(false);
+        if (inviteToken) setInviteStatus("need_auth");
+        return;
+      }
+
+      setUid(user.id);
+      setEmail(user.email ?? "");
+
+      await refreshPublicKey(user.id);
+
+      const { data: mem, error: memErr } = await supabase
+        .from("patient_members")
+        .select("patient_id, role, nickname, is_controller, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+
+      if (memErr) throw memErr;
+
+      const ms = (mem ?? []) as CircleMembership[];
+      setMemberships(ms);
+
+      const ids = Array.from(new Set(ms.map((m) => m.patient_id))).filter(isUuid);
+
+      if (ids.length === 0) {
+        setPatientsById({});
+        setSelectedPatientId("");
+        setHasVaultShare(false);
+        setHasCachedVault(false);
+        return;
+      }
+
+      const { data: pts, error: ptsErr } = await supabase
+        .from("patients")
+        .select("id, display_name, created_by, created_at")
+        .in("id", ids);
+
+      if (ptsErr) throw ptsErr;
+
+      const map: Record<string, PatientRow> = {};
+      for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
+      setPatientsById(map);
+
+      const nextPid =
+        preferredPid && ids.includes(preferredPid)
+          ? preferredPid
+          : selectedPatientId && ids.includes(selectedPatientId)
+          ? selectedPatientId
+          : ms.find((m) => safeBool(m.is_controller))?.patient_id ?? ids[0];
+
+      setSelectedPatientId(nextPid);
+
+      if (nextPid) {
+        await refreshVaultStatus(nextPid, user.id);
+      }
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_load_onboarding");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function acceptInviteIfPresent() {
     if (!inviteToken) return;
 
@@ -163,10 +333,8 @@ export default function OnboardingClient() {
     setInviteStatus("checking");
 
     try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
-
-      if (!auth.user?.id) {
+      const user = await getSessionUser();
+      if (!user?.id) {
         setInviteStatus("need_auth");
         return;
       }
@@ -183,11 +351,11 @@ export default function OnboardingClient() {
       setInviteResult(res);
       setInviteStatus("accepted");
 
-      await refresh();
-      setSelectedPatientId(res.patient_id);
-      await refreshVaultShare(res.patient_id, auth.user.id);
+      await refreshAll(res.patient_id);
 
-      router.replace("/app/onboarding");
+      try {
+        window.history.replaceState({}, "", "/app/onboarding");
+      } catch {}
     } catch (e: any) {
       setInviteStatus("error");
       setMsg(e?.message ?? "failed_to_accept_invite");
@@ -196,20 +364,21 @@ export default function OnboardingClient() {
 
   useEffect(() => {
     (async () => {
-      await refresh();
+      await refreshAll();
       if (inviteToken) await acceptInviteIfPresent();
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
+    })().catch((e: any) => setMsg(e?.message ?? "failed_to_boot_onboarding"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!uid || !selectedPatientId) return;
-    refreshVaultShare(selectedPatientId, uid);
+    refreshVaultStatus(selectedPatientId, uid).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, selectedPatientId]);
 
   async function createCircle() {
-    if (!uid) return;
+    if (!uid) return setMsg("Please sign in first.");
+
     const name = newCircleName.trim();
     if (!name) return setMsg("Please enter a circle name.");
 
@@ -231,7 +400,7 @@ export default function OnboardingClient() {
       const { error: mErr } = await supabase.from("patient_members").insert({
         patient_id: pid,
         user_id: uid,
-        role: "family",
+        role: "patient",
         nickname: null,
         is_controller: true,
         created_at: now,
@@ -242,8 +411,7 @@ export default function OnboardingClient() {
       if (seedErr) throw seedErr;
 
       setNewCircleName("");
-      await refresh();
-      setSelectedPatientId(pid);
+      await refreshAll(pid);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_circle");
     } finally {
@@ -251,13 +419,264 @@ export default function OnboardingClient() {
     }
   }
 
+  async function enableE2EEOnThisDevice() {
+    setBusy("keys");
+    setMsg(null);
+
+    try {
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+
+      const { publicKey } = await getMatchedBoxKeypairOrThrow();
+
+      const { error } = await supabase.from("user_public_keys").upsert(
+        {
+          user_id: user.id,
+          public_key: bytesToBase64(publicKey),
+          algorithm: "crypto_box_seal",
+        },
+        { onConflict: "user_id" }
+      );
+
+      if (error) throw error;
+
+      await refreshAll(selectedPatientId || undefined);
+      setMsg("E2EE is enabled on this device.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_enable_e2ee");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function unlockVaultOnThisDevice() {
+    setBusy("unlock");
+    setMsg(null);
+
+    try {
+      if (!selectedPatientId) throw new Error("select_circle_first");
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+
+      const { data: share, error: shareErr } = await supabase
+        .from("patient_vault_shares")
+        .select("wrapped_key")
+        .eq("patient_id", selectedPatientId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (shareErr) throw shareErr;
+      if (!share?.wrapped_key) {
+        throw new Error("No vault share found yet. Enable E2EE on this device, then ask the controller to share the vault key.");
+      }
+
+      const wrapped = share.wrapped_key as WrappedKeyV1;
+      const { publicKey: myPublicKey, privateKey: myPrivateKey } =
+        await getMatchedBoxKeypairOrThrow();
+
+      const vaultKey = await unwrapVaultKeyForMe({
+        wrapped,
+        myPublicKey,
+        myPrivateKey,
+      });
+
+      writeCachedVaultKey(selectedPatientId, user.id, vaultKey);
+      await refreshVaultStatus(selectedPatientId, user.id);
+      setMsg("Vault unlocked on this device.");
+    } catch (e: any) {
+      const text = e?.message ?? "failed_to_unlock_vault";
+      if (typeof text === "string" && text.toLowerCase().includes("incorrect key pair")) {
+        setMsg(
+          "This share was encrypted for an older device keypair. Re-enable E2EE on this device, then ask the controller to share the key again."
+        );
+      } else {
+        setMsg(text);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function forgetVaultOnThisDevice() {
+    if (!uid || !selectedPatientId) return;
+
+    setBusy("forget");
+    setMsg(null);
+
+    try {
+      forgetCachedVaultKey(selectedPatientId, uid);
+      await refreshVaultStatus(selectedPatientId, uid);
+      setMsg("Vault key removed from this device.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function shareKeyToNewMembers() {
+    setBusy("share");
+    setMsg(null);
+
+    try {
+      if (!selectedPatientId) throw new Error("select_circle_first");
+      if (!uid) throw new Error("not_authenticated");
+      if (!isController) throw new Error("Only a controller can share the vault key.");
+
+      const vaultKey = readCachedVaultKey(selectedPatientId, uid);
+      if (!vaultKey) {
+        throw new Error("Unlock vault on this device first.");
+      }
+
+      const { data: members, error: memErr } = await supabase
+        .from("patient_members")
+        .select("user_id")
+        .eq("patient_id", selectedPatientId);
+      if (memErr) throw memErr;
+
+      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+
+      const { data: pubKeys, error: pkErr } = await supabase
+        .from("user_public_keys")
+        .select("user_id, public_key, algorithm")
+        .in("user_id", userIds);
+      if (pkErr) throw pkErr;
+
+      const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
+      if (missing.length) {
+        throw new Error(`${missing.length} member(s) must enable E2EE first.`);
+      }
+
+      const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
+      if (incompatible.length) {
+        throw new Error("Some members have incompatible device keys. Ask them to re-enable E2EE.");
+      }
+
+      const { data: existing, error: exErr } = await supabase
+        .from("patient_vault_shares")
+        .select("user_id")
+        .eq("patient_id", selectedPatientId);
+      if (exErr) throw exErr;
+
+      const existingSet = new Set((existing ?? []).map((r: any) => r.user_id).filter(Boolean));
+      const targets = (pubKeys ?? []).filter((p: any) => !existingSet.has(p.user_id));
+
+      if (targets.length === 0) {
+        setMsg("No new members need a share.");
+        return;
+      }
+
+      const rows = await Promise.all(
+        targets.map(async (p: any) => {
+          const recipientPk = base64ToBytes(p.public_key);
+          const wrapped = await wrapVaultKeyForRecipient({
+            vaultKey,
+            recipientPublicKey: recipientPk,
+          });
+
+          return {
+            patient_id: selectedPatientId,
+            user_id: p.user_id,
+            wrapped_key: wrapped,
+          };
+        })
+      );
+
+      const { error: upErr } = await supabase
+        .from("patient_vault_shares")
+        .upsert(rows, { onConflict: "patient_id,user_id" });
+
+      if (upErr) throw upErr;
+
+      await refreshVaultStatus(selectedPatientId, uid);
+      setMsg(`Shared vault key to ${rows.length} new member(s).`);
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_share_key");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function initialiseNewVaultKey() {
+    setBusy("init");
+    setMsg(null);
+
+    try {
+      if (!selectedPatientId) throw new Error("select_circle_first");
+      if (!uid) throw new Error("not_authenticated");
+      if (!isController) throw new Error("Only a controller can initialise a new vault key.");
+      if (!keyOk) throw new Error("Enable E2EE on this device first.");
+
+      const { data: members, error: memErr } = await supabase
+        .from("patient_members")
+        .select("user_id")
+        .eq("patient_id", selectedPatientId);
+      if (memErr) throw memErr;
+
+      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+
+      const { data: pubKeys, error: pkErr } = await supabase
+        .from("user_public_keys")
+        .select("user_id, public_key, algorithm")
+        .in("user_id", userIds);
+      if (pkErr) throw pkErr;
+
+      const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
+      if (missing.length) {
+        throw new Error(`${missing.length} member(s) must enable E2EE first.`);
+      }
+
+      const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
+      if (incompatible.length) {
+        throw new Error("Some members have incompatible device keys.");
+      }
+
+      const sodium = await getSodium();
+      const vaultKey = sodium.randombytes_buf(32);
+
+      writeCachedVaultKey(selectedPatientId, uid, vaultKey);
+
+      const rows = await Promise.all(
+        (pubKeys ?? []).map(async (p: any) => {
+          const recipientPk = base64ToBytes(p.public_key);
+          const wrapped = await wrapVaultKeyForRecipient({
+            vaultKey,
+            recipientPublicKey: recipientPk,
+          });
+
+          return {
+            patient_id: selectedPatientId,
+            user_id: p.user_id,
+            wrapped_key: wrapped,
+          };
+        })
+      );
+
+      const { error: upErr } = await supabase
+        .from("patient_vault_shares")
+        .upsert(rows, { onConflict: "patient_id,user_id" });
+
+      if (upErr) throw upErr;
+
+      await refreshVaultStatus(selectedPatientId, uid);
+      setMsg("Created a new vault key and shared it to all current circle members.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_initialise_vault");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function seedDefaults() {
     if (!selectedPatientId) return;
+
     setBusy("seed");
     setMsg(null);
+
     try {
-      const { error } = await supabase.rpc("permissions_seed_defaults", { pid: selectedPatientId });
+      const { error } = await supabase.rpc("permissions_seed_defaults", {
+        pid: selectedPatientId,
+      });
       if (error) throw error;
+      setMsg("Permissions defaults seeded.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_seed_defaults");
     } finally {
@@ -265,16 +684,10 @@ export default function OnboardingClient() {
     }
   }
 
-  function StepRow({ label, active, done }: { label: string; active: boolean; done: boolean }) {
-    return (
-      <div className={`cc-panel-soft cc-row ${active ? "cc-panel-blue" : ""}`} style={{ justifyContent: "flex-start" }}>
-        <span className={`cc-pill ${done ? "cc-pill-primary" : ""}`} style={{ minWidth: 34, textAlign: "center" }}>
-          {done ? "✓" : "•"}
-        </span>
-        <div style={{ fontWeight: active ? 900 : 800, opacity: done ? 0.9 : 0.85 }}>{label}</div>
-      </div>
-    );
-  }
+  const doneInvite = !inviteToken || inviteStatus === "accepted";
+  const doneCircle = !!selectedPatientId;
+  const doneVault = !!selectedPatientId && keyOk && hasCachedVault;
+  const donePermissions = !isController || (doneVault && isController);
 
   if (loading) {
     return (
@@ -311,7 +724,10 @@ export default function OnboardingClient() {
           <div>
             <div className="cc-kicker">CareCircle</div>
             <h1 className="cc-h1">Onboarding</h1>
-            <div className="cc-subtle">Guided setup with E2EE + permissions.</div>
+            <div className="cc-subtle">
+              One-page setup for circle access, device keys, vault access and permissions.
+            </div>
+            {email ? <div className="cc-small cc-subtle">{email}</div> : null}
           </div>
 
           <div className="cc-row">
@@ -326,22 +742,22 @@ export default function OnboardingClient() {
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
+            <div className="cc-status-error-title">Message</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
 
         <div className="cc-grid-2-125">
           <div className="cc-card cc-card-pad cc-stack">
-            <div className="cc-strong">Getting started</div>
+            <div className="cc-strong">Setup steps</div>
 
             {inviteToken ? (
-              <StepRow label="Join circle from invite" active={currentStep === "invite"} done={inviteStatus === "accepted"} />
+              <StepRow label="Join circle from invite" active={currentStep === "invite"} done={doneInvite} />
             ) : null}
 
-            <StepRow label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
-            <StepRow label="Set up vault access (E2EE)" active={currentStep === "vault"} done={!!selectedPatientId && hasVaultShare} />
-            <StepRow label="Permissions & roles" active={currentStep === "permissions"} done={!!selectedPatientId && hasVaultShare && !isController} />
+            <StepRow label="Create or select a circle" active={currentStep === "circle"} done={doneCircle} />
+            <StepRow label="Fix device keys and vault access" active={currentStep === "vault"} done={doneVault} />
+            <StepRow label="Permissions defaults" active={currentStep === "permissions"} done={donePermissions} />
             <StepRow label="Finish" active={currentStep === "finish"} done={false} />
 
             {selectedPatientId ? (
@@ -355,17 +771,36 @@ export default function OnboardingClient() {
                 </div>
               </div>
             ) : null}
+
+            <div className="cc-row" style={{ flexWrap: "wrap" }}>
+              <span className={`cc-pill ${hasPublicKey ? "cc-pill-primary" : ""}`}>
+                Device key: {hasPublicKey ? "OK" : "missing"}
+              </span>
+              <span className={`cc-pill ${hasVaultShare ? "cc-pill-primary" : ""}`}>
+                Share row: {hasVaultShare ? "present" : "missing"}
+              </span>
+              <span className={`cc-pill ${hasCachedVault ? "cc-pill-primary" : ""}`}>
+                Cached vault: {hasCachedVault ? "present" : "missing"}
+              </span>
+              <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
+                Controller: {isController ? "true" : "false"}
+              </span>
+            </div>
           </div>
 
           <div className="cc-card cc-card-pad cc-stack">
             {currentStep === "invite" ? (
               <>
-                <h2 className="cc-h2">Joining a circle…</h2>
-                <div className="cc-subtle">You opened an invite link. We’ll add you to the circle and set your role.</div>
+                <h2 className="cc-h2">Joining a circle</h2>
+                <div className="cc-subtle">
+                  We’ll accept the invite, add you to the circle, then fix device key and vault access on this same page.
+                </div>
 
                 {inviteStatus === "checking" || inviteStatus === "accepting" ? (
                   <div className="cc-status cc-status-loading">
-                    <div className="cc-strong">{inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}</div>
+                    <div className="cc-strong">
+                      {inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}
+                    </div>
                     <div className="cc-subtle">Please keep this page open.</div>
                   </div>
                 ) : null}
@@ -373,16 +808,14 @@ export default function OnboardingClient() {
                 {inviteStatus === "need_auth" ? (
                   <div className="cc-status cc-status-error">
                     <div className="cc-status-error-title">Sign in required</div>
-                    <div className="cc-subtle">You need to sign in before you can accept an invite link.</div>
-                    <div className="cc-spacer-12" />
-                    <button className="cc-btn cc-btn-primary" onClick={() => router.push("/")}>
-                      Go to sign in
-                    </button>
+                    <div className="cc-subtle">
+                      Sign in first, then open the invite link again.
+                    </div>
                   </div>
                 ) : null}
 
                 {inviteStatus === "error" ? (
-                  <>
+                  <div className="cc-stack">
                     <div className="cc-status cc-status-error">
                       <div className="cc-status-error-title">Invite could not be accepted</div>
                       <div className="cc-wrap">{msg ?? "unknown_error"}</div>
@@ -392,21 +825,17 @@ export default function OnboardingClient() {
                       <button className="cc-btn cc-btn-primary" onClick={acceptInviteIfPresent}>
                         Try again
                       </button>
-                      <button className="cc-btn" onClick={() => router.push("/app/account")}>
-                        Open Account
-                      </button>
-                      <button className="cc-btn" onClick={() => router.push("/app/hub")}>
-                        Open Hub
-                      </button>
                     </div>
-                  </>
+                  </div>
                 ) : null}
 
                 {inviteStatus === "accepted" && inviteResult ? (
-                  <>
+                  <div className="cc-stack">
                     <div className="cc-status cc-status-ok">
                       <div className="cc-strong">
-                        {inviteResult.already_member ? "You’re already a member of this circle." : "You’ve joined the circle!"}
+                        {inviteResult.already_member
+                          ? "You’re already a member of this circle."
+                          : "You’ve joined the circle."}
                       </div>
                       <div className="cc-subtle">
                         role: <b>{inviteResult.role}</b>
@@ -414,198 +843,235 @@ export default function OnboardingClient() {
                     </div>
 
                     <div className="cc-panel-blue">
-                      <div className="cc-strong">Next: vault access</div>
+                      <div className="cc-strong">Next step</div>
                       <div className="cc-subtle">
-                        Joining doesn’t automatically give decryption access. A controller must share the vault key to you.
-                        Once they do, open Vault setup to cache it on this device.
+                        We now fix device keys and vault access below so this device can actually read encrypted content.
                       </div>
                     </div>
-
-                    <div className="cc-row">
-                      <button
-                        className="cc-btn"
-                        onClick={() => {
-                          if (!uid) return;
-                          refreshVaultShare(inviteResult.patient_id, uid);
-                        }}
-                      >
-                        Continue
-                      </button>
-                    </div>
-                  </>
+                  </div>
                 ) : null}
               </>
             ) : null}
 
             {currentStep === "circle" ? (
               <>
-                <h2 className="cc-h2">Welcome to CareCircle</h2>
-                <div className="cc-subtle">A circle is the patient context where journals, meds, appointments and secure notes live.</div>
+                <h2 className="cc-h2">Create or select a circle</h2>
+                <div className="cc-subtle">
+                  Pick an existing circle or create a new one here.
+                </div>
 
                 {memberships.length > 0 ? (
                   <>
-                    <div className="cc-kicker">Select an existing circle</div>
-                    <select className="cc-select" value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)}>
-                      <option value="" disabled>
-                        Select…
-                      </option>
-                      {memberships.map((m) => (
-                        <option key={m.patient_id} value={m.patient_id}>
-                          {(patientsById[m.patient_id]?.display_name ?? m.patient_id) +
-                            (safeBool(m.is_controller) ? " (controller)" : "")}
+                    <div className="cc-field">
+                      <div className="cc-label">Existing circles</div>
+                      <select
+                        className="cc-select"
+                        value={selectedPatientId}
+                        onChange={(e) => setSelectedPatientId(e.target.value)}
+                      >
+                        <option value="" disabled>
+                          Select…
                         </option>
-                      ))}
-                    </select>
-
-                    <div className="cc-spacer-12" />
-
-                    <div className="cc-kicker">Or create a new circle</div>
-                    <div className="cc-row">
-                      <input
-                        className="cc-input"
-                        value={newCircleName}
-                        onChange={(e) => setNewCircleName(e.target.value)}
-                        placeholder="Circle name (e.g. Aisha’s Care)"
-                      />
-                      <button className="cc-btn cc-btn-primary" onClick={createCircle} disabled={busy === "create-circle"}>
-                        {busy === "create-circle" ? "Creating…" : "Create circle"}
-                      </button>
+                        {memberships.map((m) => (
+                          <option key={m.patient_id} value={m.patient_id}>
+                            {(patientsById[m.patient_id]?.display_name ?? m.patient_id) +
+                              (safeBool(m.is_controller) ? " (controller)" : "")}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+
+                    <div className="cc-small cc-subtle">Or create a new circle below.</div>
                   </>
                 ) : (
-                  <>
-                    <div className="cc-kicker">Create your first circle</div>
-                    <div className="cc-row">
-                      <input
-                        className="cc-input"
-                        value={newCircleName}
-                        onChange={(e) => setNewCircleName(e.target.value)}
-                        placeholder="Circle name (e.g. Mum’s Care)"
-                      />
-                      <button className="cc-btn cc-btn-primary" onClick={createCircle} disabled={busy === "create-circle"}>
-                        {busy === "create-circle" ? "Creating…" : "Create circle"}
-                      </button>
-                    </div>
-                    <div className="cc-small cc-subtle">You’ll be set as the controller for this circle.</div>
-                  </>
+                  <div className="cc-small cc-subtle">
+                    You don’t belong to any circles yet, so create your first one below.
+                  </div>
                 )}
 
-                {selectedPatientId ? (
+                <div className="cc-panel-soft cc-stack">
+                  <div className="cc-strong">Create new circle</div>
                   <div className="cc-row">
+                    <input
+                      className="cc-input"
+                      value={newCircleName}
+                      onChange={(e) => setNewCircleName(e.target.value)}
+                      placeholder="Circle name"
+                    />
                     <button
-                      className="cc-btn"
-                      onClick={() => {
-                        if (!uid) return;
-                        refreshVaultShare(selectedPatientId, uid);
-                      }}
+                      className="cc-btn cc-btn-primary"
+                      onClick={createCircle}
+                      disabled={busy === "create-circle"}
                     >
-                      Continue
+                      {busy === "create-circle" ? "Creating…" : "Create"}
                     </button>
                   </div>
-                ) : null}
+                  <div className="cc-small cc-subtle">
+                    You’ll be set as controller for the new circle.
+                  </div>
+                </div>
               </>
             ) : null}
 
             {currentStep === "vault" ? (
               <>
-                <h2 className="cc-h2">Secure vault (end-to-end encryption)</h2>
+                <h2 className="cc-h2">Fix device keys and vault access</h2>
                 <div className="cc-subtle">
-                  This device needs a vault share to decrypt and create secure content.
+                  This is the bit that usually causes problems for new members. We’ll fix it here before you continue.
                 </div>
 
-                <div className="cc-panel">
-                  <div className="cc-strong">What happens here?</div>
+                <div className="cc-card cc-card-pad cc-stack">
+                  <div className="cc-strong">1) Device encryption key</div>
                   <div className="cc-subtle">
-                    The vault key stays client-side. Controllers initialise + share. Members open Vault setup to cache their wrapped key for this device.
+                    Your public key must be registered for this device before a controller can share the vault key to you.
+                  </div>
+
+                  <div className="cc-row">
+                    <button
+                      className="cc-btn cc-btn-primary"
+                      onClick={enableE2EEOnThisDevice}
+                      disabled={busy === "keys" || !uid}
+                    >
+                      {busy === "keys"
+                        ? "Enabling…"
+                        : hasPublicKey
+                        ? "Re-enable E2EE on this device"
+                        : "Enable E2EE on this device"}
+                    </button>
+
+                    <span className="cc-pill">{myAlg || "—"}</span>
                   </div>
                 </div>
 
-                <div className="cc-row">
-                  <button
-                    className="cc-btn cc-btn-primary"
-                    onClick={() => router.push(`/app/patients/${selectedPatientId}/vault-init`)}
-                  >
-                    {isController ? "Initialise vault for this circle" : "Open Vault setup for this circle"}
-                  </button>
+                <div className="cc-card cc-card-pad cc-stack">
+                  <div className="cc-strong">2) Vault access on this device</div>
+                  <div className="cc-subtle">
+                    You need a share row and then you need to unlock the vault on this device.
+                  </div>
 
-                  <button
-                    className="cc-btn"
-                    onClick={() => uid && selectedPatientId && refreshVaultShare(selectedPatientId, uid)}
-                    disabled={!selectedPatientId}
-                  >
-                    I’ve done it — recheck
-                  </button>
+                  <div className="cc-row">
+                    <button
+                      className="cc-btn cc-btn-primary"
+                      onClick={unlockVaultOnThisDevice}
+                      disabled={busy === "unlock" || !uid || !selectedPatientId}
+                    >
+                      {busy === "unlock" ? "Unlocking…" : "Unlock vault on this device"}
+                    </button>
+
+                    <button
+                      className="cc-btn cc-btn-danger"
+                      onClick={forgetVaultOnThisDevice}
+                      disabled={busy === "forget" || !uid || !selectedPatientId || !hasCachedVault}
+                    >
+                      {busy === "forget" ? "Forgetting…" : "Forget vault on this device"}
+                    </button>
+
+                    <button
+                      className="cc-btn"
+                      onClick={() => uid && selectedPatientId && refreshVaultStatus(selectedPatientId, uid)}
+                      disabled={!uid || !selectedPatientId}
+                    >
+                      Recheck
+                    </button>
+                  </div>
+
+                  {!hasVaultShare ? (
+                    <div className="cc-small cc-subtle">
+                      No share row detected yet. If you’re not the controller, enable E2EE on this device first and then ask the controller to share the key.
+                    </div>
+                  ) : null}
                 </div>
 
-                {hasVaultShare ? (
-                  <div className="cc-status cc-status-ok">
-                    <div className="cc-strong">Vault share detected for this circle.</div>
-                    <div className="cc-subtle">You can decrypt and create encrypted content on this device.</div>
+                {isController ? (
+                  <div className="cc-card cc-card-pad cc-stack">
+                    <div className="cc-strong">3) Controller tools</div>
+                    <div className="cc-subtle">
+                      Use these here instead of leaving onboarding.
+                    </div>
+
+                    <div className="cc-row">
+                      <button
+                        className="cc-btn cc-btn-primary"
+                        onClick={shareKeyToNewMembers}
+                        disabled={busy === "share" || !selectedPatientId || !uid || !keyOk || !hasCachedVault}
+                      >
+                        {busy === "share" ? "Sharing…" : "Share key to new members"}
+                      </button>
+
+                      <button
+                        className="cc-btn cc-btn-danger"
+                        onClick={initialiseNewVaultKey}
+                        disabled={busy === "init" || !selectedPatientId || !uid || !keyOk}
+                      >
+                        {busy === "init" ? "Initialising…" : "Initialise NEW vault key"}
+                      </button>
+                    </div>
+
+                    <div className="cc-small cc-subtle">
+                      Recommended: unlock or initialise the vault on your controller device, then use “Share key to new members”.
+                    </div>
                   </div>
-                ) : (
-                  <div className="cc-small cc-subtle">
-                    No vault share detected yet (or access blocked by RLS). If you’re not a controller, ask the controller to share the vault key to you.
-                  </div>
-                )}
+                ) : null}
               </>
             ) : null}
 
             {currentStep === "permissions" ? (
               <>
-                <h2 className="cc-h2">Permissions & roles</h2>
+                <h2 className="cc-h2">Permissions defaults</h2>
                 <div className="cc-subtle">
-                  As controller you can set role defaults and member overrides. Seed defaults first, then fine-tune access.
-                </div>
-
-                <div className="cc-panel-blue">
-                  <div className="cc-strong">Recommended next step</div>
-                  <div className="cc-subtle">Seed defaults (safe + idempotent), then open Account → Permissions.</div>
+                  As controller, seed the default role permissions now so the circle starts cleanly.
                 </div>
 
                 <div className="cc-row">
-                  <button className="cc-btn cc-btn-primary" onClick={seedDefaults} disabled={busy === "seed"}>
+                  <button
+                    className="cc-btn cc-btn-primary"
+                    onClick={seedDefaults}
+                    disabled={busy === "seed" || !selectedPatientId}
+                  >
                     {busy === "seed" ? "Seeding…" : "Seed defaults"}
-                  </button>
-
-                  <button className="cc-btn" onClick={() => router.push("/app/account")}>
-                    Open Account (permissions)
-                  </button>
-
-                  <button className="cc-btn" onClick={() => router.push("/app/hub")}>
-                    Skip for now
                   </button>
                 </div>
 
-                <div className="cc-small cc-subtle">Tip: Role defaults apply first, then per-member overrides.</div>
+                <div className="cc-panel-blue">
+                  <div className="cc-strong">Done here</div>
+                  <div className="cc-subtle">
+                    You can fine-tune permissions later from Account, but onboarding doesn’t need to leave this page.
+                  </div>
+                </div>
               </>
             ) : null}
 
             {currentStep === "finish" ? (
               <>
                 <h2 className="cc-h2">All set</h2>
-                <div className="cc-subtle">You’re ready to use CareCircle across your circles.</div>
-
-                <div className="cc-row">
-                  <button className="cc-btn cc-btn-primary" onClick={() => router.push("/app/hub")}>
-                    Go to Hub
-                  </button>
-                  <button className="cc-btn" onClick={() => router.push("/app/today")}>
-                    Go to Today
-                  </button>
+                <div className="cc-subtle">
+                  This device is ready for your selected circle.
                 </div>
 
-                {!isController ? (
-                  <div className="cc-small cc-subtle">
-                    You’re not a controller in this circle, so permissions are managed by the controller.
+                <div className="cc-status cc-status-ok">
+                  <div className="cc-strong">Setup complete</div>
+                  <div className="cc-subtle">
+                    Circle selected, device key registered, vault unlocked, and you’re ready to continue.
                   </div>
-                ) : null}
+                </div>
+
+                <div className="cc-row">
+                  <Link className="cc-btn cc-btn-primary" href="/app/hub">
+                    Go to Hub
+                  </Link>
+                  {selectedPatientId ? (
+                    <Link className="cc-btn" href={`/app/patients/${selectedPatientId}/today`}>
+                      Open Today
+                    </Link>
+                  ) : null}
+                </div>
               </>
             ) : null}
           </div>
         </div>
 
         <div className="cc-small cc-subtle">
-          Onboarding is guided but reversible — you can always revisit permissions or vault access later.
+          This page keeps everything in one place: join, device key setup, vault fix, controller sharing, and permissions defaults.
         </div>
       </div>
     </div>
