@@ -19,6 +19,11 @@ type PatientProfileRow = {
   safety_notes_encrypted: CipherEnvelopeV1 | null;
   diagnoses_encrypted: CipherEnvelopeV1 | null;
   languages_spoken_encrypted: CipherEnvelopeV1 | null;
+  communication_notes_summary: string | null;
+  allergies_summary: string | null;
+  safety_notes_summary: string | null;
+  diagnoses_summary: string | null;
+  languages_spoken_summary: string | null;
 };
 
 type MedicationRow = {
@@ -63,6 +68,12 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   const [safetyNotes, setSafetyNotes] = useState("");
   const [diagnoses, setDiagnoses] = useState("");
   const [languagesSpoken, setLanguagesSpoken] = useState("");
+
+  const [commSummary, setCommSummary] = useState("");
+  const [allergiesSummary, setAllergiesSummary] = useState("");
+  const [safetySummary, setSafetySummary] = useState("");
+  const [diagnosesSummary, setDiagnosesSummary] = useState("");
+  const [languagesSummary, setLanguagesSummary] = useState("");
 
   const [medsLoading, setMedsLoading] = useState(false);
   const [medsSaving, setMedsSaving] = useState<string | null>(null);
@@ -117,7 +128,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted"
+          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
@@ -129,26 +140,11 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
       if (row && vaultKey) {
         const [cn, al, sn, dg, ls] = await Promise.all([
-          decryptProfileField({
-            env: row.communication_notes_encrypted,
-            column: "communication_notes_encrypted",
-          }),
-          decryptProfileField({
-            env: row.allergies_encrypted,
-            column: "allergies_encrypted",
-          }),
-          decryptProfileField({
-            env: row.safety_notes_encrypted,
-            column: "safety_notes_encrypted",
-          }),
-          decryptProfileField({
-            env: row.diagnoses_encrypted,
-            column: "diagnoses_encrypted",
-          }),
-          decryptProfileField({
-            env: row.languages_spoken_encrypted,
-            column: "languages_spoken_encrypted",
-          }),
+          decryptProfileField({ env: row.communication_notes_encrypted, column: "communication_notes_encrypted" }),
+          decryptProfileField({ env: row.allergies_encrypted, column: "allergies_encrypted" }),
+          decryptProfileField({ env: row.safety_notes_encrypted, column: "safety_notes_encrypted" }),
+          decryptProfileField({ env: row.diagnoses_encrypted, column: "diagnoses_encrypted" }),
+          decryptProfileField({ env: row.languages_spoken_encrypted, column: "languages_spoken_encrypted" }),
         ]);
 
         setCommunicationNotes(cn || "");
@@ -163,6 +159,12 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         setDiagnoses("");
         setLanguagesSpoken("");
       }
+
+      setCommSummary(row?.communication_notes_summary ?? "");
+      setAllergiesSummary(row?.allergies_summary ?? "");
+      setSafetySummary(row?.safety_notes_summary ?? "");
+      setDiagnosesSummary(row?.diagnoses_summary ?? "");
+      setLanguagesSummary(row?.languages_spoken_summary ?? "");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_profile");
     } finally {
@@ -214,6 +216,11 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           safety_notes_encrypted: snEnv,
           diagnoses_encrypted: dgEnv,
           languages_spoken_encrypted: lsEnv,
+          communication_notes_summary: commSummary.trim() || null,
+          allergies_summary: allergiesSummary.trim() || null,
+          safety_notes_summary: safetySummary.trim() || null,
+          diagnoses_summary: diagnosesSummary.trim() || null,
+          languages_spoken_summary: languagesSummary.trim() || null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "patient_id" }
@@ -222,6 +229,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       if (error) throw error;
 
       await loadProfile();
+      setMsg("Profile saved.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_save_profile");
     } finally {
@@ -336,7 +344,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
+            <div className="cc-status-error-title">Message</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
@@ -355,60 +363,66 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             <div className="cc-grid-2">
               <div className="cc-field">
                 <div className="cc-label">Communication notes (E2EE)</div>
-                <textarea
-                  className="cc-textarea"
-                  value={communicationNotes}
-                  onChange={(e) => setCommunicationNotes(e.target.value)}
-                  placeholder={vaultKey ? "Encrypted notes…" : "Encrypted notes (vault needed)…"}
-                  disabled={!vaultKey}
-                />
+                <textarea className="cc-textarea" value={communicationNotes} onChange={(e) => setCommunicationNotes(e.target.value)} disabled={!vaultKey} />
               </div>
 
               <div className="cc-field">
                 <div className="cc-label">Allergies (E2EE)</div>
-                <textarea
-                  className="cc-textarea"
-                  value={allergies}
-                  onChange={(e) => setAllergies(e.target.value)}
-                  placeholder={vaultKey ? "Encrypted allergies…" : "Encrypted allergies (vault needed)…"}
-                  disabled={!vaultKey}
-                />
+                <textarea className="cc-textarea" value={allergies} onChange={(e) => setAllergies(e.target.value)} disabled={!vaultKey} />
               </div>
             </div>
 
             <div className="cc-grid-2">
               <div className="cc-field">
                 <div className="cc-label">Diagnoses (E2EE)</div>
-                <textarea
-                  className="cc-textarea"
-                  value={diagnoses}
-                  onChange={(e) => setDiagnoses(e.target.value)}
-                  placeholder={vaultKey ? "Encrypted diagnoses…" : "Encrypted diagnoses (vault needed)…"}
-                  disabled={!vaultKey}
-                />
+                <textarea className="cc-textarea" value={diagnoses} onChange={(e) => setDiagnoses(e.target.value)} disabled={!vaultKey} />
               </div>
 
               <div className="cc-field">
                 <div className="cc-label">Languages spoken (E2EE)</div>
-                <textarea
-                  className="cc-textarea"
-                  value={languagesSpoken}
-                  onChange={(e) => setLanguagesSpoken(e.target.value)}
-                  placeholder={vaultKey ? "Encrypted languages spoken…" : "Encrypted languages spoken (vault needed)…"}
-                  disabled={!vaultKey}
-                />
+                <textarea className="cc-textarea" value={languagesSpoken} onChange={(e) => setLanguagesSpoken(e.target.value)} disabled={!vaultKey} />
               </div>
             </div>
 
             <div className="cc-field">
               <div className="cc-label">Safety notes (E2EE)</div>
-              <textarea
-                className="cc-textarea"
-                value={safetyNotes}
-                onChange={(e) => setSafetyNotes(e.target.value)}
-                placeholder={vaultKey ? "Encrypted safety notes…" : "Encrypted safety notes (vault needed)…"}
-                disabled={!vaultKey}
-              />
+              <textarea className="cc-textarea" value={safetyNotes} onChange={(e) => setSafetyNotes(e.target.value)} disabled={!vaultKey} />
+            </div>
+          </div>
+
+          <div className="cc-card cc-card-pad cc-stack">
+            <h2 className="cc-h2">Clinician summary copy</h2>
+            <div className="cc-subtle">
+              These fields are readable to permitted members on the Summary page without vault unlock.
+            </div>
+
+            <div className="cc-grid-2">
+              <div className="cc-field">
+                <div className="cc-label">Communication notes summary</div>
+                <textarea className="cc-textarea" value={commSummary} onChange={(e) => setCommSummary(e.target.value)} />
+              </div>
+
+              <div className="cc-field">
+                <div className="cc-label">Allergies summary</div>
+                <textarea className="cc-textarea" value={allergiesSummary} onChange={(e) => setAllergiesSummary(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="cc-grid-2">
+              <div className="cc-field">
+                <div className="cc-label">Diagnoses summary</div>
+                <textarea className="cc-textarea" value={diagnosesSummary} onChange={(e) => setDiagnosesSummary(e.target.value)} />
+              </div>
+
+              <div className="cc-field">
+                <div className="cc-label">Languages spoken summary</div>
+                <textarea className="cc-textarea" value={languagesSummary} onChange={(e) => setLanguagesSummary(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="cc-field">
+              <div className="cc-label">Safety notes summary</div>
+              <textarea className="cc-textarea" value={safetySummary} onChange={(e) => setSafetySummary(e.target.value)} />
             </div>
 
             <div className="cc-row">
@@ -426,63 +440,58 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
               )}
             </div>
           </div>
+        </div>
 
-          <div className="cc-card cc-card-pad cc-stack">
-            <div className="cc-row-between">
-              <div>
-                <h2 className="cc-h2">Medications</h2>
-                <div className="cc-subtle">
-                  Used by <b>Medication logs</b>. (Current schema stores these fields as plaintext metadata.)
-                </div>
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <div>
+              <h2 className="cc-h2">Medications</h2>
+              <div className="cc-subtle">
+                Used by <b>Medication logs</b>.
               </div>
-              <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-                Open logs
-              </Link>
             </div>
+            <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
+              Open logs
+            </Link>
+          </div>
 
-            <div className="cc-panel-soft cc-stack">
-              <div className="cc-grid-2">
-                <div className="cc-field">
-                  <div className="cc-label">Name</div>
-                  <input className="cc-input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Sertraline" />
-                </div>
-
-                <div className="cc-field">
-                  <div className="cc-label">Dosage</div>
-                  <input className="cc-input" value={newDosage} onChange={(e) => setNewDosage(e.target.value)} placeholder="e.g. 50mg" />
-                </div>
+          <div className="cc-panel-soft cc-stack">
+            <div className="cc-grid-2">
+              <div className="cc-field">
+                <div className="cc-label">Name</div>
+                <input className="cc-input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Sertraline" />
               </div>
 
               <div className="cc-field">
-                <div className="cc-label">Schedule text</div>
-                <input
-                  className="cc-input"
-                  value={newScheduleText}
-                  onChange={(e) => setNewScheduleText(e.target.value)}
-                  placeholder="e.g. once daily in the morning"
-                />
-              </div>
-
-              <div className="cc-row">
-                <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
-                  {medsSaving === "create" ? "Adding…" : "Add medication"}
-                </button>
-                <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
-                  {medsLoading ? "Loading…" : "Refresh"}
-                </button>
+                <div className="cc-label">Dosage</div>
+                <input className="cc-input" value={newDosage} onChange={(e) => setNewDosage(e.target.value)} placeholder="e.g. 50mg" />
               </div>
             </div>
 
-            {meds.length === 0 ? (
-              <div className="cc-small">No medications yet.</div>
-            ) : (
-              <div className="cc-stack">
-                {meds.map((m) => (
-                  <MedicationEditor key={m.id} medication={m} busy={medsSaving === m.id} onSave={(patch) => updateMedication(m, patch)} />
-                ))}
-              </div>
-            )}
+            <div className="cc-field">
+              <div className="cc-label">Schedule text</div>
+              <input className="cc-input" value={newScheduleText} onChange={(e) => setNewScheduleText(e.target.value)} placeholder="e.g. once daily in the morning" />
+            </div>
+
+            <div className="cc-row">
+              <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
+                {medsSaving === "create" ? "Adding…" : "Add medication"}
+              </button>
+              <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
+                {medsLoading ? "Loading…" : "Refresh"}
+              </button>
+            </div>
           </div>
+
+          {meds.length === 0 ? (
+            <div className="cc-small">No medications yet.</div>
+          ) : (
+            <div className="cc-stack">
+              {meds.map((m) => (
+                <MedicationEditor key={m.id} medication={m} busy={medsSaving === m.id} onSave={(patch) => updateMedication(m, patch)} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -559,7 +568,7 @@ function MedicationEditor({
           {busy ? "Saving…" : "Save changes"}
         </button>
 
-        <button className="cc-btn" disabled={busy} onClick={() => onSave({ active: !medication.active })} title="Toggle active/inactive">
+        <button className="cc-btn" disabled={busy} onClick={() => onSave({ active: !medication.active })}>
           {busy ? "…" : medication.active ? "Deactivate" : "Reactivate"}
         </button>
 

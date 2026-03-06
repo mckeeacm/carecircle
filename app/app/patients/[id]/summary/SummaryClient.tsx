@@ -3,20 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
-import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
-import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 
 type PatientRow = { id: string; display_name: string };
 
-type PatientProfileRow = {
+type PatientProfileSummaryRow = {
   patient_id: string;
   updated_at: string;
-  communication_notes_encrypted: CipherEnvelopeV1 | null;
-  allergies_encrypted: CipherEnvelopeV1 | null;
-  safety_notes_encrypted: CipherEnvelopeV1 | null;
-  diagnoses_encrypted: CipherEnvelopeV1 | null;
-  languages_spoken_encrypted: CipherEnvelopeV1 | null;
+  communication_notes_summary: string | null;
+  allergies_summary: string | null;
+  safety_notes_summary: string | null;
+  diagnoses_summary: string | null;
+  languages_spoken_summary: string | null;
 };
 
 type MedicationRow = {
@@ -45,19 +42,8 @@ function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
-function isDecryptMismatchError(message: string) {
-  const m = message.toLowerCase();
-  return (
-    m.includes("ciphertext cannot be decrypted using that key") ||
-    m.includes("incorrect key pair") ||
-    m.includes("failed to decrypt") ||
-    m.includes("decrypt")
-  );
-}
-
 export default function SummaryClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const { vaultKey } = usePatientVault();
 
   const [msg, setMsg] = useState<string | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
@@ -74,35 +60,6 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
   const [sharedJournals, setSharedJournals] = useState<JournalPreview[]>([]);
 
   const [loading, setLoading] = useState(false);
-
-  async function decryptProfileField(params: {
-    env: CipherEnvelopeV1 | null;
-    column:
-      | "communication_notes_encrypted"
-      | "allergies_encrypted"
-      | "safety_notes_encrypted"
-      | "diagnoses_encrypted"
-      | "languages_spoken_encrypted";
-  }) {
-    if (!params.env || !vaultKey) return "";
-
-    try {
-      return await decryptStringWithLocalCache({
-        patientId,
-        table: "patient_profiles",
-        rowId: patientId,
-        column: params.column,
-        env: params.env,
-        vaultKey,
-      });
-    } catch (e: any) {
-      const text = e?.message ?? String(e);
-      if (isDecryptMismatchError(text)) {
-        return "";
-      }
-      throw e;
-    }
-  }
 
   async function load() {
     setLoading(true);
@@ -122,51 +79,20 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted"
+          "patient_id, updated_at, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
       if (prErr) throw prErr;
 
-      const row = (pr ?? null) as PatientProfileRow | null;
+      const row = (pr ?? null) as PatientProfileSummaryRow | null;
+
       setProfileUpdatedAt(row?.updated_at ?? null);
-
-      if (!row || !vaultKey) {
-        setCommNotes("");
-        setAllergies("");
-        setSafetyNotes("");
-        setDiagnoses("");
-        setLanguagesSpoken("");
-      } else {
-        const [cn, al, sn, dg, ls] = await Promise.all([
-          decryptProfileField({
-            env: row.communication_notes_encrypted,
-            column: "communication_notes_encrypted",
-          }),
-          decryptProfileField({
-            env: row.allergies_encrypted,
-            column: "allergies_encrypted",
-          }),
-          decryptProfileField({
-            env: row.safety_notes_encrypted,
-            column: "safety_notes_encrypted",
-          }),
-          decryptProfileField({
-            env: row.diagnoses_encrypted,
-            column: "diagnoses_encrypted",
-          }),
-          decryptProfileField({
-            env: row.languages_spoken_encrypted,
-            column: "languages_spoken_encrypted",
-          }),
-        ]);
-
-        setCommNotes(cn || "");
-        setAllergies(al || "");
-        setSafetyNotes(sn || "");
-        setDiagnoses(dg || "");
-        setLanguagesSpoken(ls || "");
-      }
+      setCommNotes(row?.communication_notes_summary ?? "");
+      setAllergies(row?.allergies_summary ?? "");
+      setSafetyNotes(row?.safety_notes_summary ?? "");
+      setDiagnoses(row?.diagnoses_summary ?? "");
+      setLanguagesSpoken(row?.languages_spoken_summary ?? "");
 
       try {
         const { data: a, error: aErr } = await supabase
@@ -213,7 +139,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId, !!vaultKey]);
+  }, [patientId]);
 
   return (
     <div className="cc-page">
@@ -245,15 +171,6 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
           </div>
         ) : null}
 
-        {!vaultKey ? (
-          <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Vault key not available on this device</div>
-            <div className="cc-subtle">
-              Encrypted profile fields won’t display until this device has vault access.
-            </div>
-          </div>
-        ) : null}
-
         <div className="cc-grid-3">
           <div className="cc-card cc-card-pad">
             <h2 className="cc-h2">Safety & communication</h2>
@@ -261,21 +178,21 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
             <div className="cc-small cc-strong">Communication notes</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (commNotes || "—") : "—"}
+              {commNotes || "—"}
             </div>
 
             <div className="cc-spacer-12" />
 
             <div className="cc-small cc-strong">Languages spoken</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (languagesSpoken || "—") : "—"}
+              {languagesSpoken || "—"}
             </div>
 
             <div className="cc-spacer-12" />
 
             <div className="cc-small cc-strong">Safety notes</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (safetyNotes || "—") : "—"}
+              {safetyNotes || "—"}
             </div>
 
             <div className="cc-spacer-12" />
@@ -290,14 +207,14 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
             <div className="cc-small cc-strong">Diagnoses</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (diagnoses || "—") : "—"}
+              {diagnoses || "—"}
             </div>
 
             <div className="cc-spacer-12" />
 
             <div className="cc-small cc-strong">Allergies</div>
             <div className="cc-panel-soft cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {vaultKey ? (allergies || "—") : "—"}
+              {allergies || "—"}
             </div>
           </div>
 
@@ -374,7 +291,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
             <div className="cc-spacer-12" />
             <div className="cc-small cc-subtle">
-              Note: journal content is end-to-end encrypted and may not be shown here unless you enable decrypt with vault access.
+              This summary is readable to permitted members without vault unlock.
             </div>
           </div>
         </div>
