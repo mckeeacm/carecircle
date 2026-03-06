@@ -192,6 +192,10 @@ export default function OnboardingClient() {
 
   const [newCircleName, setNewCircleName] = useState<string>("");
 
+  const [inviteNickname, setInviteNickname] = useState<string>("");
+  const [inviteEmailDraft, setInviteEmailDraft] = useState<string>("");
+  const [nicknameApplied, setNicknameApplied] = useState<boolean>(false);
+
   const selectedMembership =
     memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
@@ -248,6 +252,20 @@ export default function OnboardingClient() {
     }
   }
 
+  async function applyInviteNickname(patientId: string, userId: string, nickname: string) {
+    const clean = nickname.trim();
+    if (!clean) return;
+    try {
+      const { error } = await supabase
+        .from("patient_members")
+        .update({ nickname: clean })
+        .eq("patient_id", patientId)
+        .eq("user_id", userId);
+
+      if (!error) setNicknameApplied(true);
+    } catch {}
+  }
+
   async function refreshAll(preferredPid?: string) {
     setLoading(true);
     setMsg(null);
@@ -271,6 +289,13 @@ export default function OnboardingClient() {
 
       setUid(user.id);
       setEmail(user.email ?? "");
+      setInviteEmailDraft(user.email ?? "");
+
+      const metaNickname =
+        typeof user.user_metadata?.circle_nickname === "string"
+          ? user.user_metadata.circle_nickname
+          : "";
+      setInviteNickname((prev) => prev || metaNickname || "");
 
       await refreshPublicKey(user.id);
 
@@ -317,6 +342,11 @@ export default function OnboardingClient() {
 
       if (nextPid) {
         await refreshVaultStatus(nextPid, user.id);
+
+        const myMembership = ms.find((m) => m.patient_id === nextPid);
+        if (!myMembership?.nickname && inviteNickname.trim() && !nicknameApplied) {
+          await applyInviteNickname(nextPid, user.id, inviteNickname);
+        }
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_onboarding");
@@ -351,7 +381,18 @@ export default function OnboardingClient() {
       setInviteResult(res);
       setInviteStatus("accepted");
 
+      const metaNickname =
+        typeof user.user_metadata?.circle_nickname === "string"
+          ? user.user_metadata.circle_nickname
+          : "";
+      if (metaNickname) setInviteNickname(metaNickname);
+
       await refreshAll(res.patient_id);
+
+      if (metaNickname) {
+        await applyInviteNickname(res.patient_id, user.id, metaNickname);
+        await refreshAll(res.patient_id);
+      }
 
       try {
         window.history.replaceState({}, "", "/app/onboarding");
@@ -414,6 +455,27 @@ export default function OnboardingClient() {
       await refreshAll(pid);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_circle");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateEmailDraft() {
+    const clean = inviteEmailDraft.trim();
+    if (!clean) return setMsg("Please enter your email address.");
+
+    setBusy("email");
+    setMsg(null);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        email: clean,
+      });
+      if (error) throw error;
+
+      setMsg("Email update requested. Please check your inbox if confirmation is required.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_update_email");
     } finally {
       setBusy(null);
     }
@@ -684,6 +746,11 @@ export default function OnboardingClient() {
     }
   }
 
+  const greetingName =
+    selectedMembership?.nickname?.trim() ||
+    inviteNickname.trim() ||
+    "there";
+
   const doneInvite = !inviteToken || inviteStatus === "accepted";
   const doneCircle = !!selectedPatientId;
   const doneVault = !!selectedPatientId && keyOk && hasCachedVault;
@@ -693,20 +760,10 @@ export default function OnboardingClient() {
     return (
       <div className="cc-page">
         <div className="cc-container cc-stack">
-          <div className="cc-row-between">
-            <div>
-              <div className="cc-kicker">CareCircle</div>
-              <h1 className="cc-h1">Onboarding</h1>
-              <div className="cc-subtle">Loading…</div>
-            </div>
-            <div className="cc-row">
-              <Link className="cc-btn" href="/app/hub">
-                Hub
-              </Link>
-              <Link className="cc-btn" href="/app/account">
-                Account
-              </Link>
-            </div>
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Onboarding</h1>
+            <div className="cc-subtle">Loading…</div>
           </div>
 
           <div className="cc-card cc-card-pad">
@@ -720,23 +777,11 @@ export default function OnboardingClient() {
   return (
     <div className="cc-page">
       <div className="cc-container cc-stack">
-        <div className="cc-row-between">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Onboarding</h1>
-            <div className="cc-subtle">
-              One-page setup for circle access, device keys, vault access and permissions.
-            </div>
-            {email ? <div className="cc-small cc-subtle">{email}</div> : null}
-          </div>
-
-          <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
+        <div>
+          <div className="cc-kicker">CareCircle</div>
+          <h1 className="cc-h1">Welcome, {greetingName}</h1>
+          <div className="cc-subtle">
+            Let’s get this device set up properly for your circle.
           </div>
         </div>
 
@@ -791,9 +836,9 @@ export default function OnboardingClient() {
           <div className="cc-card cc-card-pad cc-stack">
             {currentStep === "invite" ? (
               <>
-                <h2 className="cc-h2">Joining a circle</h2>
+                <h2 className="cc-h2">Joining your circle</h2>
                 <div className="cc-subtle">
-                  We’ll accept the invite, add you to the circle, then fix device key and vault access on this same page.
+                  We’ll accept the invite, confirm your details, then fix device key and vault access on this page.
                 </div>
 
                 {inviteStatus === "checking" || inviteStatus === "accepting" ? (
@@ -830,11 +875,11 @@ export default function OnboardingClient() {
                 ) : null}
 
                 {inviteStatus === "accepted" && inviteResult ? (
-                  <div className="cc-stack">
+                  <>
                     <div className="cc-status cc-status-ok">
                       <div className="cc-strong">
                         {inviteResult.already_member
-                          ? "You’re already a member of this circle."
+                          ? "You’re already in this circle."
                           : "You’ve joined the circle."}
                       </div>
                       <div className="cc-subtle">
@@ -842,13 +887,45 @@ export default function OnboardingClient() {
                       </div>
                     </div>
 
-                    <div className="cc-panel-blue">
-                      <div className="cc-strong">Next step</div>
-                      <div className="cc-subtle">
-                        We now fix device keys and vault access below so this device can actually read encrypted content.
+                    <div className="cc-panel-blue cc-stack">
+                      <div className="cc-strong">Please confirm your details</div>
+
+                      <div className="cc-field">
+                        <div className="cc-label">Name shown in this circle</div>
+                        <input
+                          className="cc-input"
+                          value={inviteNickname}
+                          onChange={(e) => setInviteNickname(e.target.value)}
+                          placeholder="Your display name in this circle"
+                        />
+                      </div>
+
+                      <div className="cc-field">
+                        <div className="cc-label">Email address</div>
+                        <input
+                          className="cc-input"
+                          type="email"
+                          value={inviteEmailDraft}
+                          onChange={(e) => setInviteEmailDraft(e.target.value)}
+                          placeholder="you@example.com"
+                        />
+                      </div>
+
+                      <div className="cc-row">
+                        <button
+                          className="cc-btn"
+                          onClick={updateEmailDraft}
+                          disabled={busy === "email"}
+                        >
+                          {busy === "email" ? "Saving…" : "Update email if needed"}
+                        </button>
+                      </div>
+
+                      <div className="cc-small cc-subtle">
+                        Your name will be saved into this circle membership automatically.
                       </div>
                     </div>
-                  </div>
+                  </>
                 ) : null}
               </>
             ) : null}
@@ -917,13 +994,13 @@ export default function OnboardingClient() {
               <>
                 <h2 className="cc-h2">Fix device keys and vault access</h2>
                 <div className="cc-subtle">
-                  This is the bit that usually causes problems for new members. We’ll fix it here before you continue.
+                  This is the step that usually causes trouble for invited members, so we fix it here first.
                 </div>
 
                 <div className="cc-card cc-card-pad cc-stack">
-                  <div className="cc-strong">1) Device encryption key</div>
+                  <div className="cc-strong">1) Enable E2EE on this device</div>
                   <div className="cc-subtle">
-                    Your public key must be registered for this device before a controller can share the vault key to you.
+                    Your public key must be registered before a controller can share the vault key to this device.
                   </div>
 
                   <div className="cc-row">
@@ -944,9 +1021,9 @@ export default function OnboardingClient() {
                 </div>
 
                 <div className="cc-card cc-card-pad cc-stack">
-                  <div className="cc-strong">2) Vault access on this device</div>
+                  <div className="cc-strong">2) Unlock vault on this device</div>
                   <div className="cc-subtle">
-                    You need a share row and then you need to unlock the vault on this device.
+                    Once a share exists for you, unlock it here so this device can read encrypted content.
                   </div>
 
                   <div className="cc-row">
@@ -977,7 +1054,7 @@ export default function OnboardingClient() {
 
                   {!hasVaultShare ? (
                     <div className="cc-small cc-subtle">
-                      No share row detected yet. If you’re not the controller, enable E2EE on this device first and then ask the controller to share the key.
+                      No share row detected yet. If you are not the controller, enable E2EE on this device and ask the controller to share the vault key.
                     </div>
                   ) : null}
                 </div>
@@ -986,7 +1063,7 @@ export default function OnboardingClient() {
                   <div className="cc-card cc-card-pad cc-stack">
                     <div className="cc-strong">3) Controller tools</div>
                     <div className="cc-subtle">
-                      Use these here instead of leaving onboarding.
+                      You can handle member vault access from here too.
                     </div>
 
                     <div className="cc-row">
@@ -1008,7 +1085,7 @@ export default function OnboardingClient() {
                     </div>
 
                     <div className="cc-small cc-subtle">
-                      Recommended: unlock or initialise the vault on your controller device, then use “Share key to new members”.
+                      Recommended: unlock or initialise the vault on your controller device, then share the key to new members.
                     </div>
                   </div>
                 ) : null}
@@ -1019,7 +1096,7 @@ export default function OnboardingClient() {
               <>
                 <h2 className="cc-h2">Permissions defaults</h2>
                 <div className="cc-subtle">
-                  As controller, seed the default role permissions now so the circle starts cleanly.
+                  As controller, seed default permissions so the circle starts cleanly.
                 </div>
 
                 <div className="cc-row">
@@ -1033,9 +1110,9 @@ export default function OnboardingClient() {
                 </div>
 
                 <div className="cc-panel-blue">
-                  <div className="cc-strong">Done here</div>
+                  <div className="cc-strong">That’s enough for onboarding</div>
                   <div className="cc-subtle">
-                    You can fine-tune permissions later from Account, but onboarding doesn’t need to leave this page.
+                    Fine-tune permissions later from Account if needed.
                   </div>
                 </div>
               </>
@@ -1051,7 +1128,7 @@ export default function OnboardingClient() {
                 <div className="cc-status cc-status-ok">
                   <div className="cc-strong">Setup complete</div>
                   <div className="cc-subtle">
-                    Circle selected, device key registered, vault unlocked, and you’re ready to continue.
+                    Circle selected, device key registered, vault unlocked, and ready to use.
                   </div>
                 </div>
 
@@ -1071,7 +1148,7 @@ export default function OnboardingClient() {
         </div>
 
         <div className="cc-small cc-subtle">
-          This page keeps everything in one place: join, device key setup, vault fix, controller sharing, and permissions defaults.
+          Everything needed for onboarding is handled here: invite acceptance, name confirmation, device key setup, vault access and permissions defaults.
         </div>
       </div>
     </div>

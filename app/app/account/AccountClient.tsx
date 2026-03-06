@@ -14,14 +14,6 @@ type Membership = {
 
 type PatientRow = { id: string; display_name: string };
 
-type InviteCreateResult = {
-  invite_id: string;
-  patient_id: string;
-  role: string;
-  expires_at: string;
-  token: string;
-};
-
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
@@ -29,6 +21,7 @@ function isUuid(s: unknown): s is string {
 
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
+
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -42,6 +35,8 @@ export default function AccountClient() {
   const [inviteRoleByPid, setInviteRoleByPid] = useState<Record<string, string>>({});
   const [inviteDaysByPid, setInviteDaysByPid] = useState<Record<string, number>>({});
   const [inviteMaxUsesByPid, setInviteMaxUsesByPid] = useState<Record<string, number>>({});
+  const [inviteEmailByPid, setInviteEmailByPid] = useState<Record<string, string>>({});
+  const [inviteNicknameByPid, setInviteNicknameByPid] = useState<Record<string, string>>({});
   const [inviteUrlByPid, setInviteUrlByPid] = useState<Record<string, string>>({});
 
   const [nicknameByPid, setNicknameByPid] = useState<Record<string, string>>({});
@@ -92,9 +87,7 @@ export default function AccountClient() {
     setMemberships(ms);
 
     const nicknameSeed: Record<string, string> = {};
-    for (const m of ms) {
-      nicknameSeed[m.patient_id] = m.nickname ?? "";
-    }
+    for (const m of ms) nicknameSeed[m.patient_id] = m.nickname ?? "";
     setNicknameByPid(nicknameSeed);
 
     const pids = Array.from(new Set(ms.map((m) => m.patient_id))).filter((pid) => isUuid(pid));
@@ -121,14 +114,22 @@ export default function AccountClient() {
     const roleSeed: Record<string, string> = {};
     const daysSeed: Record<string, number> = {};
     const usesSeed: Record<string, number> = {};
+    const emailSeed: Record<string, string> = {};
+    const inviteNickSeed: Record<string, string> = {};
+
     for (const pid of pids) {
       roleSeed[pid] = roleSeed[pid] ?? "family";
       daysSeed[pid] = daysSeed[pid] ?? 7;
       usesSeed[pid] = usesSeed[pid] ?? 1;
+      emailSeed[pid] = emailSeed[pid] ?? "";
+      inviteNickSeed[pid] = inviteNickSeed[pid] ?? "";
     }
+
     setInviteRoleByPid((prev) => ({ ...roleSeed, ...prev }));
     setInviteDaysByPid((prev) => ({ ...daysSeed, ...prev }));
     setInviteMaxUsesByPid((prev) => ({ ...usesSeed, ...prev }));
+    setInviteEmailByPid((prev) => ({ ...emailSeed, ...prev }));
+    setInviteNicknameByPid((prev) => ({ ...inviteNickSeed, ...prev }));
   }
 
   useEffect(() => {
@@ -195,28 +196,47 @@ export default function AccountClient() {
       return;
     }
 
+    const inviteEmail = (inviteEmailByPid[patientId] ?? "").trim();
+    const inviteNickname = (inviteNicknameByPid[patientId] ?? "").trim();
+    const role = (inviteRoleByPid[patientId] ?? "family").trim().toLowerCase();
+    const days = Number(inviteDaysByPid[patientId] ?? 7);
+    const maxUses = Number(inviteMaxUsesByPid[patientId] ?? 1);
+
+    if (!inviteEmail) {
+      setMsg("Please enter the invitee email.");
+      return;
+    }
+
     setInviteBusyPid(patientId);
     setInviteUrlByPid((prev) => ({ ...prev, [patientId]: "" }));
 
     try {
-      const role = (inviteRoleByPid[patientId] ?? "family").trim().toLowerCase();
-      const days = Number(inviteDaysByPid[patientId] ?? 7);
-      const maxUses = Number(inviteMaxUsesByPid[patientId] ?? 1);
-
-      const { data, error } = await supabase.rpc("patient_invite_create", {
-        pid: patientId,
-        p_role: role,
-        p_expires_in_days: days,
-        p_max_uses: maxUses,
+      const res = await fetch("/api/circle-invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          patientId,
+          role,
+          expiresInDays: days,
+          maxUses,
+          inviteeEmail: inviteEmail,
+          inviteeNickname: inviteNickname || null,
+        }),
       });
 
-      if (error) throw error;
+      const json = await res.json().catch(() => null);
 
-      const res = data as InviteCreateResult;
-      const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "";
-      const inviteUrl = `${origin}/app/onboarding?invite=${encodeURIComponent(res.token)}`;
+      if (!res.ok) {
+        throw new Error(json?.error ?? "failed_to_create_invite");
+      }
 
+      const inviteUrl = json?.inviteUrl ?? "";
       setInviteUrlByPid((prev) => ({ ...prev, [patientId]: inviteUrl }));
+      setMsg(
+        inviteNickname
+          ? `Invite created for ${inviteNickname}. An account invite email has been sent to ${inviteEmail}.`
+          : `Invite created. An account invite email has been sent to ${inviteEmail}.`
+      );
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_invite");
     } finally {
@@ -227,9 +247,7 @@ export default function AccountClient() {
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   return (
@@ -278,8 +296,7 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">E2EE device setup</h2>
               <div className="cc-subtle">
-                Your account must have a public key in <code>user_public_keys</code> before a controller can create a vault share
-                for you.
+                Your account must have a public key in <code>user_public_keys</code> before a controller can create a vault share for you.
               </div>
             </div>
 
@@ -365,8 +382,7 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">Vault access on this device</h2>
               <div className="cc-subtle">
-                If DMs/journals/notes say “Vault key not available”, open Vault setup for that circle to re-load the wrapped key and
-                store it locally on this device.
+                If DMs/journals/notes say “Vault key not available”, open Vault setup for that circle to re-load the wrapped key and store it locally on this device.
               </div>
             </div>
           </div>
@@ -404,8 +420,7 @@ export default function AccountClient() {
                     </div>
 
                     <div className="cc-small cc-subtle">
-                      Open Vault setup to unwrap your share from <code>patient_vault_shares</code>, cache the vault key locally,
-                      or share/recreate vault access if you are a controller.
+                      Open Vault setup to unwrap your share from <code>patient_vault_shares</code>, cache the vault key locally, or share/recreate vault access if you are a controller.
                     </div>
                   </div>
                 );
@@ -419,8 +434,7 @@ export default function AccountClient() {
             <div>
               <h2 className="cc-h2">Invite a circle member</h2>
               <div className="cc-subtle">
-                Invites add a member + role. Vault sharing is separate (E2EE): a controller must share the vault key to the new
-                member after they join.
+                This sends an email invite, creates the auth invite on the server, and links the invitee to this circle after they accept.
               </div>
             </div>
           </div>
@@ -437,6 +451,8 @@ export default function AccountClient() {
                   const role = inviteRoleByPid[m.patient_id] ?? "family";
                   const days = inviteDaysByPid[m.patient_id] ?? 7;
                   const maxUses = inviteMaxUsesByPid[m.patient_id] ?? 1;
+                  const inviteeEmail = inviteEmailByPid[m.patient_id] ?? "";
+                  const inviteeNickname = inviteNicknameByPid[m.patient_id] ?? "";
                   const url = inviteUrlByPid[m.patient_id] ?? "";
                   const busy = inviteBusyPid === m.patient_id;
 
@@ -458,8 +474,37 @@ export default function AccountClient() {
                           onClick={() => createInvite(m.patient_id)}
                           disabled={busy || !pidOk}
                         >
-                          {busy ? "Creating…" : "Create invite link"}
+                          {busy ? "Creating…" : "Invite member"}
                         </button>
+                      </div>
+
+                      <div className="cc-grid-2">
+                        <div className="cc-field">
+                          <div className="cc-label">Invitee email</div>
+                          <input
+                            className="cc-input"
+                            type="email"
+                            value={inviteeEmail}
+                            disabled={!pidOk}
+                            onChange={(e) =>
+                              setInviteEmailByPid((prev) => ({ ...prev, [m.patient_id]: e.target.value }))
+                            }
+                            placeholder="name@example.com"
+                          />
+                        </div>
+
+                        <div className="cc-field">
+                          <div className="cc-label">Invitee nickname</div>
+                          <input
+                            className="cc-input"
+                            value={inviteeNickname}
+                            disabled={!pidOk}
+                            onChange={(e) =>
+                              setInviteNicknameByPid((prev) => ({ ...prev, [m.patient_id]: e.target.value }))
+                            }
+                            placeholder="How they should appear in the circle"
+                          />
+                        </div>
                       </div>
 
                       <div className="cc-grid-3">
@@ -509,7 +554,7 @@ export default function AccountClient() {
 
                       {url ? (
                         <div className="cc-panel">
-                          <div className="cc-small cc-subtle">Invite link (share this):</div>
+                          <div className="cc-small cc-subtle">Backup invite link:</div>
                           <div className="cc-row-between">
                             <div className="cc-wrap" style={{ fontSize: 13 }}>
                               {url}
@@ -519,12 +564,13 @@ export default function AccountClient() {
                             </button>
                           </div>
                           <div className="cc-small cc-subtle">
-                            After they accept, open <b>Vault setup</b> and share the vault key to them (creates their{" "}
-                            <code>patient_vault_shares</code> row).
+                            The invite email should already have been sent. This link is just a backup.
                           </div>
                         </div>
                       ) : (
-                        <div className="cc-small cc-subtle">Create an invite to generate a link.</div>
+                        <div className="cc-small cc-subtle">
+                          Enter email + nickname, then invite the member. Their account invite email will be sent automatically.
+                        </div>
                       )}
                     </div>
                   );
