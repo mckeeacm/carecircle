@@ -44,6 +44,9 @@ export default function AccountClient() {
   const [inviteMaxUsesByPid, setInviteMaxUsesByPid] = useState<Record<string, number>>({});
   const [inviteUrlByPid, setInviteUrlByPid] = useState<Record<string, string>>({});
 
+  const [nicknameByPid, setNicknameByPid] = useState<Record<string, string>>({});
+  const [nicknameBusyPid, setNicknameBusyPid] = useState<string | null>(null);
+
   async function refreshHasPublicKey(uid: string) {
     try {
       const { data, error } = await supabase
@@ -59,66 +62,77 @@ export default function AccountClient() {
     }
   }
 
+  async function loadAccount() {
+    setMsg(null);
+
+    const { data, error } = await supabase.auth.getUser();
+    if (error) return setMsg(error.message);
+
+    const uid = data.user?.id;
+    setEmail(data.user?.email ?? "");
+
+    if (!uid) {
+      setMsg("not_authenticated");
+      return;
+    }
+
+    await refreshHasPublicKey(uid);
+
+    const { data: pm, error: pmErr } = await supabase
+      .from("patient_members")
+      .select("patient_id, role, nickname, is_controller")
+      .eq("user_id", uid);
+
+    if (pmErr) {
+      setMsg(pmErr.message);
+      return;
+    }
+
+    const ms = (pm ?? []) as Membership[];
+    setMemberships(ms);
+
+    const nicknameSeed: Record<string, string> = {};
+    for (const m of ms) {
+      nicknameSeed[m.patient_id] = m.nickname ?? "";
+    }
+    setNicknameByPid(nicknameSeed);
+
+    const pids = Array.from(new Set(ms.map((m) => m.patient_id))).filter((pid) => isUuid(pid));
+    if (pids.length === 0) {
+      setPatientsById({});
+      return;
+    }
+
+    const { data: pts, error: pErr } = await supabase
+      .from("patients")
+      .select("id, display_name")
+      .in("id", pids)
+      .order("created_at", { ascending: false });
+
+    if (pErr) {
+      setMsg(pErr.message);
+      return;
+    }
+
+    const map: Record<string, PatientRow> = {};
+    for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
+    setPatientsById(map);
+
+    const roleSeed: Record<string, string> = {};
+    const daysSeed: Record<string, number> = {};
+    const usesSeed: Record<string, number> = {};
+    for (const pid of pids) {
+      roleSeed[pid] = roleSeed[pid] ?? "family";
+      daysSeed[pid] = daysSeed[pid] ?? 7;
+      usesSeed[pid] = usesSeed[pid] ?? 1;
+    }
+    setInviteRoleByPid((prev) => ({ ...roleSeed, ...prev }));
+    setInviteDaysByPid((prev) => ({ ...daysSeed, ...prev }));
+    setInviteMaxUsesByPid((prev) => ({ ...usesSeed, ...prev }));
+  }
+
   useEffect(() => {
-    (async () => {
-      setMsg(null);
-
-      const { data, error } = await supabase.auth.getUser();
-      if (error) return setMsg(error.message);
-
-      const uid = data.user?.id;
-      setEmail(data.user?.email ?? "");
-
-      if (!uid) {
-        setMsg("not_authenticated");
-        return;
-      }
-
-      await refreshHasPublicKey(uid);
-
-      const { data: pm, error: pmErr } = await supabase
-        .from("patient_members")
-        .select("patient_id, role, nickname, is_controller")
-        .eq("user_id", uid);
-
-      if (pmErr) {
-        setMsg(pmErr.message);
-        return;
-      }
-
-      const ms = (pm ?? []) as Membership[];
-      setMemberships(ms);
-
-      const pids = Array.from(new Set(ms.map((m) => m.patient_id))).filter((pid) => isUuid(pid));
-      if (pids.length === 0) return;
-
-      const { data: pts, error: pErr } = await supabase
-        .from("patients")
-        .select("id, display_name")
-        .in("id", pids)
-        .order("created_at", { ascending: false });
-
-      if (pErr) {
-        setMsg(pErr.message);
-        return;
-      }
-
-      const map: Record<string, PatientRow> = {};
-      for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
-      setPatientsById(map);
-
-      const roleSeed: Record<string, string> = {};
-      const daysSeed: Record<string, number> = {};
-      const usesSeed: Record<string, number> = {};
-      for (const pid of pids) {
-        roleSeed[pid] = roleSeed[pid] ?? "family";
-        daysSeed[pid] = daysSeed[pid] ?? 7;
-        usesSeed[pid] = usesSeed[pid] ?? 1;
-      }
-      setInviteRoleByPid((prev) => ({ ...roleSeed, ...prev }));
-      setInviteDaysByPid((prev) => ({ ...daysSeed, ...prev }));
-      setInviteMaxUsesByPid((prev) => ({ ...usesSeed, ...prev }));
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_account"));
+    loadAccount().catch((e: any) => setMsg(e?.message ?? "failed_to_load_account"));
   }, [supabase]);
 
   async function signOut() {
@@ -140,6 +154,36 @@ export default function AccountClient() {
       setMsg(e?.message ?? "failed_to_register_public_key");
     } finally {
       setE2eeBusy(false);
+    }
+  }
+
+  async function saveNickname(patientId: string) {
+    setMsg(null);
+    setNicknameBusyPid(patientId);
+
+    try {
+      const nickname = (nicknameByPid[patientId] ?? "").trim() || null;
+
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+
+      const { error } = await supabase
+        .from("patient_members")
+        .update({ nickname })
+        .eq("patient_id", patientId)
+        .eq("user_id", uid);
+
+      if (error) throw error;
+
+      setMsg("Your name has been updated for this circle.");
+      await loadAccount();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_save_name");
+    } finally {
+      setNicknameBusyPid(null);
     }
   }
 
@@ -267,6 +311,58 @@ export default function AccountClient() {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
+              <h2 className="cc-h2">Your display name in each circle</h2>
+              <div className="cc-subtle">
+                This is stored in <code>patient_members.nickname</code> and is shown in permissions and member lists.
+              </div>
+            </div>
+          </div>
+
+          {memberships.length === 0 ? (
+            <div className="cc-small">No circles yet.</div>
+          ) : (
+            <div className="cc-stack">
+              {memberships.map((m) => {
+                const p = patientsById[m.patient_id];
+                const busy = nicknameBusyPid === m.patient_id;
+
+                return (
+                  <div key={`nickname:${m.patient_id}`} className="cc-panel-soft cc-stack">
+                    <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
+                    <div className="cc-small">
+                      role: <b>{m.role}</b> • controller: <b>{m.is_controller ? "true" : "false"}</b>
+                    </div>
+
+                    <div className="cc-row">
+                      <input
+                        className="cc-input"
+                        value={nicknameByPid[m.patient_id] ?? ""}
+                        onChange={(e) =>
+                          setNicknameByPid((prev) => ({
+                            ...prev,
+                            [m.patient_id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Enter the name others should see"
+                      />
+                      <button
+                        className="cc-btn cc-btn-primary"
+                        onClick={() => saveNickname(m.patient_id)}
+                        disabled={busy}
+                      >
+                        {busy ? "Saving…" : "Save name"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <div>
               <h2 className="cc-h2">Vault access on this device</h2>
               <div className="cc-subtle">
                 If DMs/journals/notes say “Vault key not available”, open Vault setup for that circle to re-load the wrapped key and
@@ -292,7 +388,6 @@ export default function AccountClient() {
                         <div className="cc-small">
                           role: <b>{m.role}</b> • controller: <b>{m.is_controller ? "true" : "false"}</b>
                         </div>
-                        {!pidOk ? <div className="cc-small" style={{ color: "crimson" }}>invalid patient_id on membership</div> : null}
                       </div>
 
                       <div className="cc-row">
@@ -351,7 +446,11 @@ export default function AccountClient() {
                         <div className="cc-wrap">
                           <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
                           <div className="cc-small cc-wrap">{String(m.patient_id)}</div>
-                          {!pidOk ? <div className="cc-small" style={{ color: "crimson" }}>invalid patient_id — can’t create invite</div> : null}
+                          {!pidOk ? (
+                            <div className="cc-small" style={{ color: "crimson" }}>
+                              invalid patient_id — can’t create invite
+                            </div>
+                          ) : null}
                         </div>
 
                         <button
