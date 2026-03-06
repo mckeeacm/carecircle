@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { getSodium } from "@/lib/e2ee/sodium";
 import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
@@ -19,14 +19,13 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
-type PermissionsMemberRow = {
-  patient_id: string;
-  user_id: string;
-  role: string | null;
-  nickname: string | null;
-  is_controller: boolean | null;
-  created_at: string | null;
-};
+type StatusKind =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "working"
+  | "waiting"
+  | "error";
 
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
@@ -105,18 +104,21 @@ function normaliseSecretKey(sk: Uint8Array): Uint8Array {
   return sk;
 }
 
-async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+async function getMatchedBoxKeypairOrThrow(): Promise<{
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
+}> {
   const kp: any = await getOrCreateDeviceKeypair();
 
   const rawSk =
-    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ?? null;
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ??
+    null;
 
   if (!(rawSk instanceof Uint8Array)) {
     throw new Error("device_keypair_missing_keys");
   }
 
   const privateKey = normaliseSecretKey(rawSk);
-
   const sodium = await getSodium();
   const publicKey = sodium.crypto_scalarmult_base(privateKey);
 
@@ -129,57 +131,64 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; p
 
 export default function VaultInitClient() {
   const params = useParams();
-  const router = useRouter();
   const supabase = useMemo(() => supabaseBrowser(), []);
-
   const pid = normaliseId((params as any)?.id);
+
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const [uid, setUid] = useState<string>("");
   const [email, setEmail] = useState<string>("");
 
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [statusKind, setStatusKind] = useState<StatusKind>("idle");
+  const [statusTitle, setStatusTitle] = useState<string>("Checking secure access");
+  const [statusText, setStatusText] = useState<string>("");
 
-  const [hasCached, setHasCached] = useState(false);
-  const [hasShareRow, setHasShareRow] = useState<boolean | null>(null);
-  const [isController, setIsController] = useState<boolean | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   const [hasPublicKey, setHasPublicKey] = useState<boolean | null>(null);
   const [myAlg, setMyAlg] = useState<string>("");
+  const [hasShareRow, setHasShareRow] = useState<boolean | null>(null);
+  const [hasCached, setHasCached] = useState(false);
+  const [isController, setIsController] = useState<boolean | null>(null);
 
   async function getSessionUser() {
-    const { data, error } = await supabase.auth.getUser();
+    const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
-    return data.user ?? null;
+    return data.session?.user ?? null;
   }
 
-  async function refreshWithUser(userOverride?: { id: string; email?: string | null }) {
+  async function refreshState(userOverride?: { id: string; email?: string | null }) {
     setMsg(null);
 
     if (!pid || !isUuid(pid)) {
-      setLoading(false);
-      setMsg("Missing or invalid circle ID (route param).");
       setUid("");
       setEmail("");
-      setHasCached(false);
-      setHasShareRow(null);
-      setIsController(null);
       setHasPublicKey(null);
       setMyAlg("");
+      setHasShareRow(null);
+      setHasCached(false);
+      setIsController(null);
+      setStatusKind("error");
+      setStatusTitle("Circle link is invalid");
+      setStatusText("This secure access page needs a valid circle route.");
       return;
     }
 
     const user = userOverride ?? (await getSessionUser());
+
     if (!user?.id) {
       setUid("");
       setEmail("");
-      setHasCached(false);
-      setHasShareRow(null);
-      setIsController(null);
       setHasPublicKey(null);
       setMyAlg("");
-      setMsg("Not signed in (no session found). If you’re signed in elsewhere, refresh once.");
+      setHasShareRow(null);
+      setHasCached(false);
+      setIsController(null);
+      setStatusKind("waiting");
+      setStatusTitle("Sign in needed");
+      setStatusText("Please sign in first, then reopen this page.");
       return;
     }
 
@@ -188,16 +197,6 @@ export default function VaultInitClient() {
 
     const cached = readCachedVaultKey(pid, user.id);
     setHasCached(!!cached);
-
-    const { data: share, error: shareErr } = await supabase
-      .from("patient_vault_shares")
-      .select("wrapped_key")
-      .eq("patient_id", pid)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (shareErr) setHasShareRow(null);
-    else setHasShareRow(!!share?.wrapped_key);
 
     const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid });
     if (ctlErr) throw ctlErr;
@@ -216,16 +215,363 @@ export default function VaultInitClient() {
       setHasPublicKey(!!pk?.user_id);
       setMyAlg((pk as any)?.algorithm ?? "");
     }
+
+    const { data: share, error: shareErr } = await supabase
+      .from("patient_vault_shares")
+      .select("wrapped_key")
+      .eq("patient_id", pid)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (shareErr) setHasShareRow(null);
+    else setHasShareRow(!!share?.wrapped_key);
+
+    if (cached) {
+      setStatusKind("ready");
+      setStatusTitle("Secure access is ready");
+      setStatusText("This device can now open encrypted content for this circle.");
+      return;
+    }
+
+    if (share?.wrapped_key) {
+      setStatusKind("idle");
+      setStatusTitle("Secure access is almost ready");
+      setStatusText("This device has a secure share. Tap the button below to finish setup.");
+      return;
+    }
+
+    if (ctl === true) {
+      setStatusKind("idle");
+      setStatusTitle("Set up secure access for this circle");
+      setStatusText("As circle owner, you can set up secure access for yourself and share it to members.");
+      return;
+    }
+
+    setStatusKind("waiting");
+    setStatusTitle("Waiting for circle owner");
+    setStatusText(
+      "Your device key is ready, but the circle owner still needs to share secure access to you."
+    );
   }
 
-  async function refresh() {
-    setLoading(true);
+  async function registerMyPublicKeyIfNeeded(userId: string) {
+    const { publicKey } = await getMatchedBoxKeypairOrThrow();
+
+    const { error } = await supabase.from("user_public_keys").upsert(
+      {
+        user_id: userId,
+        public_key: bytesToBase64(publicKey),
+        algorithm: "crypto_box_seal",
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) throw error;
+  }
+
+  async function tryUnlockForCurrentUser(userId: string) {
+    const { data: share, error: shareErr } = await supabase
+      .from("patient_vault_shares")
+      .select("wrapped_key")
+      .eq("patient_id", pid)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (shareErr) throw shareErr;
+    if (!share?.wrapped_key) return false;
+
+    const wrapped = share.wrapped_key as WrappedKeyV1;
+    const { publicKey: myPublicKey, privateKey: myPrivateKey } =
+      await getMatchedBoxKeypairOrThrow();
+
+    const vaultKey = await unwrapVaultKeyForMe({
+      wrapped,
+      myPublicKey,
+      myPrivateKey,
+    });
+
+    writeCachedVaultKey(pid, userId, vaultKey);
+    return true;
+  }
+
+  async function shareOrInitialiseAsController(userId: string) {
+    const cachedVault = readCachedVaultKey(pid, userId);
+
+    if (cachedVault) {
+      const { data: members, error: memErr } = await supabase
+        .from("patient_members")
+        .select("user_id")
+        .eq("patient_id", pid);
+      if (memErr) throw memErr;
+
+      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+
+      const { data: pubKeys, error: pkErr } = await supabase
+        .from("user_public_keys")
+        .select("user_id, public_key, algorithm")
+        .in("user_id", userIds);
+      if (pkErr) throw pkErr;
+
+      const compatible = (pubKeys ?? []).filter((p: any) => p.algorithm === "crypto_box_seal");
+
+      if (compatible.length === 0) return;
+
+      const { data: existing, error: exErr } = await supabase
+        .from("patient_vault_shares")
+        .select("user_id")
+        .eq("patient_id", pid);
+      if (exErr) throw exErr;
+
+      const existingSet = new Set((existing ?? []).map((r: any) => r.user_id).filter(Boolean));
+      const targets = compatible.filter((p: any) => !existingSet.has(p.user_id));
+
+      if (targets.length === 0) return;
+
+      const rows = await Promise.all(
+        targets.map(async (p: any) => {
+          const recipientPk = base64ToBytes(p.public_key);
+          const wrapped = await wrapVaultKeyForRecipient({
+            vaultKey: cachedVault,
+            recipientPublicKey: recipientPk,
+          });
+          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped };
+        })
+      );
+
+      const { error: upErr } = await supabase
+        .from("patient_vault_shares")
+        .upsert(rows, { onConflict: "patient_id,user_id" });
+      if (upErr) throw upErr;
+
+      return;
+    }
+
+    const { data: members, error: memErr } = await supabase
+      .from("patient_members")
+      .select("user_id")
+      .eq("patient_id", pid);
+    if (memErr) throw memErr;
+
+    const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+
+    const { data: pubKeys, error: pkErr } = await supabase
+      .from("user_public_keys")
+      .select("user_id, public_key, algorithm")
+      .in("user_id", userIds);
+    if (pkErr) throw pkErr;
+
+    const compatible = (pubKeys ?? []).filter((p: any) => p.algorithm === "crypto_box_seal");
+    if (compatible.length === 0) return;
+
+    const sodium = await getSodium();
+    const vaultKey = sodium.randombytes_buf(32);
+
+    writeCachedVaultKey(pid, userId, vaultKey);
+
+    const rows = await Promise.all(
+      compatible.map(async (p: any) => {
+        const recipientPk = base64ToBytes(p.public_key);
+        const wrapped = await wrapVaultKeyForRecipient({
+          vaultKey,
+          recipientPublicKey: recipientPk,
+        });
+        return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped };
+      })
+    );
+
+    const { error: upErr } = await supabase
+      .from("patient_vault_shares")
+      .upsert(rows, { onConflict: "patient_id,user_id" });
+    if (upErr) throw upErr;
+  }
+
+  async function fixSecureAccess() {
+    setBusy("fix");
+    setMsg(null);
+    setStatusKind("working");
+    setStatusTitle("Fixing secure access");
+    setStatusText("Please keep this page open for a moment.");
+
     try {
-      await refreshWithUser();
+      if (!pid || !isUuid(pid)) throw new Error("invalid_circle_id");
+
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+
+      setUid(user.id);
+      setEmail(user.email ?? "");
+
+      setStatusText("Checking this device key…");
+      await registerMyPublicKeyIfNeeded(user.id);
+
+      setStatusText("Checking circle access…");
+      const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", { pid });
+      if (ctlErr) throw ctlErr;
+      const controller = ctl === true;
+      setIsController(controller);
+
+      setStatusText("Checking for a secure share…");
+      const { data: share, error: shareErr } = await supabase
+        .from("patient_vault_shares")
+        .select("wrapped_key")
+        .eq("patient_id", pid)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (shareErr) throw shareErr;
+
+      if (!share?.wrapped_key && controller) {
+        setStatusText("Creating or sharing secure access…");
+        await shareOrInitialiseAsController(user.id);
+      }
+
+      setStatusText("Refreshing secure share status…");
+      const { data: shareAfter, error: shareAfterErr } = await supabase
+        .from("patient_vault_shares")
+        .select("wrapped_key")
+        .eq("patient_id", pid)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (shareAfterErr) throw shareAfterErr;
+
+      if (!shareAfter?.wrapped_key && !controller) {
+        await refreshState({ id: user.id, email: user.email });
+        setStatusKind("waiting");
+        setStatusTitle("Waiting for circle owner");
+        setStatusText(
+          "Your device is ready, but the circle owner still needs to share secure access to you."
+        );
+        return;
+      }
+
+      setStatusText("Unlocking this circle on your device…");
+      const unlocked = await tryUnlockForCurrentUser(user.id);
+
+      if (!unlocked) {
+        throw new Error("share_still_missing_after_setup");
+      }
+
+      await refreshState({ id: user.id, email: user.email });
+      setStatusKind("ready");
+      setStatusTitle("Secure access is ready");
+      setStatusText("You can now open encrypted content for this circle on this device.");
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_refresh");
+      const text = e?.message ?? "failed_to_fix_secure_access";
+
+      if (typeof text === "string" && text.toLowerCase().includes("incorrect key pair")) {
+        setStatusKind("error");
+        setStatusTitle("This device needs a secure refresh");
+        setStatusText(
+          "This circle share was tied to an older device key. Use Advanced troubleshooting to reset this device, then try again."
+        );
+        setMsg(
+          "This share was encrypted for a different device keypair. Reset this device key and re-share secure access."
+        );
+      } else {
+        setStatusKind("error");
+        setStatusTitle("Secure access could not be completed");
+        setStatusText(
+          "Please try again. If this keeps happening, use Advanced troubleshooting below."
+        );
+        setMsg(text);
+      }
+
+      await refreshState().catch(() => {});
     } finally {
-      setLoading(false);
+      setBusy(null);
+    }
+  }
+
+  async function resetThisDeviceAndForgetVault() {
+    setBusy("reset");
+    setMsg(null);
+
+    try {
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+
+      forgetCachedVaultKey(pid, user.id);
+      await registerMyPublicKeyIfNeeded(user.id);
+      await refreshState({ id: user.id, email: user.email });
+      setStatusKind("idle");
+      setStatusTitle("This device was reset");
+      setStatusText("Now run Fix secure access again.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_reset_device");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function shareKeyToNewMembers() {
+    setBusy("share");
+    setMsg(null);
+
+    try {
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+      if (isController !== true) throw new Error("Only a controller can share secure access.");
+
+      await shareOrInitialiseAsController(user.id);
+      await refreshState({ id: user.id, email: user.email });
+      setMsg("Secure access shared to any members who were ready but missing a share.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_share");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function initialiseNewVaultKey() {
+    setBusy("rekey");
+    setMsg(null);
+
+    try {
+      const user = await getSessionUser();
+      if (!user?.id) throw new Error("not_authenticated");
+      if (isController !== true) throw new Error("Only a controller can rekey this circle.");
+
+      const { data: members, error: memErr } = await supabase
+        .from("patient_members")
+        .select("user_id")
+        .eq("patient_id", pid);
+      if (memErr) throw memErr;
+
+      const userIds = (members ?? []).map((m: any) => m.user_id).filter(Boolean);
+
+      const { data: pubKeys, error: pkErr } = await supabase
+        .from("user_public_keys")
+        .select("user_id, public_key, algorithm")
+        .in("user_id", userIds);
+      if (pkErr) throw pkErr;
+
+      const compatible = (pubKeys ?? []).filter((p: any) => p.algorithm === "crypto_box_seal");
+      if (compatible.length === 0) throw new Error("No members are ready for secure access.");
+
+      const sodium = await getSodium();
+      const vaultKey = sodium.randombytes_buf(32);
+      writeCachedVaultKey(pid, user.id, vaultKey);
+
+      const rows = await Promise.all(
+        compatible.map(async (p: any) => {
+          const recipientPk = base64ToBytes(p.public_key);
+          const wrapped = await wrapVaultKeyForRecipient({
+            vaultKey,
+            recipientPublicKey: recipientPk,
+          });
+          return { patient_id: pid, user_id: p.user_id, wrapped_key: wrapped };
+        })
+      );
+
+      const { error: upErr } = await supabase
+        .from("patient_vault_shares")
+        .upsert(rows, { onConflict: "patient_id,user_id" });
+      if (upErr) throw upErr;
+
+      await refreshState({ id: user.id, email: user.email });
+      setMsg("A NEW secure key was created and shared. Older encrypted items may still need the previous key.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_rekey");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -235,12 +581,13 @@ export default function VaultInitClient() {
     (async () => {
       try {
         setLoading(true);
-        const user = await getSessionUser();
-        if (!alive) return;
-        await refreshWithUser(user ? { id: user.id, email: user.email } : undefined);
+        await refreshState();
       } catch (e: any) {
         if (!alive) return;
-        setMsg(e?.message ?? "failed_to_boot");
+        setMsg(e?.message ?? "failed_to_load");
+        setStatusKind("error");
+        setStatusTitle("Could not load secure access");
+        setStatusText("Please refresh this page.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -248,7 +595,7 @@ export default function VaultInitClient() {
 
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
       const u = session?.user;
-      refreshWithUser(u ? { id: u.id, email: u.email } : undefined).catch(() => {});
+      refreshState(u ? { id: u.id, email: u.email } : undefined).catch(() => {});
     });
 
     return () => {
@@ -258,235 +605,17 @@ export default function VaultInitClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pid]);
 
-  async function enableE2EEOnThisDevice() {
-    setBusy("keys");
-    setMsg(null);
-    try {
-      const user = await getSessionUser();
-      if (!user?.id) throw new Error("not_authenticated");
-
-      const { publicKey } = await getMatchedBoxKeypairOrThrow();
-
-      const { error } = await supabase.from("user_public_keys").upsert(
-        {
-          user_id: user.id,
-          public_key: bytesToBase64(publicKey),
-          algorithm: "crypto_box_seal",
-        },
-        { onConflict: "user_id" }
-      );
-      if (error) throw error;
-
-      setMsg("E2EE enabled on this device.");
-      await refreshWithUser({ id: user.id, email: user.email });
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_enable_e2ee");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function unlockVaultOnThisDevice() {
-    setBusy("unlock");
-    setMsg(null);
-    try {
-      const user = await getSessionUser();
-      if (!user?.id) throw new Error("not_authenticated");
-
-      const { data: share, error: shareErr } = await supabase
-        .from("patient_vault_shares")
-        .select("wrapped_key")
-        .eq("patient_id", pid)
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (shareErr) throw shareErr;
-      if (!share?.wrapped_key) throw new Error("No vault share found. Ask controller to share the key.");
-
-      const wrapped = share.wrapped_key as WrappedKeyV1;
-      const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getMatchedBoxKeypairOrThrow();
-
-      const vaultKey = await unwrapVaultKeyForMe({ wrapped, myPublicKey, myPrivateKey });
-      writeCachedVaultKey(pid, user.id, vaultKey);
-
-      setMsg("Vault unlocked on this device.");
-      await refreshWithUser({ id: user.id, email: user.email });
-    } catch (e: any) {
-      const m = e?.message ?? "failed_to_unlock";
-      if (typeof m === "string" && m.toLowerCase().includes("incorrect key pair")) {
-        setMsg(
-          "This vault share was encrypted for a different device keypair. Re-enable E2EE on THIS device, then have the controller re-share (or initialise a new vault key)."
-        );
-      } else {
-        setMsg(m);
-      }
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function forgetVaultOnThisDevice() {
-    if (!uid) return;
-    setBusy("forget");
-    setMsg(null);
-    try {
-      forgetCachedVaultKey(pid, uid);
-      setMsg("Vault key removed from this device.");
-      await refresh();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function loadManageableMembers(): Promise<PermissionsMemberRow[]> {
-    const { data, error } = await supabase.rpc("permissions_members_list", { pid });
-    if (error) throw error;
-    return (data ?? []) as PermissionsMemberRow[];
-  }
-
-  async function upsertWrappedShares(rows: Array<{ user_id: string; wrapped_key: WrappedKeyV1 }>) {
-    const { data, error } = await supabase.rpc("patient_vault_shares_upsert", {
-      pid,
-      p_rows: rows,
-    });
-
-    if (error) throw error;
-    return Number(data ?? 0);
-  }
-
-  async function shareKeyToNewMembers() {
-    setBusy("share");
-    setMsg(null);
-
-    try {
-      if (isController !== true) throw new Error("Only a controller can share the vault key.");
-      if (!uid) throw new Error("not_authenticated");
-
-      const vaultKey = readCachedVaultKey(pid, uid);
-      if (!vaultKey) throw new Error("Unlock vault on this device first (so the key is cached).");
-
-      const members = await loadManageableMembers();
-      const userIds = members.map((m) => m.user_id).filter(Boolean);
-
-      if (userIds.length === 0) {
-        throw new Error("No members found for this circle.");
-      }
-
-      const { data: pubKeys, error: pkErr } = await supabase
-        .from("user_public_keys")
-        .select("user_id, public_key, algorithm")
-        .in("user_id", userIds);
-
-      if (pkErr) throw pkErr;
-
-      const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
-      if (missing.length) throw new Error(`${missing.length} member(s) must enable E2EE first.`);
-
-      const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
-      if (incompatible.length) throw new Error("Some members have incompatible keys (not crypto_box_seal).");
-
-      const { data: existing, error: exErr } = await supabase
-        .from("patient_vault_shares")
-        .select("user_id")
-        .eq("patient_id", pid);
-
-      if (exErr) throw exErr;
-
-      const existingSet = new Set((existing ?? []).map((r: any) => r.user_id).filter(Boolean));
-      const targets = (pubKeys ?? []).filter((p: any) => !existingSet.has(p.user_id));
-
-      if (targets.length === 0) {
-        setMsg("No new members need a share.");
-        return;
-      }
-
-      const rows = await Promise.all(
-        targets.map(async (p: any) => {
-          const recipientPk = base64ToBytes(p.public_key);
-          const wrapped_key = await wrapVaultKeyForRecipient({
-            vaultKey,
-            recipientPublicKey: recipientPk,
-          });
-          return {
-            user_id: p.user_id,
-            wrapped_key,
-          };
-        })
-      );
-
-      const count = await upsertWrappedShares(rows);
-      setMsg(`Shared key to ${count} new member(s).`);
-      await refresh();
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_share");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function initialiseNewVaultKey() {
-    setBusy("init");
-    setMsg(null);
-
-    try {
-      if (isController !== true) throw new Error("Only a controller can initialise a new vault key.");
-      if (!uid) throw new Error("not_authenticated");
-
-      const members = await loadManageableMembers();
-      const userIds = members.map((m) => m.user_id).filter(Boolean);
-
-      if (userIds.length === 0) {
-        throw new Error("No members found for this circle.");
-      }
-
-      const { data: pubKeys, error: pkErr } = await supabase
-        .from("user_public_keys")
-        .select("user_id, public_key, algorithm")
-        .in("user_id", userIds);
-
-      if (pkErr) throw pkErr;
-
-      const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
-      if (missing.length) throw new Error(`${missing.length} member(s) must enable E2EE first.`);
-
-      const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
-      if (incompatible.length) throw new Error("Some members have incompatible keys.");
-
-      const sodium = await getSodium();
-      const vaultKey = sodium.randombytes_buf(32);
-
-      writeCachedVaultKey(pid, uid, vaultKey);
-
-      const rows = await Promise.all(
-        (pubKeys ?? []).map(async (p: any) => {
-          const recipientPk = base64ToBytes(p.public_key);
-          const wrapped_key = await wrapVaultKeyForRecipient({
-            vaultKey,
-            recipientPublicKey: recipientPk,
-          });
-          return {
-            user_id: p.user_id,
-            wrapped_key,
-          };
-        })
-      );
-
-      const count = await upsertWrappedShares(rows);
-      setMsg(`Initialised a NEW vault key and shared it to ${count} member(s).`);
-      await refresh();
-    } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_init_new_vault");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  const keyOk = hasPublicKey === true && (myAlg === "" || myAlg === "crypto_box_seal");
-
   if (loading) {
     return (
       <div className="cc-page">
-        <div className="cc-container cc-card cc-card-pad">Loading vault setup…</div>
+        <div className="cc-container cc-stack">
+          <div>
+            <div className="cc-kicker">CareCircle</div>
+            <h1 className="cc-h1">Secure access</h1>
+            <div className="cc-subtle">Loading…</div>
+          </div>
+          <div className="cc-card cc-card-pad">Checking secure access…</div>
+        </div>
       </div>
     );
   }
@@ -497,15 +626,18 @@ export default function VaultInitClient() {
         <div className="cc-row-between">
           <div>
             <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Vault setup</h1>
+            <h1 className="cc-h1">Secure access</h1>
             <div className="cc-subtle cc-wrap">Circle: {pid || "—"}</div>
             {email ? <div className="cc-small cc-subtle cc-wrap">Signed in as: {email}</div> : null}
           </div>
 
           <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">Hub</Link>
-            <Link className="cc-btn" href="/app/account">Account</Link>
-            {pid ? <Link className="cc-btn cc-btn-secondary" href={`/app/patients/${pid}/vault`}>Vault</Link> : null}
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
+            <Link className="cc-btn" href="/app/account">
+              Account
+            </Link>
           </div>
         </div>
 
@@ -516,77 +648,113 @@ export default function VaultInitClient() {
           </div>
         ) : null}
 
-        <div className="cc-row">
-          <button className="cc-btn" onClick={refresh} disabled={!!busy}>Refresh</button>
-          <button className="cc-btn" onClick={() => router.refresh()} disabled={!!busy}>Hard refresh (Next.js)</button>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-strong">Vault controls</div>
-
-          <div className="cc-row">
-            <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>Cache: {hasCached ? "present" : "missing"}</span>
-            <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
-              Share: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
-            </span>
-            <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
-              Controller: {isController === null ? "unknown" : isController ? "true" : "false"}
-            </span>
-            <span className={`cc-pill ${keyOk ? "cc-pill-primary" : ""}`}>
-              Device key: {keyOk ? "OK" : hasPublicKey === null ? "unknown" : "missing/invalid"}
-            </span>
+        <div
+          className={`cc-card cc-card-pad cc-stack ${
+            statusKind === "ready"
+              ? "cc-panel-green"
+              : statusKind === "waiting"
+              ? "cc-panel-blue"
+              : statusKind === "error"
+              ? "cc-status cc-status-error"
+              : ""
+          }`}
+        >
+          <div className="cc-strong" style={{ fontSize: 28 }}>
+            {statusTitle}
           </div>
-
-          <div className="cc-row">
-            <button className="cc-btn cc-btn-primary" onClick={unlockVaultOnThisDevice} disabled={busy === "unlock" || !uid}>
-              {busy === "unlock" ? "Unlocking…" : "Unlock vault on this device"}
-            </button>
-            <button className="cc-btn cc-btn-danger" onClick={forgetVaultOnThisDevice} disabled={busy === "forget" || !hasCached}>
-              {busy === "forget" ? "Forgetting…" : "Forget vault on this device"}
-            </button>
-          </div>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-strong">Device keys (E2EE)</div>
-          <div className="cc-subtle">
-            This registers your public key in <code>user_public_keys</code> using <b>crypto_box_seal</b>.
-          </div>
-
-          <div className="cc-row">
-            <button className="cc-btn cc-btn-secondary" onClick={enableE2EEOnThisDevice} disabled={busy === "keys" || !uid}>
-              {busy === "keys" ? "Enabling…" : hasPublicKey ? "Re-enable E2EE" : "Enable E2EE on this device"}
-            </button>
-            <span className="cc-pill">{myAlg || "—"}</span>
-          </div>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-strong">Controller actions</div>
-          <div className="cc-subtle">Share existing key to new members (recommended), or initialise a new one.</div>
+          <div className="cc-subtle cc-wrap">{statusText}</div>
 
           <div className="cc-row">
             <button
               className="cc-btn cc-btn-primary"
-              onClick={shareKeyToNewMembers}
-              disabled={busy === "share" || isController !== true || !keyOk || !hasCached}
+              onClick={fixSecureAccess}
+              disabled={busy === "fix"}
             >
-              {busy === "share" ? "Sharing…" : "Share key to new members"}
+              {busy === "fix" ? "Fixing secure access…" : "Fix secure access"}
             </button>
 
-            <button
-              className="cc-btn cc-btn-danger"
-              onClick={initialiseNewVaultKey}
-              disabled={busy === "init" || isController !== true || !keyOk}
-            >
-              {busy === "init" ? "Initialising…" : "Initialise NEW vault key"}
+            {hasCached ? (
+              <Link className="cc-btn" href={`/app/patients/${pid}/today`}>
+                Continue to Today
+              </Link>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-strong">What this does</div>
+          <div className="cc-small cc-subtle">
+            This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.
+          </div>
+        </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <div className="cc-strong">Advanced troubleshooting</div>
+            <button className="cc-btn" onClick={() => setDebugOpen((v) => !v)}>
+              {debugOpen ? "Hide" : "Show"}
             </button>
           </div>
 
-          {!hasCached ? (
-            <div className="cc-small cc-subtle">
-              To share without regenerating, unlock vault on this device first (so the vault key is cached).
-            </div>
+          {debugOpen ? (
+            <>
+              <div className="cc-row" style={{ flexWrap: "wrap" }}>
+                <span className={`cc-pill ${hasPublicKey ? "cc-pill-primary" : ""}`}>
+                  Device key: {hasPublicKey ? "OK" : hasPublicKey === null ? "unknown" : "missing"}
+                </span>
+                <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
+                  Share row: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
+                </span>
+                <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
+                  Cached vault: {hasCached ? "present" : "missing"}
+                </span>
+                <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
+                  Controller: {isController === null ? "unknown" : isController ? "true" : "false"}
+                </span>
+                <span className="cc-pill">{myAlg || "—"}</span>
+              </div>
+
+              <div className="cc-row">
+                <button className="cc-btn" onClick={() => refreshState()} disabled={!!busy}>
+                  Refresh status
+                </button>
+
+                <button
+                  className="cc-btn"
+                  onClick={resetThisDeviceAndForgetVault}
+                  disabled={busy === "reset" || !uid}
+                >
+                  {busy === "reset" ? "Resetting…" : "Reset this device"}
+                </button>
+
+                {isController ? (
+                  <button
+                    className="cc-btn"
+                    onClick={shareKeyToNewMembers}
+                    disabled={busy === "share"}
+                  >
+                    {busy === "share" ? "Sharing…" : "Share to ready members"}
+                  </button>
+                ) : null}
+              </div>
+
+              {isController ? (
+                <div className="cc-panel">
+                  <div className="cc-strong">Danger zone</div>
+                  <div className="cc-small cc-subtle">
+                    Creating a NEW circle key can leave older encrypted content tied to the previous key.
+                  </div>
+                  <div className="cc-spacer-12" />
+                  <button
+                    className="cc-btn cc-btn-danger"
+                    onClick={initialiseNewVaultKey}
+                    disabled={busy === "rekey"}
+                  >
+                    {busy === "rekey" ? "Rekeying…" : "Initialise NEW secure key"}
+                  </button>
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
       </div>

@@ -29,6 +29,7 @@ type MessageRow = {
 };
 
 type Member = {
+  patient_id: string;
   user_id: string;
   role: string | null;
   nickname: string | null;
@@ -38,6 +39,16 @@ type Member = {
 
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function isDecryptMismatchError(e: any) {
+  const text = String(e?.message ?? e ?? "").toLowerCase();
+  return (
+    text.includes("ciphertext cannot be decrypted using that key") ||
+    text.includes("decrypt") ||
+    text.includes("aead") ||
+    text.includes("ciphertext")
+  );
 }
 
 export default function DMClient({ patientId }: { patientId: string }) {
@@ -50,10 +61,12 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [threadTitlePlain, setThreadTitlePlain] = useState<Record<string, string>>({});
   const [threadPreviewPlain, setThreadPreviewPlain] = useState<Record<string, string>>({});
+  const [threadDecryptFailed, setThreadDecryptFailed] = useState<Record<string, boolean>>({});
 
   const [activeThreadId, setActiveThreadId] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [bodyPlain, setBodyPlain] = useState<Record<string, string>>({});
+  const [messageDecryptFailed, setMessageDecryptFailed] = useState<Record<string, boolean>>({});
 
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
@@ -61,29 +74,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
   const [draft, setDraft] = useState<string>("");
 
-  async function loadMembers(uid: string) {
-    const { data, error } = await supabase.rpc("patient_members_basic_list", {
-      pid: patientId,
-    });
-
-    if (error) throw error;
-
-    const allMembers = ((data ?? []) as any[])
-      .filter((m) => m.user_id !== uid)
-      .map((m) => ({
-        user_id: m.user_id as string,
-        role: m.role ?? null,
-        nickname: m.nickname ?? null,
-        is_controller: m.is_controller ?? false,
-        created_at: null,
-      }));
-
-    setMembers(allMembers);
-
-    if (!selectedRecipientId && allMembers[0]?.user_id) {
-      setSelectedRecipientId(allMembers[0].user_id);
-    }
-  }
+  const [secureAccessNeedsRefresh, setSecureAccessNeedsRefresh] = useState(false);
 
   async function refreshThreads() {
     setMsg(null);
@@ -101,12 +92,21 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (!uid) throw new Error("not_authenticated");
       setCurrentUserId(uid);
 
-      await loadMembers(uid);
+      const { data: memberRows, error: memberErr } = await supabase.rpc("permissions_members_list", {
+        pid: patientId,
+      });
+      if (memberErr) throw memberErr;
+
+      const allMembers = ((memberRows ?? []) as Member[]).filter((m) => m.user_id !== uid);
+      setMembers(allMembers);
+
+      if (!selectedRecipientId && allMembers[0]?.user_id) {
+        setSelectedRecipientId(allMembers[0].user_id);
+      }
 
       const { data: threadRows, error: threadErr } = await supabase.rpc("dm_list_threads", {
         p_patient_id: patientId,
       });
-
       if (threadErr) throw threadErr;
 
       const nextThreads = (threadRows ?? []) as ThreadRow[];
@@ -151,47 +151,84 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
+    if (threadDecryptFailed[t.thread_id]) return;
 
-    if (t.title_encrypted && threadTitlePlain[t.thread_id] == null) {
-      const plain = await decryptStringWithLocalCache({
-        patientId,
-        table: "dm_threads",
-        rowId: t.thread_id,
-        column: "title_encrypted",
-        env: t.title_encrypted,
-        vaultKey,
-      });
-      setThreadTitlePlain((p) => ({ ...p, [t.thread_id]: plain }));
-    }
+    try {
+      if (t.title_encrypted && threadTitlePlain[t.thread_id] == null) {
+        const plain = await decryptStringWithLocalCache({
+          patientId,
+          table: "dm_threads",
+          rowId: t.thread_id,
+          column: "title_encrypted",
+          env: t.title_encrypted,
+          vaultKey,
+        });
+        setThreadTitlePlain((p) => ({ ...p, [t.thread_id]: plain }));
+      }
 
-    if (t.last_message_preview_encrypted && threadPreviewPlain[t.thread_id] == null) {
-      const plain = await decryptStringWithLocalCache({
-        patientId,
-        table: "dm_threads",
-        rowId: t.thread_id,
-        column: "last_message_preview_encrypted",
-        env: t.last_message_preview_encrypted,
-        vaultKey,
-      });
-      setThreadPreviewPlain((p) => ({ ...p, [t.thread_id]: plain }));
+      if (t.last_message_preview_encrypted && threadPreviewPlain[t.thread_id] == null) {
+        const plain = await decryptStringWithLocalCache({
+          patientId,
+          table: "dm_threads",
+          rowId: t.thread_id,
+          column: "last_message_preview_encrypted",
+          env: t.last_message_preview_encrypted,
+          vaultKey,
+        });
+        setThreadPreviewPlain((p) => ({ ...p, [t.thread_id]: plain }));
+      }
+    } catch (e: any) {
+      if (isDecryptMismatchError(e)) {
+        setThreadDecryptFailed((p) => ({ ...p, [t.thread_id]: true }));
+        setSecureAccessNeedsRefresh(true);
+      } else {
+        throw e;
+      }
     }
   }
 
   async function decryptMessageIfNeeded(m: MessageRow) {
     if (!vaultKey) return;
     if (bodyPlain[m.id] != null) return;
+    if (messageDecryptFailed[m.id]) return;
 
-    const plain = await decryptStringWithLocalCache({
-      patientId,
-      table: "dm_messages",
-      rowId: m.id,
-      column: "body_encrypted",
-      env: m.body_encrypted,
-      vaultKey,
-    });
+    try {
+      const plain = await decryptStringWithLocalCache({
+        patientId,
+        table: "dm_messages",
+        rowId: m.id,
+        column: "body_encrypted",
+        env: m.body_encrypted,
+        vaultKey,
+      });
 
-    setBodyPlain((p) => ({ ...p, [m.id]: plain }));
+      setBodyPlain((p) => ({ ...p, [m.id]: plain }));
+    } catch (e: any) {
+      if (isDecryptMismatchError(e)) {
+        setMessageDecryptFailed((p) => ({ ...p, [m.id]: true }));
+        setSecureAccessNeedsRefresh(true);
+      } else {
+        throw e;
+      }
+    }
   }
+
+  async function autoDecryptVisibleContent() {
+    if (!vaultKey) return;
+
+    for (const t of threads) {
+      await decryptThreadIfNeeded(t);
+    }
+
+    for (const m of messages) {
+      await decryptMessageIfNeeded(m);
+    }
+  }
+
+  useEffect(() => {
+    autoDecryptVisibleContent().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!vaultKey, threads.length, messages.length, activeThreadId]);
 
   async function openOrCreateDirectThread() {
     setMsg(null);
@@ -255,13 +292,27 @@ export default function DMClient({ patientId }: { patientId: string }) {
   }
 
   function memberLabel(m: Member) {
-    return `${m.nickname?.trim() || m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
+    return `${m.nickname ?? m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
   }
 
   function senderLabel(senderId: string) {
     if (senderId === currentUserId) return "You";
-    const found = members.find((m) => m.user_id === senderId);
-    return found?.nickname?.trim() || senderId;
+    const member = members.find((m) => m.user_id === senderId);
+    return member?.nickname ?? senderId;
+  }
+
+  function threadDisplayTitle(t: ThreadRow) {
+    if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
+    if (threadDecryptFailed[t.thread_id]) return "Secure access needs refresh";
+    if (t.title_encrypted) return "Encrypted title";
+    return "Untitled";
+  }
+
+  function threadDisplayPreview(t: ThreadRow) {
+    if (threadPreviewPlain[t.thread_id]) return threadPreviewPlain[t.thread_id];
+    if (threadDecryptFailed[t.thread_id]) return "Encrypted preview unavailable";
+    if (t.last_message_preview_encrypted) return "Encrypted preview";
+    return "";
   }
 
   return (
@@ -292,10 +343,28 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
         {!vaultKey ? (
           <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Vault key not available on this device</div>
+            <div className="cc-strong">Secure access not ready on this device</div>
             <div className="cc-subtle">
-              Threads and messages are E2EE and can’t be decrypted or sent without vault access.
+              Direct messages are encrypted. Open secure access for this circle first.
             </div>
+            <div className="cc-spacer-12" />
+            <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
+              Fix secure access
+            </Link>
+          </div>
+        ) : null}
+
+        {secureAccessNeedsRefresh ? (
+          <div className="cc-status cc-status-loading">
+            <div className="cc-strong">This device’s secure access needs refreshing</div>
+            <div className="cc-subtle">
+              Some messages were encrypted with a different secure key version for this circle.
+              Refresh secure access, then try again.
+            </div>
+            <div className="cc-spacer-12" />
+            <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
+              Refresh secure access
+            </Link>
           </div>
         ) : null}
 
@@ -359,23 +428,15 @@ export default function DMClient({ patientId }: { patientId: string }) {
                 <div className="cc-small">No direct message threads yet.</div>
               ) : (
                 threads.map((t) => {
-                  const title =
-                    threadTitlePlain[t.thread_id] ??
-                    (t.title_encrypted ? "Encrypted title" : "Untitled");
-                  const prev =
-                    threadPreviewPlain[t.thread_id] ??
-                    (t.last_message_preview_encrypted ? "Encrypted preview" : "");
+                  const title = threadDisplayTitle(t);
+                  const prev = threadDisplayPreview(t);
                   const active = t.thread_id === activeThreadId;
 
                   return (
                     <button
                       key={t.thread_id}
                       className={`cc-btn ${active ? "cc-btn-primary" : ""}`}
-                      onClick={async () => {
-                        setActiveThreadId(t.thread_id);
-                        await decryptThreadIfNeeded(t);
-                      }}
-                      disabled={!vaultKey && (t.title_encrypted != null || t.last_message_preview_encrypted != null)}
+                      onClick={() => setActiveThreadId(t.thread_id)}
                       title={t.thread_id}
                       style={{ justifyContent: "space-between", width: "100%" }}
                     >
@@ -404,6 +465,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
                   ) : (
                     messages.map((m) => {
                       const plain = bodyPlain[m.id];
+                      const failed = messageDecryptFailed[m.id];
 
                       return (
                         <div key={m.id} className="cc-panel-soft">
@@ -411,18 +473,29 @@ export default function DMClient({ patientId }: { patientId: string }) {
                             <div className="cc-small cc-wrap">
                               <b>{senderLabel(m.sender_id)}</b> • {new Date(m.sent_at).toLocaleString()}
                             </div>
-                            <button
-                              className="cc-btn"
-                              onClick={() => decryptMessageIfNeeded(m)}
-                              disabled={!vaultKey || !!plain}
-                            >
-                              {plain ? "Decrypted" : "Decrypt"}
-                            </button>
+
+                            {!plain && !failed ? (
+                              <button className="cc-btn" onClick={() => decryptMessageIfNeeded(m)} disabled={!vaultKey}>
+                                Decrypt
+                              </button>
+                            ) : null}
                           </div>
+
                           <div className="cc-spacer-12" />
-                          <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-                            {plain ?? "—"}
-                          </div>
+
+                          {plain ? (
+                            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+                              {plain}
+                            </div>
+                          ) : failed ? (
+                            <div className="cc-small cc-subtle">
+                              This message could not be opened on this device. Refresh secure access for this circle, then try again.
+                            </div>
+                          ) : (
+                            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+                              —
+                            </div>
+                          )}
                         </div>
                       );
                     })
