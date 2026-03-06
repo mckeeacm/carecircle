@@ -9,7 +9,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 
 type ThreadRow = {
-  id: string;
+  thread_id: string;
   patient_id: string;
   created_by: string;
   created_at: string;
@@ -29,10 +29,12 @@ type MessageRow = {
 };
 
 type Member = {
+  patient_id: string;
   user_id: string;
+  role: string | null;
   nickname: string | null;
-  role: string;
-  is_controller: boolean;
+  is_controller: boolean | null;
+  created_at: string | null;
 };
 
 function isUuid(s: string) {
@@ -71,11 +73,12 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
       const { data: auth, error: authErr } = await supabase.auth.getUser();
       if (authErr) throw authErr;
+
       const uid = auth.user?.id;
       if (!uid) throw new Error("not_authenticated");
       setCurrentUserId(uid);
 
-      const { data: memberRows, error: memberErr } = await supabase.rpc("dm_private_members_list", {
+      const { data: memberRows, error: memberErr } = await supabase.rpc("permissions_members_list", {
         pid: patientId,
       });
 
@@ -88,8 +91,8 @@ export default function DMClient({ patientId }: { patientId: string }) {
         setSelectedRecipientId(allMembers[0].user_id);
       }
 
-      const { data: threadRows, error: threadErr } = await supabase.rpc("dm_private_threads_list", {
-        pid: patientId,
+      const { data: threadRows, error: threadErr } = await supabase.rpc("dm_list_threads", {
+        p_patient_id: patientId,
       });
 
       if (threadErr) throw threadErr;
@@ -97,8 +100,8 @@ export default function DMClient({ patientId }: { patientId: string }) {
       const nextThreads = (threadRows ?? []) as ThreadRow[];
       setThreads(nextThreads);
 
-      if (!activeThreadId && nextThreads[0]?.id) {
-        setActiveThreadId(nextThreads[0].id);
+      if (!activeThreadId && nextThreads[0]?.thread_id) {
+        setActiveThreadId(nextThreads[0].thread_id);
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_threads");
@@ -111,8 +114,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
     setMsg(null);
 
     try {
-      const { data, error } = await supabase.rpc("dm_private_messages_list", {
+      const { data, error } = await supabase.rpc("dm_list_messages", {
         p_thread_id: threadId,
+        p_limit: 200,
+        p_before: null,
       });
 
       if (error) throw error;
@@ -135,28 +140,28 @@ export default function DMClient({ patientId }: { patientId: string }) {
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
 
-    if (t.title_encrypted && threadTitlePlain[t.id] == null) {
+    if (t.title_encrypted && threadTitlePlain[t.thread_id] == null) {
       const plain = await decryptStringWithLocalCache({
         patientId,
         table: "dm_threads",
-        rowId: t.id,
+        rowId: t.thread_id,
         column: "title_encrypted",
         env: t.title_encrypted,
         vaultKey,
       });
-      setThreadTitlePlain((p) => ({ ...p, [t.id]: plain }));
+      setThreadTitlePlain((p) => ({ ...p, [t.thread_id]: plain }));
     }
 
-    if (t.last_message_preview_encrypted && threadPreviewPlain[t.id] == null) {
+    if (t.last_message_preview_encrypted && threadPreviewPlain[t.thread_id] == null) {
       const plain = await decryptStringWithLocalCache({
         patientId,
         table: "dm_threads",
-        rowId: t.id,
+        rowId: t.thread_id,
         column: "last_message_preview_encrypted",
         env: t.last_message_preview_encrypted,
         vaultKey,
       });
-      setThreadPreviewPlain((p) => ({ ...p, [t.id]: plain }));
+      setThreadPreviewPlain((p) => ({ ...p, [t.thread_id]: plain }));
     }
   }
 
@@ -182,6 +187,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
     try {
       if (!vaultKey) throw new Error("no_vault_share");
       if (!selectedRecipientId) throw new Error("select_a_member");
+      if (!currentUserId) throw new Error("not_authenticated");
 
       const titleEnv = await vaultEncryptString({
         vaultKey,
@@ -189,9 +195,9 @@ export default function DMClient({ patientId }: { patientId: string }) {
         aad: { table: "dm_threads", column: "title_encrypted", patient_id: patientId },
       });
 
-      const { data, error } = await supabase.rpc("dm_private_open_thread", {
-        pid: patientId,
-        other_uid: selectedRecipientId,
+      const { data, error } = await supabase.rpc("dm_create_thread", {
+        p_patient_id: patientId,
+        p_member_user_ids: [currentUserId, selectedRecipientId],
         p_title_encrypted: titleEnv,
       });
 
@@ -220,21 +226,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
         aad: { table: "dm_messages", column: "body_encrypted", patient_id: patientId },
       });
 
-      const previewEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: draft.slice(0, 120),
-        aad: { table: "dm_threads", column: "last_message_preview_encrypted", patient_id: patientId },
-      });
-
-      const sentAt = new Date().toISOString();
-
-      const { error } = await supabase.rpc("dm_private_send_message", {
+      const { error } = await supabase.rpc("dm_send_message", {
         p_thread_id: activeThreadId,
-        p_patient_id: patientId,
         p_body_encrypted: bodyEnv,
         p_meta_encrypted: null,
-        p_sent_at: sentAt,
-        p_preview_encrypted: previewEnv,
       });
 
       if (error) throw error;
@@ -248,7 +243,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
   }
 
   function memberLabel(m: Member) {
-    return `${m.nickname ?? m.user_id} (${m.role}${m.is_controller ? ", controller" : ""})`;
+    return `${m.nickname ?? m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
   }
 
   return (
@@ -344,20 +339,24 @@ export default function DMClient({ patientId }: { patientId: string }) {
                 <div className="cc-small">No direct message threads yet.</div>
               ) : (
                 threads.map((t) => {
-                  const title = threadTitlePlain[t.id] ?? (t.title_encrypted ? "Encrypted title" : "Untitled");
-                  const prev = threadPreviewPlain[t.id] ?? (t.last_message_preview_encrypted ? "Encrypted preview" : "");
-                  const active = t.id === activeThreadId;
+                  const title =
+                    threadTitlePlain[t.thread_id] ??
+                    (t.title_encrypted ? "Encrypted title" : "Untitled");
+                  const prev =
+                    threadPreviewPlain[t.thread_id] ??
+                    (t.last_message_preview_encrypted ? "Encrypted preview" : "");
+                  const active = t.thread_id === activeThreadId;
 
                   return (
                     <button
-                      key={t.id}
+                      key={t.thread_id}
                       className={`cc-btn ${active ? "cc-btn-primary" : ""}`}
                       onClick={async () => {
-                        setActiveThreadId(t.id);
+                        setActiveThreadId(t.thread_id);
                         await decryptThreadIfNeeded(t);
                       }}
                       disabled={!vaultKey && (t.title_encrypted != null || t.last_message_preview_encrypted != null)}
-                      title={t.id}
+                      title={t.thread_id}
                       style={{ justifyContent: "space-between", width: "100%" }}
                     >
                       <span className="cc-wrap">{title}</span>
