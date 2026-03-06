@@ -28,13 +28,18 @@ type MessageRow = {
   meta_encrypted: CipherEnvelopeV1 | null;
 };
 
-type Member = { user_id: string; nickname: string | null; role: string; is_controller: boolean };
+type Member = {
+  user_id: string;
+  nickname: string | null;
+  role: string;
+  is_controller: boolean;
+};
 
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
-export default function DmClient({ patientId }: { patientId: string }) {
+export default function DMClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
 
@@ -50,46 +55,51 @@ export default function DmClient({ patientId }: { patientId: string }) {
   const [bodyPlain, setBodyPlain] = useState<Record<string, string>>({});
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [newThreadTitle, setNewThreadTitle] = useState<string>("New thread");
-  const [selectedUserIds, setSelectedUserIds] = useState<Record<string, boolean>>({});
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [selectedRecipientId, setSelectedRecipientId] = useState<string>("");
+  const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
   const [draft, setDraft] = useState<string>("");
 
   async function refreshThreads() {
     setMsg(null);
     setLoading(true);
+
     try {
-      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
-
-      const { data: m, error: mErr } = await supabase
-        .from("patient_members")
-        .select("user_id, nickname, role, is_controller")
-        .eq("patient_id", patientId);
-
-      if (mErr) throw mErr;
-      const ms = (m ?? []) as any[];
-      setMembers(ms);
-
-      // default select self and controllers
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id;
-      const nextSel: Record<string, boolean> = {};
-      for (const r of ms) {
-        if (r.user_id === uid || r.is_controller) nextSel[r.user_id] = true;
+      if (!patientId || !isUuid(patientId)) {
+        throw new Error(`invalid patientId: ${String(patientId)}`);
       }
-      setSelectedUserIds((prev) => (Object.keys(prev).length ? prev : nextSel));
 
-      const { data, error } = await supabase
-        .from("dm_threads")
-        .select("id, patient_id, created_by, created_at, title_encrypted, last_message_at, last_message_preview_encrypted")
-        .eq("patient_id", patientId)
-        .order("last_message_at", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const uid = auth.user?.id;
+      if (!uid) throw new Error("not_authenticated");
+      setCurrentUserId(uid);
 
-      if (error) throw error;
-      setThreads((data ?? []) as ThreadRow[]);
+      const { data: memberRows, error: memberErr } = await supabase.rpc("dm_private_members_list", {
+        pid: patientId,
+      });
 
-      if (!activeThreadId && (data ?? [])[0]?.id) setActiveThreadId((data ?? [])[0].id);
+      if (memberErr) throw memberErr;
+
+      const allMembers = ((memberRows ?? []) as Member[]).filter((m) => m.user_id !== uid);
+      setMembers(allMembers);
+
+      if (!selectedRecipientId && allMembers[0]?.user_id) {
+        setSelectedRecipientId(allMembers[0].user_id);
+      }
+
+      const { data: threadRows, error: threadErr } = await supabase.rpc("dm_private_threads_list", {
+        pid: patientId,
+      });
+
+      if (threadErr) throw threadErr;
+
+      const nextThreads = (threadRows ?? []) as ThreadRow[];
+      setThreads(nextThreads);
+
+      if (!activeThreadId && nextThreads[0]?.id) {
+        setActiveThreadId(nextThreads[0].id);
+      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_threads");
     } finally {
@@ -99,14 +109,11 @@ export default function DmClient({ patientId }: { patientId: string }) {
 
   async function refreshMessages(threadId: string) {
     setMsg(null);
+
     try {
-      const { data, error } = await supabase
-        .from("dm_messages")
-        .select("id, thread_id, patient_id, sender_id, sent_at, body_encrypted, meta_encrypted")
-        .eq("patient_id", patientId)
-        .eq("thread_id", threadId)
-        .order("sent_at", { ascending: true })
-        .limit(200);
+      const { data, error } = await supabase.rpc("dm_private_messages_list", {
+        p_thread_id: threadId,
+      });
 
       if (error) throw error;
       setMessages((data ?? []) as MessageRow[]);
@@ -127,7 +134,6 @@ export default function DmClient({ patientId }: { patientId: string }) {
 
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
-    if (threadTitlePlain[t.id] != null && threadPreviewPlain[t.id] != null) return;
 
     if (t.title_encrypted && threadTitlePlain[t.id] == null) {
       const plain = await decryptStringWithLocalCache({
@@ -170,63 +176,43 @@ export default function DmClient({ patientId }: { patientId: string }) {
     setBodyPlain((p) => ({ ...p, [m.id]: plain }));
   }
 
-  async function createThread() {
+  async function openOrCreateDirectThread() {
     setMsg(null);
+
     try {
       if (!vaultKey) throw new Error("no_vault_share");
-
-      const userIds = Object.entries(selectedUserIds)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-
-      if (userIds.length < 2) throw new Error("select_at_least_2_members");
+      if (!selectedRecipientId) throw new Error("select_a_member");
 
       const titleEnv = await vaultEncryptString({
         vaultKey,
-        plaintext: newThreadTitle || "New thread",
+        plaintext: newThreadTitle.trim() || "Direct message",
         aad: { table: "dm_threads", column: "title_encrypted", patient_id: patientId },
       });
 
-      // Create thread
-      const { data: t, error: tErr } = await supabase
-        .from("dm_threads")
-        .insert({
-          patient_id: patientId,
-          title_encrypted: titleEnv,
-        })
-        .select("id")
-        .single();
+      const { data, error } = await supabase.rpc("dm_private_open_thread", {
+        pid: patientId,
+        other_uid: selectedRecipientId,
+        p_title_encrypted: titleEnv,
+      });
 
-      if (tErr) throw tErr;
+      if (error) throw error;
 
-      const threadId = t.id as string;
-
-      // Add members (controller-only by current policies)
-      const rows = userIds.map((uid) => ({
-        thread_id: threadId,
-        user_id: uid,
-      }));
-
-      const { error: mErr } = await supabase.from("dm_thread_members").insert(rows);
-      if (mErr) throw mErr;
-
+      const threadId = data as string;
       await refreshThreads();
       setActiveThreadId(threadId);
+      await refreshMessages(threadId);
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_create_thread");
+      setMsg(e?.message ?? "failed_to_open_direct_thread");
     }
   }
 
   async function sendMessage() {
     setMsg(null);
+
     try {
       if (!vaultKey) throw new Error("no_vault_share");
       if (!activeThreadId) throw new Error("no_thread_selected");
       if (!draft.trim()) throw new Error("message_empty");
-
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id;
-      if (!uid) throw new Error("not_authenticated");
 
       const bodyEnv = await vaultEncryptString({
         vaultKey,
@@ -242,22 +228,16 @@ export default function DmClient({ patientId }: { patientId: string }) {
 
       const sentAt = new Date().toISOString();
 
-      const { error: insErr } = await supabase.from("dm_messages").insert({
-        thread_id: activeThreadId,
-        patient_id: patientId,
-        sender_id: uid,
-        sent_at: sentAt,
-        body_encrypted: bodyEnv,
-        meta_encrypted: null,
+      const { error } = await supabase.rpc("dm_private_send_message", {
+        p_thread_id: activeThreadId,
+        p_patient_id: patientId,
+        p_body_encrypted: bodyEnv,
+        p_meta_encrypted: null,
+        p_sent_at: sentAt,
+        p_preview_encrypted: previewEnv,
       });
 
-      if (insErr) throw insErr;
-
-      // best-effort update thread “last message”
-      await supabase
-        .from("dm_threads")
-        .update({ last_message_at: sentAt, last_message_preview_encrypted: previewEnv })
-        .eq("id", activeThreadId);
+      if (error) throw error;
 
       setDraft("");
       await refreshThreads();
@@ -265,6 +245,10 @@ export default function DmClient({ patientId }: { patientId: string }) {
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_send_message");
     }
+  }
+
+  function memberLabel(m: Member) {
+    return `${m.nickname ?? m.user_id} (${m.role}${m.is_controller ? ", controller" : ""})`;
   }
 
   return (
@@ -277,8 +261,12 @@ export default function DmClient({ patientId }: { patientId: string }) {
             <div className="cc-subtle cc-wrap">{patientId}</div>
           </div>
           <div className="cc-row">
-            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>Today</Link>
-            <Link className="cc-btn" href="/app/hub">Hub</Link>
+            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+              Today
+            </Link>
+            <Link className="cc-btn" href="/app/hub">
+              Hub
+            </Link>
           </div>
         </div>
 
@@ -292,12 +280,18 @@ export default function DmClient({ patientId }: { patientId: string }) {
         {!vaultKey ? (
           <div className="cc-status cc-status-loading">
             <div className="cc-strong">Vault key not available on this device</div>
-            <div className="cc-subtle">Threads and messages are E2EE and can’t be decrypted/sent without vault access.</div>
+            <div className="cc-subtle">Threads and messages are E2EE and can’t be decrypted or sent without vault access.</div>
           </div>
         ) : null}
 
+        <div className="cc-panel-blue">
+          <div className="cc-strong">Private 1-to-1 direct messages</div>
+          <div className="cc-subtle">
+            This page is for direct messaging between two circle members. For updates to multiple recipients, use the circle journal.
+          </div>
+        </div>
+
         <div className="cc-grid-2-125">
-          {/* Threads */}
           <div className="cc-card cc-card-pad cc-stack">
             <div className="cc-row-between">
               <h2 className="cc-h2">Threads</h2>
@@ -307,40 +301,47 @@ export default function DmClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-panel-blue cc-stack">
-              <div className="cc-strong">New thread</div>
+              <div className="cc-strong">New direct message</div>
 
               <div className="cc-field">
-                <div className="cc-label">Title (E2EE)</div>
-                <input className="cc-input" value={newThreadTitle} onChange={(e) => setNewThreadTitle(e.target.value)} disabled={!vaultKey} />
+                <div className="cc-label">Who do you want to message?</div>
+                <select
+                  className="cc-select"
+                  value={selectedRecipientId}
+                  onChange={(e) => setSelectedRecipientId(e.target.value)}
+                  disabled={!vaultKey}
+                >
+                  <option value="">Select a circle member…</option>
+                  {members.map((m) => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {memberLabel(m)}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              <div className="cc-small cc-subtle">Select members:</div>
-              <div className="cc-stack">
-                {members.map((m) => (
-                  <label key={m.user_id} className="cc-check">
-                    <input
-                      type="checkbox"
-                      checked={!!selectedUserIds[m.user_id]}
-                      onChange={(e) => setSelectedUserIds((p) => ({ ...p, [m.user_id]: e.target.checked }))}
-                    />
-                    <span className="cc-wrap">{m.nickname ?? m.user_id}</span>
-                    <span className="cc-small">({m.role}{m.is_controller ? ", controller" : ""})</span>
-                  </label>
-                ))}
+              <div className="cc-field">
+                <div className="cc-label">Thread title (E2EE)</div>
+                <input
+                  className="cc-input"
+                  value={newThreadTitle}
+                  onChange={(e) => setNewThreadTitle(e.target.value)}
+                  disabled={!vaultKey}
+                />
               </div>
 
-              <button className="cc-btn cc-btn-primary" onClick={createThread} disabled={!vaultKey}>
-                Create thread
+              <button className="cc-btn cc-btn-primary" onClick={openOrCreateDirectThread} disabled={!vaultKey}>
+                Open direct message
               </button>
 
               <div className="cc-small cc-subtle">
-                Note: your current RLS only allows controllers to add thread members. If you want non-controllers to create threads, we’ll adjust policies deliberately.
+                This creates or reopens a private thread between you and one other circle member.
               </div>
             </div>
 
             <div className="cc-stack">
               {threads.length === 0 ? (
-                <div className="cc-small">No threads yet.</div>
+                <div className="cc-small">No direct message threads yet.</div>
               ) : (
                 threads.map((t) => {
                   const title = threadTitlePlain[t.id] ?? (t.title_encrypted ? "Encrypted title" : "Untitled");
@@ -368,7 +369,6 @@ export default function DmClient({ patientId }: { patientId: string }) {
             </div>
           </div>
 
-          {/* Messages */}
           <div className="cc-card cc-card-pad cc-stack">
             <div className="cc-row-between">
               <h2 className="cc-h2">Messages</h2>
@@ -376,7 +376,7 @@ export default function DmClient({ patientId }: { patientId: string }) {
             </div>
 
             {!activeThreadId ? (
-              <div className="cc-panel">Select a thread to view messages.</div>
+              <div className="cc-panel">Select or open a direct message thread.</div>
             ) : (
               <>
                 <div className="cc-stack">
@@ -385,11 +385,13 @@ export default function DmClient({ patientId }: { patientId: string }) {
                   ) : (
                     messages.map((m) => {
                       const plain = bodyPlain[m.id];
+                      const isMine = m.sender_id === currentUserId;
+
                       return (
                         <div key={m.id} className="cc-panel-soft">
                           <div className="cc-row-between">
                             <div className="cc-small cc-wrap">
-                              <b>{m.sender_id}</b> • {new Date(m.sent_at).toLocaleString()}
+                              <b>{isMine ? "You" : m.sender_id}</b> • {new Date(m.sent_at).toLocaleString()}
                             </div>
                             <button className="cc-btn" onClick={() => decryptMessageIfNeeded(m)} disabled={!vaultKey || !!plain}>
                               {plain ? "Decrypted" : "Decrypt"}
