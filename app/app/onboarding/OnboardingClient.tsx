@@ -6,6 +6,8 @@ import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { getSodium } from "@/lib/e2ee/sodium";
 import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
+import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
+import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import {
   unwrapVaultKeyForMe,
   wrapVaultKeyForRecipient,
@@ -33,8 +35,6 @@ type InviteAcceptResult = {
   already_member: boolean;
 };
 
-type StepId = "invite" | "circle" | "vault" | "permissions" | "finish";
-
 type CacheRecord = {
   v: 1;
   createdAt: number;
@@ -42,9 +42,13 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
+type StepId = "invite" | "circle" | "profile" | "vault" | "permissions" | "finish";
+
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 
 function safeBool(v: unknown) {
@@ -115,11 +119,15 @@ function normaliseSecretKey(sk: Uint8Array): Uint8Array {
   return sk;
 }
 
-async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+async function getMatchedBoxKeypairOrThrow(): Promise<{
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
+}> {
   const kp: any = await getOrCreateDeviceKeypair();
 
   const rawSk =
-    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ?? null;
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ??
+    null;
 
   if (!(rawSk instanceof Uint8Array)) {
     throw new Error("device_keypair_missing_keys");
@@ -196,19 +204,49 @@ export default function OnboardingClient() {
   const [inviteEmailDraft, setInviteEmailDraft] = useState<string>("");
   const [nicknameApplied, setNicknameApplied] = useState<boolean>(false);
 
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileUpdatedAt, setProfileUpdatedAt] = useState<string | null>(null);
+  const [communicationNotes, setCommunicationNotes] = useState("");
+  const [languagesSpoken, setLanguagesSpoken] = useState("");
+  const [diagnoses, setDiagnoses] = useState("");
+  const [allergies, setAllergies] = useState("");
+  const [safetyNotes, setSafetyNotes] = useState("");
+
   const selectedMembership =
     memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
   const isController = safeBool(selectedMembership?.is_controller);
+  const hasSession = !!uid;
   const keyOk = hasPublicKey === true && (myAlg === "" || myAlg === "crypto_box_seal");
+  const hasProfile = !!profileUpdatedAt;
 
   const currentStep: StepId = useMemo(() => {
-    if (inviteToken && inviteStatus !== "accepted") return "invite";
+    if (inviteToken) {
+      if (!hasSession || inviteStatus !== "accepted") return "invite";
+    }
+
+    if (!hasSession) return "invite";
     if (!selectedPatientId) return "circle";
+    if (!hasProfile && isController) return "profile";
     if (!keyOk || !hasCachedVault) return "vault";
     if (isController) return "permissions";
     return "finish";
-  }, [inviteToken, inviteStatus, selectedPatientId, keyOk, hasCachedVault, isController]);
+  }, [
+    inviteToken,
+    hasSession,
+    inviteStatus,
+    selectedPatientId,
+    hasProfile,
+    isController,
+    keyOk,
+    hasCachedVault,
+  ]);
+
+  const doneInvite = !inviteToken || (hasSession && inviteStatus === "accepted");
+  const doneCircle = hasSession && !!selectedPatientId;
+  const doneProfile = hasSession && (!!hasProfile || !isController);
+  const doneVault = hasSession && !!selectedPatientId && keyOk && hasCachedVault;
+  const donePermissions = hasSession && (!isController ? doneVault : doneVault && isController);
 
   async function getSessionUser() {
     const { data, error } = await supabase.auth.getUser();
@@ -252,6 +290,108 @@ export default function OnboardingClient() {
     }
   }
 
+  async function loadProfile(patientId: string, vaultKey: Uint8Array | null) {
+    setProfileLoaded(false);
+    setProfileUpdatedAt(null);
+    setCommunicationNotes("");
+    setLanguagesSpoken("");
+    setDiagnoses("");
+    setAllergies("");
+    setSafetyNotes("");
+
+    try {
+      const { data: row, error } = await supabase
+        .from("patient_profiles")
+        .select(
+          [
+            "patient_id",
+            "updated_at",
+            "communication_notes_encrypted",
+            "languages_spoken_encrypted",
+            "diagnoses_encrypted",
+            "allergies_encrypted",
+            "safety_notes_encrypted",
+          ].join(", ")
+        )
+        .eq("patient_id", patientId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      setProfileUpdatedAt((row as any)?.updated_at ?? null);
+
+      if (!row || !vaultKey) {
+        setProfileLoaded(true);
+        return;
+      }
+
+      const cn = (row as any)?.communication_notes_encrypted
+        ? await decryptStringWithLocalCache({
+            patientId,
+            table: "patient_profiles",
+            rowId: patientId,
+            column: "communication_notes_encrypted",
+            env: (row as any).communication_notes_encrypted,
+            vaultKey,
+          })
+        : "";
+
+      const ls = (row as any)?.languages_spoken_encrypted
+        ? await decryptStringWithLocalCache({
+            patientId,
+            table: "patient_profiles",
+            rowId: patientId,
+            column: "languages_spoken_encrypted",
+            env: (row as any).languages_spoken_encrypted,
+            vaultKey,
+          })
+        : "";
+
+      const dg = (row as any)?.diagnoses_encrypted
+        ? await decryptStringWithLocalCache({
+            patientId,
+            table: "patient_profiles",
+            rowId: patientId,
+            column: "diagnoses_encrypted",
+            env: (row as any).diagnoses_encrypted,
+            vaultKey,
+          })
+        : "";
+
+      const al = (row as any)?.allergies_encrypted
+        ? await decryptStringWithLocalCache({
+            patientId,
+            table: "patient_profiles",
+            rowId: patientId,
+            column: "allergies_encrypted",
+            env: (row as any).allergies_encrypted,
+            vaultKey,
+          })
+        : "";
+
+      const sn = (row as any)?.safety_notes_encrypted
+        ? await decryptStringWithLocalCache({
+            patientId,
+            table: "patient_profiles",
+            rowId: patientId,
+            column: "safety_notes_encrypted",
+            env: (row as any).safety_notes_encrypted,
+            vaultKey,
+          })
+        : "";
+
+      setCommunicationNotes(cn || "");
+      setLanguagesSpoken(ls || "");
+      setDiagnoses(dg || "");
+      setAllergies(al || "");
+      setSafetyNotes(sn || "");
+    } catch {
+      // ignore for onboarding
+    } finally {
+      setProfileLoaded(true);
+    }
+  }
+
   async function applyInviteNickname(patientId: string, userId: string, nickname: string) {
     const clean = nickname.trim();
     if (!clean) return;
@@ -283,7 +423,9 @@ export default function OnboardingClient() {
         setMyAlg("");
         setHasVaultShare(false);
         setHasCachedVault(false);
-        if (inviteToken) setInviteStatus("need_auth");
+        setInviteStatus(inviteToken ? "need_auth" : "idle");
+        setProfileLoaded(false);
+        setProfileUpdatedAt(null);
         return;
       }
 
@@ -317,6 +459,8 @@ export default function OnboardingClient() {
         setSelectedPatientId("");
         setHasVaultShare(false);
         setHasCachedVault(false);
+        setProfileLoaded(false);
+        setProfileUpdatedAt(null);
         return;
       }
 
@@ -347,6 +491,9 @@ export default function OnboardingClient() {
         if (!myMembership?.nickname && inviteNickname.trim() && !nicknameApplied) {
           await applyInviteNickname(nextPid, user.id, inviteNickname);
         }
+
+        const cachedKey = readCachedVaultKey(nextPid, user.id);
+        await loadProfile(nextPid, cachedKey);
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_onboarding");
@@ -413,7 +560,12 @@ export default function OnboardingClient() {
 
   useEffect(() => {
     if (!uid || !selectedPatientId) return;
-    refreshVaultStatus(selectedPatientId, uid).catch(() => {});
+
+    (async () => {
+      await refreshVaultStatus(selectedPatientId, uid);
+      const cachedKey = readCachedVaultKey(selectedPatientId, uid);
+      await loadProfile(selectedPatientId, cachedKey);
+    })().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, selectedPatientId]);
 
@@ -453,6 +605,7 @@ export default function OnboardingClient() {
 
       setNewCircleName("");
       await refreshAll(pid);
+      setMsg("Circle created. Next, add the basic profile details.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_circle");
     } finally {
@@ -476,6 +629,96 @@ export default function OnboardingClient() {
       setMsg("Email update requested. Please check your inbox if confirmation is required.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_update_email");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveProfileSetup() {
+    setBusy("profile");
+    setMsg(null);
+
+    try {
+      if (!selectedPatientId) throw new Error("select_circle_first");
+      if (!uid) throw new Error("not_authenticated");
+
+      const vaultKey = readCachedVaultKey(selectedPatientId, uid);
+      if (!vaultKey) {
+        throw new Error("Unlock or initialise the vault first so encrypted profile fields can be saved.");
+      }
+
+      const cnEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: communicationNotes,
+        aad: {
+          table: "patient_profiles",
+          column: "communication_notes_encrypted",
+          patient_id: selectedPatientId,
+        },
+      });
+
+      const lsEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: languagesSpoken,
+        aad: {
+          table: "patient_profiles",
+          column: "languages_spoken_encrypted",
+          patient_id: selectedPatientId,
+        },
+      });
+
+      const dgEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: diagnoses,
+        aad: {
+          table: "patient_profiles",
+          column: "diagnoses_encrypted",
+          patient_id: selectedPatientId,
+        },
+      });
+
+      const alEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: allergies,
+        aad: {
+          table: "patient_profiles",
+          column: "allergies_encrypted",
+          patient_id: selectedPatientId,
+        },
+      });
+
+      const snEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: safetyNotes,
+        aad: {
+          table: "patient_profiles",
+          column: "safety_notes_encrypted",
+          patient_id: selectedPatientId,
+        },
+      });
+
+      const row: any = {
+        patient_id: selectedPatientId,
+        communication_notes_encrypted: cnEnv,
+        allergies_encrypted: alEnv,
+        safety_notes_encrypted: snEnv,
+        updated_at: new Date().toISOString(),
+      };
+
+      row.languages_spoken_encrypted = lsEnv;
+      row.diagnoses_encrypted = dgEnv;
+
+      const { error } = await supabase.from("patient_profiles").upsert(row, {
+        onConflict: "patient_id",
+      });
+
+      if (error) throw error;
+
+      const cachedKey = readCachedVaultKey(selectedPatientId, uid);
+      await loadProfile(selectedPatientId, cachedKey);
+      setMsg("Profile setup saved.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_save_profile");
     } finally {
       setBusy(null);
     }
@@ -529,7 +772,9 @@ export default function OnboardingClient() {
 
       if (shareErr) throw shareErr;
       if (!share?.wrapped_key) {
-        throw new Error("No vault share found yet. Enable E2EE on this device, then ask the controller to share the vault key.");
+        throw new Error(
+          "No vault share found yet. Enable E2EE on this device, then ask the controller to share the vault key."
+        );
       }
 
       const wrapped = share.wrapped_key as WrappedKeyV1;
@@ -544,6 +789,7 @@ export default function OnboardingClient() {
 
       writeCachedVaultKey(selectedPatientId, user.id, vaultKey);
       await refreshVaultStatus(selectedPatientId, user.id);
+      await loadProfile(selectedPatientId, vaultKey);
       setMsg("Vault unlocked on this device.");
     } catch (e: any) {
       const text = e?.message ?? "failed_to_unlock_vault";
@@ -568,6 +814,7 @@ export default function OnboardingClient() {
     try {
       forgetCachedVaultKey(selectedPatientId, uid);
       await refreshVaultStatus(selectedPatientId, uid);
+      await loadProfile(selectedPatientId, null);
       setMsg("Vault key removed from this device.");
     } finally {
       setBusy(null);
@@ -584,9 +831,7 @@ export default function OnboardingClient() {
       if (!isController) throw new Error("Only a controller can share the vault key.");
 
       const vaultKey = readCachedVaultKey(selectedPatientId, uid);
-      if (!vaultKey) {
-        throw new Error("Unlock vault on this device first.");
-      }
+      if (!vaultKey) throw new Error("Unlock vault on this device first.");
 
       const { data: members, error: memErr } = await supabase
         .from("patient_members")
@@ -603,9 +848,7 @@ export default function OnboardingClient() {
       if (pkErr) throw pkErr;
 
       const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
-      if (missing.length) {
-        throw new Error(`${missing.length} member(s) must enable E2EE first.`);
-      }
+      if (missing.length) throw new Error(`${missing.length} member(s) must enable E2EE first.`);
 
       const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
       if (incompatible.length) {
@@ -682,14 +925,10 @@ export default function OnboardingClient() {
       if (pkErr) throw pkErr;
 
       const missing = userIds.filter((u) => !(pubKeys ?? []).some((p: any) => p.user_id === u));
-      if (missing.length) {
-        throw new Error(`${missing.length} member(s) must enable E2EE first.`);
-      }
+      if (missing.length) throw new Error(`${missing.length} member(s) must enable E2EE first.`);
 
       const incompatible = (pubKeys ?? []).filter((p: any) => p.algorithm !== "crypto_box_seal");
-      if (incompatible.length) {
-        throw new Error("Some members have incompatible device keys.");
-      }
+      if (incompatible.length) throw new Error("Some members have incompatible device keys.");
 
       const sodium = await getSodium();
       const vaultKey = sodium.randombytes_buf(32);
@@ -719,6 +958,7 @@ export default function OnboardingClient() {
       if (upErr) throw upErr;
 
       await refreshVaultStatus(selectedPatientId, uid);
+      await loadProfile(selectedPatientId, vaultKey);
       setMsg("Created a new vault key and shared it to all current circle members.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_initialise_vault");
@@ -747,14 +987,7 @@ export default function OnboardingClient() {
   }
 
   const greetingName =
-    selectedMembership?.nickname?.trim() ||
-    inviteNickname.trim() ||
-    "there";
-
-  const doneInvite = !inviteToken || inviteStatus === "accepted";
-  const doneCircle = !!selectedPatientId;
-  const doneVault = !!selectedPatientId && keyOk && hasCachedVault;
-  const donePermissions = !isController || (doneVault && isController);
+    selectedMembership?.nickname?.trim() || inviteNickname.trim() || "there";
 
   if (loading) {
     return (
@@ -780,9 +1013,7 @@ export default function OnboardingClient() {
         <div>
           <div className="cc-kicker">CareCircle</div>
           <h1 className="cc-h1">Welcome, {greetingName}</h1>
-          <div className="cc-subtle">
-            Let’s get this device set up properly for your circle.
-          </div>
+          <div className="cc-subtle">Let’s get this device set up properly for your circle.</div>
         </div>
 
         {msg ? (
@@ -797,13 +1028,38 @@ export default function OnboardingClient() {
             <div className="cc-strong">Setup steps</div>
 
             {inviteToken ? (
-              <StepRow label="Join circle from invite" active={currentStep === "invite"} done={doneInvite} />
+              <StepRow
+                label="Join circle from invite"
+                active={currentStep === "invite"}
+                done={doneInvite}
+              />
             ) : null}
 
-            <StepRow label="Create or select a circle" active={currentStep === "circle"} done={doneCircle} />
-            <StepRow label="Fix device keys and vault access" active={currentStep === "vault"} done={doneVault} />
-            <StepRow label="Permissions defaults" active={currentStep === "permissions"} done={donePermissions} />
-            <StepRow label="Finish" active={currentStep === "finish"} done={false} />
+            <StepRow
+              label="Create or select a circle"
+              active={currentStep === "circle"}
+              done={doneCircle}
+            />
+            <StepRow
+              label="Set up the circle profile"
+              active={currentStep === "profile"}
+              done={doneProfile}
+            />
+            <StepRow
+              label="Fix device keys and vault access"
+              active={currentStep === "vault"}
+              done={doneVault}
+            />
+            <StepRow
+              label="Permissions defaults"
+              active={currentStep === "permissions"}
+              done={donePermissions}
+            />
+            <StepRow
+              label="Finish"
+              active={currentStep === "finish"}
+              done={false}
+            />
 
             {selectedPatientId ? (
               <div className="cc-panel">
@@ -831,6 +1087,14 @@ export default function OnboardingClient() {
                 Controller: {isController ? "true" : "false"}
               </span>
             </div>
+
+            {currentStep === "finish" ? (
+              <div className="cc-row">
+                <Link className="cc-btn cc-btn-primary" href="/app/hub">
+                  Go to Hub
+                </Link>
+              </div>
+            ) : null}
           </div>
 
           <div className="cc-card cc-card-pad cc-stack">
@@ -838,7 +1102,7 @@ export default function OnboardingClient() {
               <>
                 <h2 className="cc-h2">Joining your circle</h2>
                 <div className="cc-subtle">
-                  We’ll accept the invite, confirm your details, then fix device key and vault access on this page.
+                  We’ll accept the invite, confirm your details, then finish setup here.
                 </div>
 
                 {inviteStatus === "checking" || inviteStatus === "accepting" ? (
@@ -854,7 +1118,7 @@ export default function OnboardingClient() {
                   <div className="cc-status cc-status-error">
                     <div className="cc-status-error-title">Sign in required</div>
                     <div className="cc-subtle">
-                      Sign in first, then open the invite link again.
+                      Your invite link was opened before the session was ready. Please open the email invite again after sign-in, or use the backup invite link.
                     </div>
                   </div>
                 ) : null}
@@ -922,7 +1186,7 @@ export default function OnboardingClient() {
                       </div>
 
                       <div className="cc-small cc-subtle">
-                        Your name will be saved into this circle membership automatically.
+                        Your circle name will be saved automatically for this membership.
                       </div>
                     </div>
                   </>
@@ -987,6 +1251,91 @@ export default function OnboardingClient() {
                     You’ll be set as controller for the new circle.
                   </div>
                 </div>
+              </>
+            ) : null}
+
+            {currentStep === "profile" ? (
+              <>
+                <h2 className="cc-h2">Set up the circle profile</h2>
+                <div className="cc-subtle">
+                  Add the basics now so the circle has useful clinical context from the start.
+                </div>
+
+                {!hasCachedVault ? (
+                  <div className="cc-panel">
+                    Unlock or initialise the vault first so encrypted profile fields can be saved.
+                  </div>
+                ) : null}
+
+                <div className="cc-grid-2">
+                  <div className="cc-field">
+                    <div className="cc-label">Communication notes</div>
+                    <textarea
+                      className="cc-textarea"
+                      value={communicationNotes}
+                      onChange={(e) => setCommunicationNotes(e.target.value)}
+                      placeholder="Important communication notes"
+                    />
+                  </div>
+
+                  <div className="cc-field">
+                    <div className="cc-label">Languages spoken</div>
+                    <textarea
+                      className="cc-textarea"
+                      value={languagesSpoken}
+                      onChange={(e) => setLanguagesSpoken(e.target.value)}
+                      placeholder="English, Arabic, Urdu..."
+                    />
+                  </div>
+                </div>
+
+                <div className="cc-grid-2">
+                  <div className="cc-field">
+                    <div className="cc-label">Diagnoses</div>
+                    <textarea
+                      className="cc-textarea"
+                      value={diagnoses}
+                      onChange={(e) => setDiagnoses(e.target.value)}
+                      placeholder="Relevant diagnoses"
+                    />
+                  </div>
+
+                  <div className="cc-field">
+                    <div className="cc-label">Allergies</div>
+                    <textarea
+                      className="cc-textarea"
+                      value={allergies}
+                      onChange={(e) => setAllergies(e.target.value)}
+                      placeholder="Allergies"
+                    />
+                  </div>
+                </div>
+
+                <div className="cc-field">
+                  <div className="cc-label">Safety notes</div>
+                  <textarea
+                    className="cc-textarea"
+                    value={safetyNotes}
+                    onChange={(e) => setSafetyNotes(e.target.value)}
+                    placeholder="Safety information"
+                  />
+                </div>
+
+                <div className="cc-row">
+                  <button
+                    className="cc-btn cc-btn-primary"
+                    onClick={saveProfileSetup}
+                    disabled={busy === "profile" || !hasCachedVault}
+                  >
+                    {busy === "profile" ? "Saving…" : "Save profile setup"}
+                  </button>
+                </div>
+
+                {profileLoaded && profileUpdatedAt ? (
+                  <div className="cc-small cc-subtle">
+                    Last updated: {new Date(profileUpdatedAt).toLocaleString()}
+                  </div>
+                ) : null}
               </>
             ) : null}
 
@@ -1115,6 +1464,12 @@ export default function OnboardingClient() {
                     Fine-tune permissions later from Account if needed.
                   </div>
                 </div>
+
+                <div className="cc-row">
+                  <Link className="cc-btn cc-btn-primary" href="/app/hub">
+                    Go to Hub
+                  </Link>
+                </div>
               </>
             ) : null}
 
@@ -1128,7 +1483,7 @@ export default function OnboardingClient() {
                 <div className="cc-status cc-status-ok">
                   <div className="cc-strong">Setup complete</div>
                   <div className="cc-subtle">
-                    Circle selected, device key registered, vault unlocked, and ready to use.
+                    Circle selected, profile set up, device key registered, vault unlocked, and ready to use.
                   </div>
                 </div>
 
@@ -1148,7 +1503,7 @@ export default function OnboardingClient() {
         </div>
 
         <div className="cc-small cc-subtle">
-          Everything needed for onboarding is handled here: invite acceptance, name confirmation, device key setup, vault access and permissions defaults.
+          Everything needed for onboarding is handled here: invite acceptance, profile setup, device key setup, vault access and permissions defaults.
         </div>
       </div>
     </div>
