@@ -224,9 +224,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       if (!uid) throw new Error("not_authenticated");
 
       const fallbackName =
-        selectedReminderMedIds.length === 1
-          ? medLabel(selectedReminderMedIds[0])
-          : "Medication group";
+        selectedReminderMedIds.length === 1 ? medLabel(selectedReminderMedIds[0]) : "Medication group";
 
       const { data: insertedGroup, error: groupErr } = await supabase
         .from("medication_reminder_groups")
@@ -450,22 +448,6 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
               </div>
             </div>
 
-            {selectedMedication ? (
-              <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
-                <div className="cc-strong">
-                  {selectedMedication.name}
-                  {selectedMedication.dosage ? (
-                    <span className="cc-subtle"> ({selectedMedication.dosage})</span>
-                  ) : null}
-                </div>
-                {selectedMedication.schedule_text ? (
-                  <div className="cc-small cc-subtle" style={{ marginTop: 4 }}>
-                    {selectedMedication.schedule_text}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             <div className="cc-field">
               <div className="cc-label">Status</div>
               <div
@@ -594,7 +576,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           </div>
 
           <div className="cc-small cc-subtle">
-            This saves reminder schedules in the app. Actual device notifications need a follow-on notification layer.
+            This stores reminder schedules ready for app notifications later.
           </div>
         </div>
 
