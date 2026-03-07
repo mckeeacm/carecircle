@@ -7,6 +7,7 @@ import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
+import MobileShell from "@/app/components/MobileShell";
 
 type ThreadRow = {
   thread_id: string;
@@ -29,26 +30,14 @@ type MessageRow = {
 };
 
 type Member = {
-  patient_id: string;
   user_id: string;
-  role: string | null;
   nickname: string | null;
+  role: string | null;
   is_controller: boolean | null;
-  created_at: string | null;
 };
 
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
-}
-
-function isDecryptMismatchError(e: any) {
-  const text = String(e?.message ?? e ?? "").toLowerCase();
-  return (
-    text.includes("ciphertext cannot be decrypted using that key") ||
-    text.includes("decrypt") ||
-    text.includes("aead") ||
-    text.includes("ciphertext")
-  );
 }
 
 export default function DMClient({ patientId }: { patientId: string }) {
@@ -61,12 +50,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [threadTitlePlain, setThreadTitlePlain] = useState<Record<string, string>>({});
   const [threadPreviewPlain, setThreadPreviewPlain] = useState<Record<string, string>>({});
-  const [threadDecryptFailed, setThreadDecryptFailed] = useState<Record<string, boolean>>({});
 
   const [activeThreadId, setActiveThreadId] = useState<string>("");
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [bodyPlain, setBodyPlain] = useState<Record<string, string>>({});
-  const [messageDecryptFailed, setMessageDecryptFailed] = useState<Record<string, boolean>>({});
 
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
@@ -74,14 +61,14 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
   const [draft, setDraft] = useState<string>("");
 
+  const [needsVaultRefresh, setNeedsVaultRefresh] = useState(false);
+
   async function refreshThreads() {
     setMsg(null);
     setLoading(true);
 
     try {
-      if (!patientId || !isUuid(patientId)) {
-        throw new Error(`invalid patientId: ${String(patientId)}`);
-      }
+      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
 
       const { data: auth, error: authErr } = await supabase.auth.getUser();
       if (authErr) throw authErr;
@@ -90,9 +77,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (!uid) throw new Error("not_authenticated");
       setCurrentUserId(uid);
 
-      const { data: memberRows, error: memberErr } = await supabase.rpc("permissions_members_list", {
+      const { data: memberRows, error: memberErr } = await supabase.rpc("patient_members_basic_list", {
         pid: patientId,
       });
+
       if (memberErr) throw memberErr;
 
       const allMembers = ((memberRows ?? []) as Member[]).filter((m) => m.user_id !== uid);
@@ -105,6 +93,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       const { data: threadRows, error: threadErr } = await supabase.rpc("dm_list_threads", {
         p_patient_id: patientId,
       });
+
       if (threadErr) throw threadErr;
 
       const nextThreads = (threadRows ?? []) as ThreadRow[];
@@ -139,17 +128,14 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   useEffect(() => {
     refreshThreads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   useEffect(() => {
     if (activeThreadId) refreshMessages(activeThreadId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
-    if (threadDecryptFailed[t.thread_id]) return;
 
     try {
       if (t.title_encrypted && threadTitlePlain[t.thread_id] == null) {
@@ -175,11 +161,13 @@ export default function DMClient({ patientId }: { patientId: string }) {
         });
         setThreadPreviewPlain((p) => ({ ...p, [t.thread_id]: plain }));
       }
+
+      setNeedsVaultRefresh(false);
     } catch (e: any) {
-      if (isDecryptMismatchError(e)) {
-        setThreadDecryptFailed((p) => ({ ...p, [t.thread_id]: true }));
+      if (String(e?.message ?? "").toLowerCase().includes("ciphertext cannot be decrypted")) {
+        setNeedsVaultRefresh(true);
       } else {
-        throw e;
+        setMsg(e?.message ?? "failed_to_decrypt_thread");
       }
     }
   }
@@ -187,7 +175,6 @@ export default function DMClient({ patientId }: { patientId: string }) {
   async function decryptMessageIfNeeded(m: MessageRow) {
     if (!vaultKey) return;
     if (bodyPlain[m.id] != null) return;
-    if (messageDecryptFailed[m.id]) return;
 
     try {
       const plain = await decryptStringWithLocalCache({
@@ -200,31 +187,15 @@ export default function DMClient({ patientId }: { patientId: string }) {
       });
 
       setBodyPlain((p) => ({ ...p, [m.id]: plain }));
+      setNeedsVaultRefresh(false);
     } catch (e: any) {
-      if (isDecryptMismatchError(e)) {
-        setMessageDecryptFailed((p) => ({ ...p, [m.id]: true }));
+      if (String(e?.message ?? "").toLowerCase().includes("ciphertext cannot be decrypted")) {
+        setNeedsVaultRefresh(true);
       } else {
-        throw e;
+        setMsg(e?.message ?? "failed_to_decrypt_message");
       }
     }
   }
-
-  async function autoDecryptVisibleContent() {
-    if (!vaultKey) return;
-
-    for (const t of threads) {
-      await decryptThreadIfNeeded(t);
-    }
-
-    for (const m of messages) {
-      await decryptMessageIfNeeded(m);
-    }
-  }
-
-  useEffect(() => {
-    autoDecryptVisibleContent().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!vaultKey, threads.length, messages.length, activeThreadId]);
 
   async function openOrCreateDirectThread() {
     setMsg(null);
@@ -291,237 +262,189 @@ export default function DMClient({ patientId }: { patientId: string }) {
     return `${m.nickname ?? m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
   }
 
-  function senderLabel(senderId: string) {
-    if (senderId === currentUserId) return "You";
-    const member = members.find((m) => m.user_id === senderId);
-    return member?.nickname ?? senderId;
-  }
-
-  function threadDisplayTitle(t: ThreadRow) {
-    if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
-    if (threadDecryptFailed[t.thread_id]) return "Some items on this thread are unreadable here";
-    if (t.title_encrypted) return "Encrypted title";
-    return "Untitled";
-  }
-
-  function threadDisplayPreview(t: ThreadRow) {
-    if (threadPreviewPlain[t.thread_id]) return threadPreviewPlain[t.thread_id];
-    if (threadDecryptFailed[t.thread_id]) return "Encrypted preview unavailable";
-    if (t.last_message_preview_encrypted) return "Encrypted preview";
-    return "";
-  }
-
-  const activeThreadHasDecryptIssue =
-    !!activeThreadId &&
-    (threadDecryptFailed[activeThreadId] ||
-      messages.some((m) => m.thread_id === activeThreadId && messageDecryptFailed[m.id]));
-
   return (
-    <div className="cc-page">
-      <div className="cc-container cc-stack">
-        <div className="cc-row-between">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Direct messages</h1>
-            <div className="cc-subtle cc-wrap">{patientId}</div>
-          </div>
-          <div className="cc-row">
-            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-              Today
-            </Link>
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-          </div>
+    <MobileShell
+      title="Direct messages"
+      subtitle={patientId}
+      patientId={patientId}
+      rightSlot={
+        <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+          Today
+        </Link>
+      }
+    >
+      {msg ? (
+        <div className="cc-status cc-status-error">
+          <div className="cc-status-error-title">Error</div>
+          <div className="cc-wrap">{msg}</div>
         </div>
+      ) : null}
 
-        {msg ? (
-          <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
-            <div className="cc-wrap">{msg}</div>
-          </div>
-        ) : null}
-
-        {!vaultKey ? (
-          <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Secure access not ready on this device</div>
-            <div className="cc-subtle">
-              Direct messages are encrypted. Open secure access for this circle first.
-            </div>
-            <div className="cc-spacer-12" />
-            <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
-              Fix secure access
-            </Link>
-          </div>
-        ) : null}
-
-        {activeThreadHasDecryptIssue ? (
-          <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Some older messages on this thread can’t be opened on this device</div>
-            <div className="cc-subtle">
-              This usually means they were encrypted with a different secure key version.
-              You can still use this thread, but older items may remain unreadable here.
-            </div>
-            <div className="cc-spacer-12" />
-            <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
-              Refresh secure access
-            </Link>
-          </div>
-        ) : null}
-
-        <div className="cc-panel-blue">
-          <div className="cc-strong">Private 1-to-1 direct messages</div>
+      {!vaultKey ? (
+        <div className="cc-status cc-status-loading">
+          <div className="cc-strong">Vault key not available on this device</div>
           <div className="cc-subtle">
-            This page is for direct messaging between two circle members. For updates to multiple recipients, use the circle journal.
+            Threads and messages are E2EE and can’t be decrypted or sent without vault access.
           </div>
         </div>
+      ) : null}
 
-        <div className="cc-grid-2-125">
-          <div className="cc-card cc-card-pad cc-stack">
-            <div className="cc-row-between">
-              <h2 className="cc-h2">Threads</h2>
-              <button className="cc-btn" onClick={refreshThreads} disabled={loading}>
-                {loading ? "Loading…" : "Refresh"}
-              </button>
+      {needsVaultRefresh ? (
+        <div className="cc-status cc-status-loading">
+          <div className="cc-strong">This device’s secure access needs refreshing</div>
+          <div className="cc-subtle">
+            Some messages were encrypted with a different secure key version for this circle. Refresh secure access, then try again.
+          </div>
+          <div className="cc-spacer-12" />
+          <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/vault-init`}>
+            Refresh secure access
+          </Link>
+        </div>
+      ) : null}
+
+      <div className="cc-panel-blue">
+        <div className="cc-strong">Private 1-to-1 direct messages</div>
+        <div className="cc-subtle">
+          This page is for direct messaging between two circle members. For updates to multiple recipients, use the circle journal.
+        </div>
+      </div>
+
+      <div className="cc-grid-2-125">
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <h2 className="cc-h2">Threads</h2>
+            <button className="cc-btn" onClick={refreshThreads} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          <div className="cc-panel-blue cc-stack">
+            <div className="cc-strong">New direct message</div>
+
+            <div className="cc-field">
+              <div className="cc-label">Who do you want to message?</div>
+              <select
+                className="cc-select"
+                value={selectedRecipientId}
+                onChange={(e) => setSelectedRecipientId(e.target.value)}
+                disabled={!vaultKey}
+              >
+                <option value="">Select a circle member…</option>
+                {members.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {memberLabel(m)}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div className="cc-panel-blue cc-stack">
-              <div className="cc-strong">New direct message</div>
-
-              <div className="cc-field">
-                <div className="cc-label">Who do you want to message?</div>
-                <select
-                  className="cc-select"
-                  value={selectedRecipientId}
-                  onChange={(e) => setSelectedRecipientId(e.target.value)}
-                  disabled={!vaultKey}
-                >
-                  <option value="">Select a circle member…</option>
-                  {members.map((m) => (
-                    <option key={m.user_id} value={m.user_id}>
-                      {memberLabel(m)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="cc-field">
-                <div className="cc-label">Thread title (E2EE)</div>
-                <input
-                  className="cc-input"
-                  value={newThreadTitle}
-                  onChange={(e) => setNewThreadTitle(e.target.value)}
-                  disabled={!vaultKey}
-                />
-              </div>
-
-              <button className="cc-btn cc-btn-primary" onClick={openOrCreateDirectThread} disabled={!vaultKey}>
-                Open direct message
-              </button>
-
-              <div className="cc-small cc-subtle">
-                This creates or reopens a private thread between you and one other circle member.
-              </div>
+            <div className="cc-field">
+              <div className="cc-label">Thread title (E2EE)</div>
+              <input
+                className="cc-input"
+                value={newThreadTitle}
+                onChange={(e) => setNewThreadTitle(e.target.value)}
+                disabled={!vaultKey}
+              />
             </div>
 
-            <div className="cc-stack">
-              {threads.length === 0 ? (
-                <div className="cc-small">No direct message threads yet.</div>
-              ) : (
-                threads.map((t) => {
-                  const title = threadDisplayTitle(t);
-                  const prev = threadDisplayPreview(t);
-                  const active = t.thread_id === activeThreadId;
+            <button className="cc-btn cc-btn-primary" onClick={openOrCreateDirectThread} disabled={!vaultKey}>
+              Open direct message
+            </button>
 
-                  return (
-                    <button
-                      key={t.thread_id}
-                      className={`cc-btn ${active ? "cc-btn-primary" : ""}`}
-                      onClick={() => setActiveThreadId(t.thread_id)}
-                      title={t.thread_id}
-                      style={{ justifyContent: "space-between", width: "100%" }}
-                    >
-                      <span className="cc-wrap">{title}</span>
-                      <span className="cc-small">{prev ? `• ${prev}` : ""}</span>
-                    </button>
-                  );
-                })
-              )}
+            <div className="cc-small cc-subtle">
+              This creates or reopens a private thread between you and one other circle member.
             </div>
           </div>
 
-          <div className="cc-card cc-card-pad cc-stack">
-            <div className="cc-row-between">
-              <h2 className="cc-h2">Messages</h2>
-              <span className="cc-small cc-wrap">{activeThreadId || "No thread selected"}</span>
-            </div>
-
-            {!activeThreadId ? (
-              <div className="cc-panel">Select or open a direct message thread.</div>
+          <div className="cc-stack">
+            {threads.length === 0 ? (
+              <div className="cc-small">No direct message threads yet.</div>
             ) : (
-              <>
-                <div className="cc-stack">
-                  {messages.length === 0 ? (
-                    <div className="cc-small">No messages yet.</div>
-                  ) : (
-                    messages.map((m) => {
-                      const plain = bodyPlain[m.id];
-                      const failed = messageDecryptFailed[m.id];
+              threads.map((t) => {
+                const title =
+                  threadTitlePlain[t.thread_id] ??
+                  (t.title_encrypted ? "Encrypted title" : "Untitled");
+                const prev =
+                  threadPreviewPlain[t.thread_id] ??
+                  (t.last_message_preview_encrypted ? "Encrypted preview" : "");
+                const active = t.thread_id === activeThreadId;
 
-                      return (
-                        <div key={m.id} className="cc-panel-soft">
-                          <div className="cc-row-between">
-                            <div className="cc-small cc-wrap">
-                              <b>{senderLabel(m.sender_id)}</b> • {new Date(m.sent_at).toLocaleString()}
-                            </div>
-
-                            {!plain && !failed ? (
-                              <button className="cc-btn" onClick={() => decryptMessageIfNeeded(m)} disabled={!vaultKey}>
-                                Decrypt
-                              </button>
-                            ) : null}
-                          </div>
-
-                          <div className="cc-spacer-12" />
-
-                          {plain ? (
-                            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-                              {plain}
-                            </div>
-                          ) : failed ? (
-                            <div className="cc-small cc-subtle">
-                              This message could not be opened on this device. It may belong to an older secure key version for this circle.
-                            </div>
-                          ) : (
-                            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-                              —
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <div className="cc-panel-green cc-stack">
-                  <div className="cc-field">
-                    <div className="cc-label">New message (E2EE)</div>
-                    <textarea
-                      className="cc-textarea"
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      disabled={!vaultKey}
-                    />
-                  </div>
-                  <button className="cc-btn cc-btn-primary" onClick={sendMessage} disabled={!vaultKey}>
-                    Send
+                return (
+                  <button
+                    key={t.thread_id}
+                    className={`cc-btn ${active ? "cc-btn-primary" : ""}`}
+                    onClick={async () => {
+                      setActiveThreadId(t.thread_id);
+                      await decryptThreadIfNeeded(t);
+                    }}
+                    disabled={!vaultKey && (t.title_encrypted != null || t.last_message_preview_encrypted != null)}
+                    title={t.thread_id}
+                    style={{ justifyContent: "space-between", width: "100%" }}
+                  >
+                    <span className="cc-wrap">{title}</span>
+                    <span className="cc-small">{prev ? `• ${prev}` : ""}</span>
                   </button>
-                </div>
-              </>
+                );
+              })
             )}
           </div>
         </div>
+
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <h2 className="cc-h2">Messages</h2>
+            <span className="cc-small cc-wrap">{activeThreadId || "No thread selected"}</span>
+          </div>
+
+          {!activeThreadId ? (
+            <div className="cc-panel">Select or open a direct message thread.</div>
+          ) : (
+            <>
+              <div className="cc-stack">
+                {messages.length === 0 ? (
+                  <div className="cc-small">No messages yet.</div>
+                ) : (
+                  messages.map((m) => {
+                    const plain = bodyPlain[m.id];
+                    const isMine = m.sender_id === currentUserId;
+                    const senderName =
+                      members.find((x) => x.user_id === m.sender_id)?.nickname ??
+                      (isMine ? "You" : m.sender_id);
+
+                    return (
+                      <div key={m.id} className="cc-panel-soft">
+                        <div className="cc-row-between">
+                          <div className="cc-small cc-wrap">
+                            <b>{senderName}</b> • {new Date(m.sent_at).toLocaleString()}
+                          </div>
+                          <button className="cc-btn" onClick={() => decryptMessageIfNeeded(m)} disabled={!vaultKey || !!plain}>
+                            {plain ? "Decrypted" : "Decrypt"}
+                          </button>
+                        </div>
+                        <div className="cc-spacer-12" />
+                        <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+                          {plain ?? "—"}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="cc-panel-green cc-stack">
+                <div className="cc-field">
+                  <div className="cc-label">New message (E2EE)</div>
+                  <textarea className="cc-textarea" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!vaultKey} />
+                </div>
+                <button className="cc-btn cc-btn-primary" onClick={sendMessage} disabled={!vaultKey}>
+                  Send
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </MobileShell>
   );
 }

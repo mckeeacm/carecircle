@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { BubbleTour } from "@/app/_components/BubbleTour";
 import { patientControllerSteps, patientMemberSteps } from "@/lib/tours";
 import { restartAllTours } from "@/lib/tourReset";
 
@@ -172,12 +171,6 @@ export default function PatientDashboardPage() {
             </button>
           ) : null}
         </div>
-
-        <BubbleTour
-          tourId={isController ? "patient-dashboard-controller-v1" : "patient-dashboard-member-v1"}
-          steps={isController ? patientControllerSteps : patientMemberSteps}
-          autoStart
-        />
       </div>
     </div>
   );

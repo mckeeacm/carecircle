@@ -1,5 +1,5 @@
 import React from "react";
-import type { TourStep } from "@/app/_components/BubbleTour";
+import type { TourStep } from "@/app/components/BubbleTour";
 
 export const hubMemberSteps: TourStep[] = [
   {
