@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { patientControllerSteps, patientMemberSteps } from "@/lib/tours";
-import { restartAllTours } from "@/lib/tourReset";
 
 type Membership = {
   patient_id: string;
@@ -126,15 +124,6 @@ export default function PatientDashboardPage() {
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button style={secondaryBtn} onClick={() => router.push("/hub")}>Back to Hub</button>
-            <button
-              style={secondaryBtn}
-              onClick={() => {
-                restartAllTours();
-                location.reload();
-              }}
-            >
-              Restart tour
-            </button>
           </div>
         </div>
 
