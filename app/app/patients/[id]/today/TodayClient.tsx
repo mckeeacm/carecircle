@@ -383,16 +383,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
               </div>
             )}
           </div>
-        </div>
-
-        <div className="cc-card cc-card-pad">
-          <div className="cc-strong">Debug</div>
-          <div className="cc-small cc-subtle">Log will appear here.</div>
-          <div className="cc-spacer-12" />
-          <pre className="cc-panel-soft cc-wrap" style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-            {debug.join("\n")}
-          </pre>
-        </div>
+        </div>       
       </div>
     </div>
   );
