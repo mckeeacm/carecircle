@@ -22,14 +22,6 @@ type AppointmentRow = {
   location: string | null;
 };
 
-type MedicationRow = {
-  id: string;
-  name: string;
-  dosage: string;
-  schedule_text: string;
-  active: boolean;
-};
-
 type MedicationLogRow = {
   id: string;
   created_at: string;
@@ -57,7 +49,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
   const [journals, setJournals] = useState<JournalPreview[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
-  const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
 
   const [dmStatus, setDmStatus] = useState<"ok" | "unavailable" | "loading">("loading");
@@ -79,17 +70,26 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       if (pErr) throw pErr;
       setPatient(p as PatientRow);
 
+      const now = new Date();
+
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+
+      const endOfToday = new Date(now);
+      endOfToday.setHours(23, 59, 59, 999);
+
       const { data: j, error: jErr } = await supabase
         .from("journal_entries")
         .select("id, created_at, journal_type, shared_to_circle")
         .eq("patient_id", patientId)
+        .gte("created_at", startOfToday.toISOString())
+        .lte("created_at", endOfToday.toISOString())
         .order("created_at", { ascending: false })
         .limit(5);
 
       if (jErr) throw jErr;
       setJournals((j ?? []) as JournalPreview[]);
 
-      const now = new Date();
       const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
       try {
@@ -107,17 +107,6 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       } catch {
         setAppointments([]);
       }
-
-      const { data: m, error: mErr } = await supabase
-        .from("medications")
-        .select("id, name, dosage, schedule_text, active")
-        .eq("patient_id", patientId)
-        .eq("active", true)
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (mErr) throw mErr;
-      setMeds((m ?? []) as MedicationRow[]);
 
       const { data: ml, error: mlErr } = await supabase
         .from("medication_logs")
@@ -181,7 +170,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         </div>
       ) : null}
 
-      <div className="cc-grid-3">
+      <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
             <h2 className="cc-h2">Messages</h2>
@@ -196,7 +185,9 @@ export default function TodayClient({ patientId }: { patientId: string }) {
             <div className="cc-small">Messages currently unavailable.</div>
           ) : dmThreadCount > 0 ? (
             <div className="cc-panel-blue">
-              <div className="cc-strong">{dmThreadCount} direct message thread{dmThreadCount === 1 ? "" : "s"}</div>
+              <div className="cc-strong">
+                {dmThreadCount} direct message thread{dmThreadCount === 1 ? "" : "s"}
+              </div>
               <div className="cc-small">Tap to view recent messages.</div>
             </div>
           ) : (
@@ -228,43 +219,19 @@ export default function TodayClient({ patientId }: { patientId: string }) {
             </div>
           )}
         </div>
-
-        <div className="cc-card cc-card-pad">
-          <div className="cc-row-between">
-            <h2 className="cc-h2">Active medications</h2>
-            <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-              Logs
-            </Link>
-          </div>
-          <div className="cc-spacer-12" />
-          {meds.length === 0 ? (
-            <div className="cc-small">No active medications.</div>
-          ) : (
-            <div className="cc-stack">
-              {meds.slice(0, 3).map((m) => (
-                <div key={m.id} className="cc-panel-soft">
-                  <div className="cc-strong">
-                    {m.name} {m.dosage ? <span className="cc-subtle">({m.dosage})</span> : null}
-                  </div>
-                  <div className="cc-small">{m.schedule_text || "—"}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Newest journals</h2>
+            <h2 className="cc-h2">Today’s journal</h2>
             <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/journals`}>
               Open
             </Link>
           </div>
           <div className="cc-spacer-12" />
           {journals.length === 0 ? (
-            <div className="cc-small">None yet.</div>
+            <div className="cc-small">No journal entries yet today.</div>
           ) : (
             <div className="cc-stack">
               {journals.map((j) => (

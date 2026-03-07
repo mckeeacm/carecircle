@@ -67,6 +67,7 @@ export default function HubClient() {
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
   const [permsByPid, setPermsByPid] = useState<Record<string, PermGet | null>>({});
+  const [openPatientId, setOpenPatientId] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -94,6 +95,10 @@ export default function HubClient() {
         const ms = (pm ?? []) as Membership[];
         setMemberships(ms);
 
+        if (ms.length > 0) {
+          setOpenPatientId(ms[0].patient_id);
+        }
+
         const pids = Array.from(new Set(ms.map((m) => m.patient_id)));
         if (pids.length === 0) {
           setLoading(false);
@@ -108,7 +113,9 @@ export default function HubClient() {
         if (pErr) throw pErr;
 
         const map: Record<string, PatientRow> = {};
-        for (const p of (pts ?? []) as PatientRow[]) map[p.id] = p;
+        for (const p of (pts ?? []) as PatientRow[]) {
+          map[p.id] = p;
+        }
         setPatientsById(map);
 
         const nextPerms: Record<string, PermGet | null> = {};
@@ -129,10 +136,15 @@ export default function HubClient() {
     })();
   }, [supabase]);
 
+  function togglePatient(pid: string) {
+    setOpenPatientId((current) => (current === pid ? null : pid));
+  }
+
   return (
     <MobileShell
       title="Hub"
       subtitle="All circles you’re a member of"
+      hideBottomNav
       rightSlot={
         <Link className="cc-btn" href="/app/account">
           Account
@@ -162,70 +174,165 @@ export default function HubClient() {
             const perms = permsByPid[m.patient_id] ?? null;
             const role = m.role ?? "family";
             const isController = m.is_controller === true;
+            const isOpen = openPatientId === m.patient_id;
 
             const canToday = true;
             const canSummary = effectiveAllowed(perms, userId, role, "summary_view", isController);
-            const canProfile = effectiveAllowed(perms, userId, role, "profile_view", isController);
-            const canMeds = effectiveAllowed(perms, userId, role, "meds_view", isController);
-            const canJournals = effectiveAllowed(perms, userId, role, "journals_view", isController);
-            const canAppointments = effectiveAllowed(perms, userId, role, "appointments_view", isController);
-            const canDm = effectiveAllowed(perms, userId, role, "dm_view", isController);
-            const canPerms = effectiveAllowed(perms, userId, role, "permissions_manage", isController);
 
             return (
-              <div key={m.patient_id} className="cc-card cc-card-pad cc-stack">
-                <div className="cc-row-between">
-                  <div className="cc-wrap">
-                    <div className="cc-strong">{p?.display_name ?? "My Circle"}</div>
-                    <div className="cc-small cc-wrap">{m.patient_id}</div>
-                    <div className="cc-small">
-                      role: <b>{role}</b>
-                      {isController ? " • controller: true" : ""}
+              <div
+                key={m.patient_id}
+                className="cc-card cc-card-pad"
+                style={{
+                  overflow: "hidden",
+                  padding: 0,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => togglePatient(m.patient_id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`circle-panel-${m.patient_id}`}
+                  style={{
+                    width: "100%",
+                    border: 0,
+                    background: "transparent",
+                    padding: 0,
+                    margin: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    color: "inherit",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 14,
+                      padding: "18px 18px 16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 14,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 14,
+                          flexShrink: 0,
+                          display: "grid",
+                          placeItems: "center",
+                          fontSize: 18,
+                          fontWeight: 700,
+                          background: "rgba(255,255,255,0.58)",
+                          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.6)",
+                          border: "1px solid rgba(255,255,255,0.45)",
+                          backdropFilter: "blur(8px)",
+                        }}
+                      >
+                        {(p?.display_name ?? "C").trim().charAt(0).toUpperCase()}
+                      </div>
+
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          className="cc-strong"
+                          style={{
+                            fontSize: "1rem",
+                            lineHeight: 1.2,
+                            marginBottom: 4,
+                          }}
+                        >
+                          {p?.display_name ?? "My Circle"}
+                        </div>
+
+                        <div className="cc-small cc-subtle" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          <span>{m.nickname ? `You: ${m.nickname}` : `Role: ${role}`}</span>
+                          {isController ? (
+                            <span
+                              className="cc-pill cc-pill-primary"
+                              style={{ padding: "2px 8px", fontSize: "0.72rem" }}
+                            >
+                              Controller
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 999,
+                        display: "grid",
+                        placeItems: "center",
+                        flexShrink: 0,
+                        background: "rgba(255,255,255,0.42)",
+                        border: "1px solid rgba(255,255,255,0.42)",
+                        backdropFilter: "blur(8px)",
+                        fontSize: 18,
+                        lineHeight: 1,
+                        transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
+                        transition: "transform 0.18s ease",
+                      }}
+                    >
+                      ›
                     </div>
                   </div>
+                </button>
 
-                  <div className="cc-row">
-                    <span className="cc-pill cc-pill-primary">Perms: loaded</span>
+                {isOpen ? (
+                  <div
+                    id={`circle-panel-${m.patient_id}`}
+                    style={{
+                      borderTop: "1px solid rgba(255,255,255,0.35)",
+                      padding: "0 18px 18px",
+                      background: "linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04))",
+                    }}
+                  >
+                    <div
+                      className="cc-small cc-subtle"
+                      style={{
+                        paddingTop: 12,
+                        paddingBottom: 12,
+                      }}
+                    >
+                      Open this circle
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 10,
+                      }}
+                    >
+                      <Link
+                        className={`cc-btn ${canToday ? "cc-btn-primary" : "cc-btn-disabled"}`}
+                        href={`/app/patients/${m.patient_id}/today`}
+                      >
+                        Today
+                      </Link>
+
+                      <Link
+                        className={`cc-btn ${canSummary ? "" : "cc-btn-disabled"}`}
+                        href={`/app/patients/${m.patient_id}/summary`}
+                      >
+                        Summary
+                      </Link>
+                    </div>
                   </div>
-                </div>
-
-                <div className="cc-grid-3">
-                  <Link className={`cc-btn ${canToday ? "cc-btn-primary" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/today`}>
-                    Today
-                  </Link>
-
-                  <Link className={`cc-btn ${canSummary ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/summary`}>
-                    Summary
-                  </Link>
-
-                  <Link className={`cc-btn ${canProfile ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/profile`}>
-                    Profile
-                  </Link>
-
-                  <Link className={`cc-btn ${canMeds ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/medication-logs`}>
-                    Medication logs
-                  </Link>
-
-                  <Link className={`cc-btn ${canJournals ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/journals`}>
-                    Journals
-                  </Link>
-
-                  <Link className={`cc-btn ${canAppointments ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/appointments`}>
-                    Appointments
-                  </Link>
-
-                  <Link className={`cc-btn ${canDm ? "" : "cc-btn-disabled"}`} href={`/app/patients/${m.patient_id}/dm`}>
-                    DMs
-                  </Link>
-
-                  <Link className={`cc-btn ${canPerms ? "cc-btn-secondary" : "cc-btn-disabled"}`} href={`/app/account/permissions?pid=${m.patient_id}`}>
-                    Permissions
-                  </Link>
-                </div>
-
-                <div className="cc-small cc-subtle">
-                  Buttons are enabled only if your effective permission allows that feature.
-                </div>
+                ) : null}
               </div>
             );
           })}

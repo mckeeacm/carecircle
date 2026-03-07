@@ -48,7 +48,7 @@ body {
       rgba(246, 249, 251, 0.9),
       rgba(246, 249, 251, 0.95)
     ),
-    url("/images/carecircle-bg-main.jpg");
+    url("/images/carecircle-bg-main.png");
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
@@ -96,7 +96,7 @@ button {
       rgba(255, 255, 255, 0.06) 40%,
       rgba(255, 255, 255, 0.12) 100%
     ),
-    url("/images/carecircle-bg-texture.jpg");
+    url("/images/carecircle-bg-texture.png");
   background-size: cover;
   background-position: center;
   opacity: 0.2;

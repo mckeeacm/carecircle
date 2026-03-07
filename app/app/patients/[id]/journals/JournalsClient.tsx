@@ -7,6 +7,7 @@ import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
+import MobileShell from "@/app/components/MobileShell";
 
 type JournalRow = {
   id: string;
@@ -20,18 +21,6 @@ type JournalRow = {
   include_in_clinician_summary: boolean | null;
   content_encrypted: CipherEnvelopeV1 | null;
   mood_encrypted: CipherEnvelopeV1 | null;
-};
-
-type SobrietyRow = {
-  id: string;
-  patient_id: string;
-  occurred_at: string;
-  status: string;
-  substance: string | null;
-  intensity: number | null;
-  note_encrypted: CipherEnvelopeV1 | null;
-  created_by: string;
-  created_at: string;
 };
 
 type MembershipRow = {
@@ -50,7 +39,6 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const { vaultKey } = usePatientVault();
 
   const [rows, setRows] = useState<JournalRow[]>([]);
-  const [sobrietyRows, setSobrietyRows] = useState<SobrietyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"all" | "shared">("all");
 
@@ -59,9 +47,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const [isPatientRole, setIsPatientRole] = useState(false);
 
   const [journalType, setJournalType] = useState("journal");
-  const [mood, setMood] = useState("");
   const [content, setContent] = useState("");
-  const [painLevel, setPainLevel] = useState<number | "">("");
   const [sharedToCircle, setSharedToCircle] = useState(true);
 
   const [trackerMood, setTrackerMood] = useState<string>("");
@@ -115,21 +101,6 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       if (error) throw error;
 
       setRows((data ?? []) as JournalRow[]);
-
-      const { data: sobriety, error: sErr } = await supabase
-        .from("sobriety_logs")
-        .select(
-          "id, patient_id, occurred_at, status, substance, intensity, note_encrypted, created_by, created_at"
-        )
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (!sErr) {
-        setSobrietyRows((sobriety ?? []) as SobrietyRow[]);
-      } else {
-        setSobrietyRows([]);
-      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_journals");
     } finally {
@@ -184,12 +155,6 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
       });
 
-      const moodEnv = await vaultEncryptString({
-        vaultKey,
-        plaintext: mood,
-        aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
-      });
-
       const effectiveSharedToCircle = isPatientRole ? sharedToCircle : true;
 
       const { error } = await supabase.from("journal_entries").insert({
@@ -198,18 +163,17 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         occurred_at: new Date().toISOString(),
         created_by: uid,
         shared_to_circle: effectiveSharedToCircle,
-        pain_level: painLevel === "" ? null : painLevel,
+        pain_level: null,
         include_in_clinician_summary: false,
         content_encrypted: contentEnv,
-        mood_encrypted: moodEnv,
+        mood_encrypted: null,
       });
 
       if (error) throw error;
 
-      setMood("");
       setContent("");
-      setPainLevel("");
       setSharedToCircle(true);
+      setJournalType("journal");
       await refresh();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_journal");
@@ -230,40 +194,40 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       const uid = auth.user?.id;
       if (!uid) throw new Error("not_authenticated");
 
-      if (trackerMood || trackerPain != null) {
-        const contentParts: string[] = [];
-        if (trackerMood) contentParts.push(`Mood: ${trackerMood}`);
-        if (trackerPain != null) contentParts.push(`Pain: ${trackerPain}/10`);
+      const contentParts: string[] = [];
 
-        const contentEnv = await vaultEncryptString({
-          vaultKey,
-          plaintext: contentParts.join("\n"),
-          aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
-        });
+      if (trackerMood) contentParts.push(`Mood: ${trackerMood}`);
+      if (trackerPain != null) contentParts.push(`Pain: ${trackerPain}/10`);
+      if (trackerSobriety) contentParts.push(`Sobriety today: ${trackerSobriety === "yes" ? "Yes" : "No"}`);
 
-        const moodEnv = await vaultEncryptString({
-          vaultKey,
-          plaintext: trackerMood || "",
-          aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
-        });
+      const contentEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: contentParts.join("\n"),
+        aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
+      });
 
-        const { error: jErr } = await supabase.from("journal_entries").insert({
-          patient_id: patientId,
-          journal_type: "tracker",
-          occurred_at: new Date().toISOString(),
-          created_by: uid,
-          shared_to_circle: trackerShare,
-          pain_level: trackerPain,
-          include_in_clinician_summary: false,
-          content_encrypted: contentEnv,
-          mood_encrypted: moodEnv,
-        });
+      const moodEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: trackerMood || "",
+        aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
+      });
 
-        if (jErr) throw jErr;
-      }
+      const { error: jErr } = await supabase.from("journal_entries").insert({
+        patient_id: patientId,
+        journal_type: "tracker",
+        occurred_at: new Date().toISOString(),
+        created_by: uid,
+        shared_to_circle: trackerShare,
+        pain_level: trackerPain,
+        include_in_clinician_summary: false,
+        content_encrypted: contentEnv,
+        mood_encrypted: moodEnv,
+      });
+
+      if (jErr) throw jErr;
 
       if (trackerSobriety) {
-        const noteText = trackerSobriety === "yes" ? "Sobriety maintained" : "Sobriety concern logged";
+        const noteText = contentParts.join("\n");
 
         const noteEnv = await vaultEncryptString({
           vaultKey,
@@ -282,34 +246,6 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         });
 
         if (sErr) throw sErr;
-
-        if (trackerShare) {
-          const contentEnv = await vaultEncryptString({
-            vaultKey,
-            plaintext: `Sobriety today: ${trackerSobriety === "yes" ? "Yes" : "No"}`,
-            aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
-          });
-
-          const moodEnv = await vaultEncryptString({
-            vaultKey,
-            plaintext: "",
-            aad: { table: "journal_entries", column: "mood_encrypted", patient_id: patientId },
-          });
-
-          const { error: shareErr } = await supabase.from("journal_entries").insert({
-            patient_id: patientId,
-            journal_type: "sobriety-tracker",
-            occurred_at: new Date().toISOString(),
-            created_by: uid,
-            shared_to_circle: true,
-            pain_level: null,
-            include_in_clinician_summary: false,
-            content_encrypted: contentEnv,
-            mood_encrypted: moodEnv,
-          });
-
-          if (shareErr) throw shareErr;
-        }
       }
 
       setTrackerMood("");
@@ -323,202 +259,173 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   }
 
   return (
-    <div className="cc-page">
-      <div className="cc-container cc-stack">
-        <div className="cc-row-between">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Journals</h1>
-            <div className="cc-subtle cc-wrap">{patientId}</div>
-          </div>
-          <div className="cc-row">
-            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-              Today
-            </Link>
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-          </div>
+    <MobileShell
+      title="Journal"
+      subtitle={myRole ? `Role: ${myRole}` : patientId}
+      patientId={patientId}
+      rightSlot={
+        <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
+          Today
+        </Link>
+      }
+    >
+      {msg ? (
+        <div className="cc-status cc-status-error">
+          <div className="cc-status-error-title">Error</div>
+          <div className="cc-wrap">{msg}</div>
         </div>
+      ) : null}
 
-        {msg ? (
-          <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
-            <div className="cc-wrap">{msg}</div>
-          </div>
-        ) : null}
-
-        {!vaultKey ? (
-          <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Vault key not available on this device</div>
-            <div className="cc-subtle">You can’t decrypt or save encrypted content.</div>
-          </div>
-        ) : null}
-
-        <div className="cc-row">
-          <button
-            className={`cc-tab ${viewMode === "all" ? "cc-tab-active" : ""}`}
-            onClick={() => setViewMode("all")}
-          >
-            All entries
-          </button>
-          <button
-            className={`cc-tab ${viewMode === "shared" ? "cc-tab-active" : ""}`}
-            onClick={() => setViewMode("shared")}
-          >
-            Circle feed
-          </button>
-          <button className="cc-btn" onClick={refresh} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
+      {!vaultKey ? (
+        <div className="cc-status cc-status-loading">
+          <div className="cc-strong">Vault key not available on this device</div>
+          <div className="cc-subtle">You can’t decrypt or save encrypted content.</div>
         </div>
+      ) : null}
 
-        {isPatientRole ? (
-          <div className="cc-card cc-card-pad cc-stack">
-            <h2 className="cc-h2">Trackers</h2>
-            <div className="cc-subtle">
-              Simple daily patient inputs. You can also share them to the circle journal.
-            </div>
+      <div className="cc-row">
+        <button
+          className={`cc-tab ${viewMode === "all" ? "cc-tab-active" : ""}`}
+          onClick={() => setViewMode("all")}
+        >
+          All entries
+        </button>
+        <button
+          className={`cc-tab ${viewMode === "shared" ? "cc-tab-active" : ""}`}
+          onClick={() => setViewMode("shared")}
+        >
+          Circle feed
+        </button>
+        <button className="cc-btn" onClick={refresh} disabled={loading}>
+          {loading ? "Loading…" : "Refresh"}
+        </button>
+      </div>
 
-            <div className="cc-grid-3">
-              <div className="cc-panel-soft cc-stack">
-                <div className="cc-strong">Mood</div>
-                <div className="cc-row">
-                  {["😞", "🙁", "😐", "🙂", "😄"].map((emoji) => (
-                    <button
-                      key={emoji}
-                      className={`cc-btn ${trackerMood === emoji ? "cc-btn-primary" : ""}`}
-                      onClick={() => setTrackerMood(emoji)}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="cc-panel-soft cc-stack">
-                <div className="cc-strong">Pain</div>
-                <div className="cc-row" style={{ flexWrap: "wrap" }}>
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                    <button
-                      key={n}
-                      className={`cc-btn ${trackerPain === n ? "cc-btn-primary" : ""}`}
-                      onClick={() => setTrackerPain(n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="cc-panel-soft cc-stack">
-                <div className="cc-strong">Sobriety</div>
-                <div className="cc-row">
-                  <button
-                    className={`cc-btn ${trackerSobriety === "yes" ? "cc-btn-primary" : ""}`}
-                    onClick={() => setTrackerSobriety("yes")}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className={`cc-btn ${trackerSobriety === "no" ? "cc-btn-danger" : ""}`}
-                    onClick={() => setTrackerSobriety("no")}
-                  >
-                    No
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <label className="cc-check">
-              <input type="checkbox" checked={trackerShare} onChange={(e) => setTrackerShare(e.target.checked)} />
-              <span className="cc-label">Share trackers to circle journal</span>
-            </label>
-
-            <div className="cc-row">
-              <button className="cc-btn cc-btn-primary" onClick={saveTrackers} disabled={!vaultKey}>
-                Save trackers
-              </button>
-            </div>
-          </div>
-        ) : null}
-
+      {isPatientRole ? (
         <div className="cc-card cc-card-pad cc-stack">
-          <h2 className="cc-h2">New entry</h2>
-
-          <div className="cc-row">
-            <div className="cc-field" style={{ minWidth: 220 }}>
-              <div className="cc-label">journal_type (plaintext)</div>
-              <input className="cc-input" value={journalType} onChange={(e) => setJournalType(e.target.value)} />
+          <div className="cc-row-between">
+            <div>
+              <h2 className="cc-h2">Today’s trackers</h2>
+              <div className="cc-subtle">
+                Mood, pain and sobriety are saved together as one tracker log.
+              </div>
             </div>
-
-            <div className="cc-field" style={{ minWidth: 220 }}>
-              <div className="cc-label">Mood (encrypted)</div>
-              <input className="cc-input" value={mood} onChange={(e) => setMood(e.target.value)} />
-            </div>
-
-            <div className="cc-field" style={{ width: 160 }}>
-              <div className="cc-label">Pain (0–10)</div>
-              <input
-                className="cc-input"
-                type="number"
-                min={0}
-                max={10}
-                value={painLevel}
-                onChange={(e) => setPainLevel(e.target.value === "" ? "" : Number(e.target.value))}
-              />
-            </div>
-
-            {isPatientRole ? (
-              <label className="cc-check">
-                <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
-                <span className="cc-label">Share to circle</span>
-              </label>
-            ) : (
-              <div className="cc-small cc-subtle">Entries from non-patient members are always shared to the circle.</div>
-            )}
           </div>
 
-          <div className="cc-field">
-            <div className="cc-label">Journal content (encrypted)</div>
-            <textarea className="cc-textarea" value={content} onChange={(e) => setContent(e.target.value)} />
+          <div className="cc-grid-3">
+            <div className="cc-panel-soft cc-stack">
+              <div className="cc-strong">Mood</div>
+              <div className="cc-row">
+                {["😞", "🙁", "😐", "🙂", "😄"].map((emoji) => (
+                  <button
+                    key={emoji}
+                    className={`cc-btn ${trackerMood === emoji ? "cc-btn-primary" : ""}`}
+                    onClick={() => setTrackerMood(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="cc-panel-soft cc-stack">
+              <div className="cc-strong">Pain</div>
+              <div className="cc-row" style={{ flexWrap: "wrap" }}>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <button
+                    key={n}
+                    className={`cc-btn ${trackerPain === n ? "cc-btn-primary" : ""}`}
+                    onClick={() => setTrackerPain(n)}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="cc-panel-soft cc-stack">
+              <div className="cc-strong">Sobriety</div>
+              <div className="cc-row">
+                <button
+                  className={`cc-btn ${trackerSobriety === "yes" ? "cc-btn-primary" : ""}`}
+                  onClick={() => setTrackerSobriety("yes")}
+                >
+                  Yes
+                </button>
+                <button
+                  className={`cc-btn ${trackerSobriety === "no" ? "cc-btn-danger" : ""}`}
+                  onClick={() => setTrackerSobriety("no")}
+                >
+                  No
+                </button>
+              </div>
+            </div>
           </div>
 
+          <label className="cc-check">
+            <input type="checkbox" checked={trackerShare} onChange={(e) => setTrackerShare(e.target.checked)} />
+            <span className="cc-label">Share tracker log to circle journal</span>
+          </label>
+
           <div className="cc-row">
-            <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || !content.trim()}>
-              Save entry
+            <button className="cc-btn cc-btn-primary" onClick={saveTrackers} disabled={!vaultKey}>
+              Save trackers
             </button>
           </div>
         </div>
+      ) : null}
 
-        <div className="cc-card cc-card-pad">
-          <h2 className="cc-h2">Recent entries</h2>
-          <div className="cc-spacer-12" />
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <h2 className="cc-h2">New entry</h2>
+            <div className="cc-subtle">Write a journal entry without re-entering tracker values.</div>
+          </div>
+        </div>
 
-          {rows.length === 0 ? (
-            <div className="cc-small">{viewMode === "shared" ? "No shared entries yet." : "No entries yet."}</div>
+        <div className="cc-row">
+          <div className="cc-field" style={{ minWidth: 220 }}>
+            <div className="cc-label">Journal type</div>
+            <input className="cc-input" value={journalType} onChange={(e) => setJournalType(e.target.value)} />
+          </div>
+
+          {isPatientRole ? (
+            <label className="cc-check">
+              <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
+              <span className="cc-label">Share to circle</span>
+            </label>
           ) : (
-            <div className="cc-stack">
-              {rows.map((r) => (
-                <JournalCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} />
-              ))}
-            </div>
+            <div className="cc-small cc-subtle">Entries from non-patient members are always shared to the circle.</div>
           )}
         </div>
 
-        {sobrietyRows.length > 0 ? (
-          <div className="cc-card cc-card-pad">
-            <h2 className="cc-h2">Recent sobriety tracker logs</h2>
-            <div className="cc-spacer-12" />
-            <div className="cc-stack">
-              {sobrietyRows.map((r) => (
-                <SobrietyCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} />
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <div className="cc-field">
+          <div className="cc-label">Journal content (encrypted)</div>
+          <textarea className="cc-textarea" value={content} onChange={(e) => setContent(e.target.value)} />
+        </div>
+
+        <div className="cc-row">
+          <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || !content.trim()}>
+            Save entry
+          </button>
+        </div>
       </div>
-    </div>
+
+      <div className="cc-card cc-card-pad">
+        <h2 className="cc-h2">Recent entries</h2>
+        <div className="cc-spacer-12" />
+
+        {rows.length === 0 ? (
+          <div className="cc-small">{viewMode === "shared" ? "No shared entries yet." : "No entries yet."}</div>
+        ) : (
+          <div className="cc-stack">
+            {rows.map((r) => (
+              <JournalCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} currentUserId={currentUserId} />
+            ))}
+          </div>
+        )}
+      </div>
+    </MobileShell>
   );
 }
 
@@ -526,10 +433,12 @@ function JournalCard({
   row,
   patientId,
   vaultKey,
+  currentUserId,
 }: {
   row: JournalRow;
   patientId: string;
   vaultKey: Uint8Array | null;
+  currentUserId: string;
 }) {
   const [open, setOpen] = useState(false);
   const [ptMood, setPtMood] = useState<string>("");
@@ -573,15 +482,24 @@ function JournalCard({
     }
   }
 
+  const typeLabel =
+    row.journal_type === "tracker"
+      ? "Tracker log"
+      : row.journal_type === "journal"
+      ? "Journal"
+      : row.journal_type;
+
   return (
     <div className="cc-panel-soft">
       <div className="cc-row-between">
         <div className="cc-wrap">
           <div className="cc-strong">
-            {row.journal_type}{" "}
+            {typeLabel}
             <span className="cc-small">
+              {" "}
               • {new Date(row.created_at).toLocaleString()} • {row.shared_to_circle ? "shared" : "private"}
               {row.pain_level != null ? ` • pain:${row.pain_level}` : ""}
+              {row.created_by === currentUserId ? " • you" : ""}
             </span>
           </div>
         </div>
@@ -593,63 +511,18 @@ function JournalCard({
 
       {open ? (
         <div className="cc-spacer-12">
-          <div className="cc-small">
-            <b>Mood:</b> {ptMood || "—"}
-          </div>
-          <div className="cc-spacer-12" />
+          {ptMood ? (
+            <>
+              <div className="cc-small">
+                <b>Mood:</b> {ptMood}
+              </div>
+              <div className="cc-spacer-12" />
+            </>
+          ) : null}
+
           <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
             {ptContent || "—"}
           </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SobrietyCard({
-  row,
-  patientId,
-  vaultKey,
-}: {
-  row: SobrietyRow;
-  patientId: string;
-  vaultKey: Uint8Array | null;
-}) {
-  const [plain, setPlain] = useState("");
-
-  async function decrypt() {
-    if (!vaultKey || !row.note_encrypted || plain) return;
-
-    const text = await decryptStringWithLocalCache({
-      patientId,
-      table: "sobriety_logs",
-      rowId: row.id,
-      column: "note_encrypted",
-      env: row.note_encrypted,
-      vaultKey,
-    });
-
-    setPlain(text);
-  }
-
-  return (
-    <div className="cc-panel-soft">
-      <div className="cc-row-between">
-        <div className="cc-wrap">
-          <div className="cc-strong">
-            Sobriety: {row.status}
-            <span className="cc-small"> • {new Date(row.created_at).toLocaleString()}</span>
-          </div>
-        </div>
-
-        <button className="cc-btn" onClick={decrypt} disabled={!vaultKey || !row.note_encrypted || !!plain}>
-          {plain ? "Decrypted" : row.note_encrypted ? "Decrypt" : "No note"}
-        </button>
-      </div>
-
-      {plain ? (
-        <div className="cc-spacer-12">
-          <div className="cc-panel">{plain}</div>
         </div>
       ) : null}
     </div>

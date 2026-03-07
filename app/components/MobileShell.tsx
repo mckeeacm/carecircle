@@ -10,6 +10,7 @@ type MobileShellProps = {
   subtitle?: string;
   patientId?: string;
   children: ReactNode;
+  hideBottomNav?: boolean;
   rightSlot?: ReactNode;
 };
 
