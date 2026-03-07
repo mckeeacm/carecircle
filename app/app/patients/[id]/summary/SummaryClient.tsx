@@ -204,19 +204,12 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       rightSlot={
         <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
           <span className="cc-pill cc-pill-primary">{patient?.display_name ?? "Patient"}</span>
-          <span className="cc-pill">Summary view</span>
           <span className="cc-pill">
             Updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}
           </span>
-          <Link className="cc-btn" href={`/app/patients/${patientId}/profile`}>
-            Profile
-          </Link>
           <Link className="cc-btn" href="/app/hub">
             Hub
           </Link>
-          <button className="cc-btn" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
         </div>
       }
     >
