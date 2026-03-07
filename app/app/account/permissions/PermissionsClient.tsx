@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import MobileShell from "@/app/components/MobileShell";
 
 type PatientRow = {
   id: string;
@@ -90,8 +91,7 @@ export default function PermissionsClient() {
   useEffect(() => {
     const preset = sp.get("pid");
     if (preset && isUuid(preset)) setPatientId(preset);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sp]);
 
   useEffect(() => {
     (async () => {
@@ -173,8 +173,7 @@ export default function PermissionsClient() {
         setMsg(e?.message ?? "failed_to_load_circles");
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase]);
+  }, [supabase, patientId]);
 
   async function refresh() {
     if (!patientId) return;
@@ -234,7 +233,6 @@ export default function PermissionsClient() {
 
   useEffect(() => {
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   function roleAllowed(role: string, featureKey: string): boolean {
@@ -364,211 +362,216 @@ export default function PermissionsClient() {
   }
 
   return (
-    <div className="cc-page">
-      <div className="cc-container cc-stack">
+    <MobileShell
+      title="Permissions"
+      subtitle="Roles, member overrides, and access control"
+      patientId={patientId || undefined}
+      rightSlot={
+        <Link className="cc-btn" href="/app/account">
+          Account
+        </Link>
+      }
+    >
+      {msg ? (
+        <div className="cc-status cc-status-error">
+          <div className="cc-status-error-title">Error</div>
+          <div className="cc-wrap">{msg}</div>
+        </div>
+      ) : null}
+
+      <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Permissions</h1>
-            <div className="cc-subtle">Roles, member overrides, and revoking access</div>
-          </div>
-
-          <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
+            <h2 className="cc-h2">Circle access</h2>
+            <div className="cc-subtle">Select a circle and manage who can do what.</div>
           </div>
         </div>
 
-        {msg ? (
-          <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Error</div>
-            <div className="cc-wrap">{msg}</div>
+        <div className="cc-field" style={{ maxWidth: 420 }}>
+          <div className="cc-label">Circle</div>
+          <select className="cc-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
+            {patients.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.display_name ?? p.id}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="cc-row" style={{ flexWrap: "wrap" }}>
+          <button className="cc-btn cc-btn-secondary" onClick={seedDefaults} disabled={!patientId || savingKey === "seed"}>
+            {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
+          </button>
+
+          <button className="cc-btn" onClick={refresh} disabled={!patientId || loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+
+        {mePerm ? (
+          <div className="cc-row" style={{ flexWrap: "wrap" }}>
+            <span className={`cc-pill ${canManage ? "cc-pill-primary" : ""}`}>
+              permissions_manage: {canManage ? "true" : "false"}
+            </span>
+            <span className="cc-pill">role: {mePerm.role}</span>
+            <span className="cc-pill">controller: {mePerm.is_controller ? "true" : "false"}</span>
           </div>
         ) : null}
+      </div>
 
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-row">
-            <div className="cc-field" style={{ minWidth: 320 }}>
-              <div className="cc-label">Circle</div>
-              <select className="cc-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.display_name ?? p.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button className="cc-btn cc-btn-secondary" onClick={seedDefaults} disabled={!patientId || savingKey === "seed"}>
-              {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
-            </button>
-
-            <button className="cc-btn" onClick={refresh} disabled={!patientId || loading}>
-              {loading ? "Loading…" : "Refresh"}
-            </button>
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <h2 className="cc-h2">Circle members</h2>
+            <div className="cc-subtle">Review members and revoke access where needed.</div>
           </div>
-
-          {mePerm ? (
-            <div className="cc-row" style={{ flexWrap: "wrap" }}>
-              <span className={`cc-pill ${canManage ? "cc-pill-primary" : ""}`}>
-                permissions_manage: {canManage ? "true" : "false"}
-              </span>
-              <span className="cc-pill">role: {mePerm.role}</span>
-              <span className="cc-pill">controller: {mePerm.is_controller ? "true" : "false"}</span>
-            </div>
-          ) : null}
         </div>
 
-        <div className="cc-card cc-card-pad cc-stack">
-          <h2 className="cc-h2">Circle members</h2>
-          <div className="cc-small cc-subtle">
-            Individual access can be adjusted with overrides below, or removed completely with revoke.
-          </div>
+        {members.length === 0 ? (
+          <div className="cc-small">No members found.</div>
+        ) : (
+          <div className="cc-stack">
+            {members.map((m) => {
+              const revokeBusy = savingKey === `revoke:${m.user_id}`;
+              const canRevoke = canManage && !m.is_controller && m.user_id !== myUid;
 
-          {members.length === 0 ? (
-            <div className="cc-small">No members found.</div>
-          ) : (
-            <div className="cc-table-wrap">
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th style={thStyle}>Member</th>
-                    <th style={thStyle}>Role</th>
-                    <th style={thStyle}>Controller</th>
-                    <th style={thStyle}>User ID</th>
-                    <th style={thStyle}>Access</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((m) => {
-                    const revokeBusy = savingKey === `revoke:${m.user_id}`;
-                    const canRevoke = canManage && !m.is_controller && m.user_id !== myUid;
+              return (
+                <div key={m.user_id} className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+                  <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
+                    <div className="cc-wrap">
+                      <div className="cc-strong">{m.nickname ?? "Unnamed member"}</div>
+                      <div className="cc-small cc-subtle">
+                        Role: {m.role ?? "—"}
+                        {m.is_controller ? " • Controller" : ""}
+                        {m.user_id === myUid ? " • You" : ""}
+                      </div>
+                      <div className="cc-small cc-wrap" style={{ marginTop: 4 }}>
+                        {m.user_id}
+                      </div>
+                    </div>
+
+                    {m.is_controller ? (
+                      <span className="cc-small">Controller cannot be revoked</span>
+                    ) : m.user_id === myUid ? (
+                      <span className="cc-small">You cannot revoke yourself</span>
+                    ) : (
+                      <button
+                        className="cc-btn cc-btn-danger"
+                        onClick={() => revokeMember(m.user_id)}
+                        disabled={!canRevoke || revokeBusy}
+                      >
+                        {revokeBusy ? "Revoking…" : "Revoke access"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div>
+          <h2 className="cc-h2">Role permissions</h2>
+          <div className="cc-subtle">Default access for each role in this circle.</div>
+        </div>
+
+        {features.length === 0 ? (
+          <div className="cc-small">No features found.</div>
+        ) : roles.length === 0 ? (
+          <div className="cc-small">No roles found.</div>
+        ) : (
+          <div className="cc-stack">
+            {features.map((f) => (
+              <div key={f.key} className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+                <div>
+                  <div className="cc-strong">{f.label ?? f.key}</div>
+                  <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
+                  <div className="cc-small">key: {f.key}</div>
+                </div>
+
+                <div className="cc-stack">
+                  {roles.map((role) => {
+                    const allowed = roleAllowed(role, f.key);
+                    const busy = savingKey === `role:${role}:${f.key}`;
 
                     return (
-                      <tr key={m.user_id}>
-                        <td style={tdStyle}>
-                          <div className="cc-strong">{m.nickname ?? "—"}</div>
-                          {m.user_id === myUid ? <div className="cc-small cc-subtle">You</div> : null}
-                        </td>
-                        <td style={tdStyle}>{m.role ?? "—"}</td>
-                        <td style={tdStyle}>{m.is_controller ? "true" : "false"}</td>
-                        <td style={tdStyle}>
-                          <span className="cc-small cc-wrap">{m.user_id}</span>
-                        </td>
-                        <td style={tdCenter}>
-                          {m.is_controller ? (
-                            <span className="cc-small">Controller cannot be revoked</span>
-                          ) : m.user_id === myUid ? (
-                            <span className="cc-small">You cannot revoke yourself</span>
-                          ) : (
-                            <button
-                              className="cc-btn cc-btn-danger"
-                              onClick={() => revokeMember(m.user_id)}
-                              disabled={!canRevoke || revokeBusy}
-                            >
-                              {revokeBusy ? "Revoking…" : "Revoke access"}
-                            </button>
-                          )}
-                        </td>
-                      </tr>
+                      <div
+                        key={`${role}:${f.key}`}
+                        className="cc-row-between"
+                        style={{
+                          gap: 12,
+                          alignItems: "center",
+                          padding: "10px 0",
+                          borderTop: "1px solid rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <div className="cc-small cc-strong">{role}</div>
+
+                        <button
+                          className={`cc-btn ${allowed ? "cc-btn-secondary" : ""}`}
+                          onClick={() => upsertRolePerm(role, f.key, !allowed)}
+                          disabled={!canManage || busy}
+                        >
+                          {busy ? "Saving…" : allowed ? "Allowed" : "Denied"}
+                        </button>
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <h2 className="cc-h2">Role permissions</h2>
-          <div className="cc-table-wrap">
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Feature</th>
-                  {roles.map((r) => (
-                    <th key={r} style={thStyle}>
-                      {r}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {features.map((f) => (
-                  <tr key={f.key}>
-                    <td style={tdStyle}>
-                      <div className="cc-strong">{f.label ?? f.key}</div>
-                      <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
-                      <div className="cc-small">key: {f.key}</div>
-                    </td>
-
-                    {roles.map((role) => {
-                      const allowed = roleAllowed(role, f.key);
-                      const busy = savingKey === `role:${role}:${f.key}`;
-
-                      return (
-                        <td key={`${role}:${f.key}`} style={tdCenter}>
-                          <button
-                            className={`cc-btn ${allowed ? "cc-btn-secondary" : ""}`}
-                            onClick={() => upsertRolePerm(role, f.key, !allowed)}
-                            disabled={!canManage || busy}
-                          >
-                            {busy ? "…" : allowed ? "Allowed" : "Denied"}
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        )}
+      </div>
 
-        <div className="cc-card cc-card-pad cc-stack">
+      <div className="cc-card cc-card-pad cc-stack">
+        <div>
           <h2 className="cc-h2">Member overrides</h2>
-          <div className="cc-small cc-subtle">
-            These adjust an individual member without changing the whole role.
-          </div>
+          <div className="cc-subtle">Adjust one member without changing the whole role.</div>
+        </div>
 
-          <div className="cc-table-wrap">
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Feature</th>
-                  {members.map((m) => (
-                    <th key={m.user_id} style={thStyle}>
-                      <span className="cc-wrap">{m.nickname ?? m.user_id}</span>
-                      {m.is_controller ? " (controller)" : ""}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {features.map((f) => (
-                  <tr key={f.key}>
-                    <td style={tdStyle}>
-                      <div className="cc-strong">{f.label ?? f.key}</div>
-                      <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
-                      <div className="cc-small">key: {f.key}</div>
-                    </td>
+        {features.length === 0 || members.length === 0 ? (
+          <div className="cc-small">Nothing to show yet.</div>
+        ) : (
+          <div className="cc-stack">
+            {features.map((f) => (
+              <div key={f.key} className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+                <div>
+                  <div className="cc-strong">{f.label ?? f.key}</div>
+                  <div className="cc-small cc-subtle">{f.description ?? f.key}</div>
+                  <div className="cc-small">key: {f.key}</div>
+                </div>
 
-                    {members.map((m) => {
-                      const ov = memberOverride(m.user_id, f.key);
-                      const busyAllow = savingKey === `member:${m.user_id}:${f.key}:1`;
-                      const busyDeny = savingKey === `member:${m.user_id}:${f.key}:0`;
-                      const busyClear = savingKey === `clear:${m.user_id}:${f.key}`;
+                <div className="cc-stack">
+                  {members.map((m) => {
+                    const ov = memberOverride(m.user_id, f.key);
+                    const busyAllow = savingKey === `member:${m.user_id}:${f.key}:1`;
+                    const busyDeny = savingKey === `member:${m.user_id}:${f.key}:0`;
+                    const busyClear = savingKey === `clear:${m.user_id}:${f.key}`;
 
-                      return (
-                        <td key={`${m.user_id}:${f.key}`} style={tdCenter}>
+                    return (
+                      <div
+                        key={`${m.user_id}:${f.key}`}
+                        style={{
+                          padding: "12px 0",
+                          borderTop: "1px solid rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
+                          <div className="cc-wrap">
+                            <div className="cc-small cc-strong">
+                              {m.nickname ?? m.user_id}
+                              {m.is_controller ? " (controller)" : ""}
+                            </div>
+                            <div className="cc-small cc-subtle">role: {m.role ?? "—"}</div>
+                          </div>
+
                           {m.is_controller ? (
                             <span className="cc-small">—</span>
                           ) : (
-                            <div className="cc-row" style={{ justifyContent: "center" }}>
+                            <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                               <button
                                 className={`cc-btn ${ov === true ? "cc-btn-secondary" : ""}`}
                                 onClick={() => upsertMemberOverride(m.user_id, f.key, true)}
@@ -595,38 +598,16 @@ export default function PermissionsClient() {
                               </button>
                             </div>
                           )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        )}
       </div>
-    </div>
+    </MobileShell>
   );
 }
-
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: 10,
-  borderBottom: "1px solid rgba(0,0,0,0.08)",
-  whiteSpace: "nowrap",
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: 10,
-  borderBottom: "1px solid rgba(0,0,0,0.06)",
-  verticalAlign: "top",
-  minWidth: 220,
-};
-
-const tdCenter: React.CSSProperties = {
-  padding: 10,
-  borderBottom: "1px solid rgba(0,0,0,0.06)",
-  verticalAlign: "top",
-  textAlign: "center",
-  minWidth: 220,
-};

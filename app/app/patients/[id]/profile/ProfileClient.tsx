@@ -7,6 +7,7 @@ import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
+import MobileShell from "@/app/components/MobileShell";
 
 type PatientRow = { id: string; display_name: string };
 
@@ -266,6 +267,22 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId, !!vaultKey]);
 
+  function copyOneToSummary(kind: "communication" | "allergies" | "safety" | "diagnoses" | "languages") {
+    if (kind === "communication") setCommSummary(communicationNotes);
+    if (kind === "allergies") setAllergiesSummary(allergies);
+    if (kind === "safety") setSafetySummary(safetyNotes);
+    if (kind === "diagnoses") setDiagnosesSummary(diagnoses);
+    if (kind === "languages") setLanguagesSummary(languagesSpoken);
+  }
+
+  function copyAllToSummary() {
+    setCommSummary(communicationNotes);
+    setAllergiesSummary(allergies);
+    setSafetySummary(safetyNotes);
+    setDiagnosesSummary(diagnoses);
+    setLanguagesSummary(languagesSpoken);
+  }
+
   async function createMedication() {
     setMsg(null);
 
@@ -320,178 +337,313 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   }
 
   return (
-    <div className="cc-page">
-      <div className="cc-container cc-stack">
+    <MobileShell
+      title="Profile"
+      subtitle={patient?.display_name ?? patientId}
+      patientId={patientId}
+      rightSlot={
+        <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
+          Summary
+        </Link>
+      }
+    >
+      {msg ? (
+        <div className="cc-status cc-status-error">
+          <div className="cc-status-error-title">Message</div>
+          <div className="cc-wrap">{msg}</div>
+        </div>
+      ) : null}
+
+      {!vaultKey ? (
+        <div className="cc-status cc-status-loading">
+          <div className="cc-strong">Vault key not available on this device</div>
+          <div className="cc-subtle">You can’t decrypt or save encrypted profile fields (E2EE).</div>
+        </div>
+      ) : null}
+
+      <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Patient profile</h1>
-            <div className="cc-subtle">{patient?.display_name ?? patientId}</div>
+            <h2 className="cc-h2">Profile details</h2>
+            <div className="cc-subtle">
+              Keep the encrypted profile and clinician summary aligned without double entry.
+            </div>
           </div>
 
-          <div className="cc-row">
-            <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-              Today
-            </Link>
-            <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
-              Summary
-            </Link>
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
+          <div className="cc-row" style={{ flexWrap: "wrap" }}>
+            <button className="cc-btn" onClick={copyAllToSummary} disabled={!vaultKey}>
+              Copy all to summary
+            </button>
+            <button className="cc-btn" onClick={loadProfile} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+            <button className="cc-btn cc-btn-primary" onClick={saveProfile} disabled={!vaultKey || savingProfile}>
+              {savingProfile ? "Saving…" : "Save profile"}
+            </button>
           </div>
         </div>
 
-        {msg ? (
-          <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Message</div>
-            <div className="cc-wrap">{msg}</div>
-          </div>
-        ) : null}
+        <div className="cc-small cc-subtle">
+          {profile?.updated_at ? `Last updated: ${new Date(profile.updated_at).toLocaleString()}` : "No profile record yet."}
+        </div>
+      </div>
 
-        {!vaultKey ? (
-          <div className="cc-status cc-status-loading">
-            <div className="cc-strong">Vault key not available on this device</div>
-            <div className="cc-subtle">You can’t decrypt or save encrypted profile fields (E2EE).</div>
-          </div>
-        ) : null}
-
-        <div className="cc-grid-2-125">
-          <div className="cc-card cc-card-pad cc-stack">
-            <h2 className="cc-h2">Encrypted profile notes</h2>
-
-            <div className="cc-grid-2">
-              <div className="cc-field">
-                <div className="cc-label">Communication notes (E2EE)</div>
-                <textarea className="cc-textarea" value={communicationNotes} onChange={(e) => setCommunicationNotes(e.target.value)} disabled={!vaultKey} />
-              </div>
-
-              <div className="cc-field">
-                <div className="cc-label">Allergies (E2EE)</div>
-                <textarea className="cc-textarea" value={allergies} onChange={(e) => setAllergies(e.target.value)} disabled={!vaultKey} />
-              </div>
-            </div>
-
-            <div className="cc-grid-2">
-              <div className="cc-field">
-                <div className="cc-label">Diagnoses (E2EE)</div>
-                <textarea className="cc-textarea" value={diagnoses} onChange={(e) => setDiagnoses(e.target.value)} disabled={!vaultKey} />
-              </div>
-
-              <div className="cc-field">
-                <div className="cc-label">Languages spoken (E2EE)</div>
-                <textarea className="cc-textarea" value={languagesSpoken} onChange={(e) => setLanguagesSpoken(e.target.value)} disabled={!vaultKey} />
-              </div>
-            </div>
-
-            <div className="cc-field">
-              <div className="cc-label">Safety notes (E2EE)</div>
-              <textarea className="cc-textarea" value={safetyNotes} onChange={(e) => setSafetyNotes(e.target.value)} disabled={!vaultKey} />
+      <div className="cc-grid-2-125">
+        <div className="cc-card cc-card-pad cc-stack">
+          <div className="cc-row-between">
+            <div>
+              <h2 className="cc-h2">Encrypted profile notes</h2>
+              <div className="cc-subtle">Detailed circle data stored using E2EE.</div>
             </div>
           </div>
 
-          <div className="cc-card cc-card-pad cc-stack">
-            <h2 className="cc-h2">Clinician summary copy</h2>
-            <div className="cc-subtle">
-              These fields are readable to permitted members on the Summary page without vault unlock.
-            </div>
+          <ProfileFieldCard
+            title="Communication notes"
+            encryptedLabel="Communication notes (E2EE)"
+            summaryLabel="Communication notes summary"
+            encryptedValue={communicationNotes}
+            summaryValue={commSummary}
+            disabled={!vaultKey}
+            onEncryptedChange={setCommunicationNotes}
+            onSummaryChange={setCommSummary}
+            onCopyToSummary={() => copyOneToSummary("communication")}
+          />
 
-            <div className="cc-grid-2">
-              <div className="cc-field">
-                <div className="cc-label">Communication notes summary</div>
-                <textarea className="cc-textarea" value={commSummary} onChange={(e) => setCommSummary(e.target.value)} />
-              </div>
+          <ProfileFieldCard
+            title="Allergies"
+            encryptedLabel="Allergies (E2EE)"
+            summaryLabel="Allergies summary"
+            encryptedValue={allergies}
+            summaryValue={allergiesSummary}
+            disabled={!vaultKey}
+            onEncryptedChange={setAllergies}
+            onSummaryChange={setAllergiesSummary}
+            onCopyToSummary={() => copyOneToSummary("allergies")}
+          />
 
-              <div className="cc-field">
-                <div className="cc-label">Allergies summary</div>
-                <textarea className="cc-textarea" value={allergiesSummary} onChange={(e) => setAllergiesSummary(e.target.value)} />
-              </div>
-            </div>
+          <ProfileFieldCard
+            title="Safety notes"
+            encryptedLabel="Safety notes (E2EE)"
+            summaryLabel="Safety notes summary"
+            encryptedValue={safetyNotes}
+            summaryValue={safetySummary}
+            disabled={!vaultKey}
+            onEncryptedChange={setSafetyNotes}
+            onSummaryChange={setSafetySummary}
+            onCopyToSummary={() => copyOneToSummary("safety")}
+            emphasise
+          />
 
-            <div className="cc-grid-2">
-              <div className="cc-field">
-                <div className="cc-label">Diagnoses summary</div>
-                <textarea className="cc-textarea" value={diagnosesSummary} onChange={(e) => setDiagnosesSummary(e.target.value)} />
-              </div>
+          <ProfileFieldCard
+            title="Diagnoses"
+            encryptedLabel="Diagnoses (E2EE)"
+            summaryLabel="Diagnoses summary"
+            encryptedValue={diagnoses}
+            summaryValue={diagnosesSummary}
+            disabled={!vaultKey}
+            onEncryptedChange={setDiagnoses}
+            onSummaryChange={setDiagnosesSummary}
+            onCopyToSummary={() => copyOneToSummary("diagnoses")}
+          />
 
-              <div className="cc-field">
-                <div className="cc-label">Languages spoken summary</div>
-                <textarea className="cc-textarea" value={languagesSummary} onChange={(e) => setLanguagesSummary(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="cc-field">
-              <div className="cc-label">Safety notes summary</div>
-              <textarea className="cc-textarea" value={safetySummary} onChange={(e) => setSafetySummary(e.target.value)} />
-            </div>
-
-            <div className="cc-row">
-              <button className="cc-btn cc-btn-primary" onClick={saveProfile} disabled={!vaultKey || savingProfile}>
-                {savingProfile ? "Saving…" : "Save profile"}
-              </button>
-              <button className="cc-btn" onClick={loadProfile} disabled={loading}>
-                {loading ? "Loading…" : "Refresh"}
-              </button>
-
-              {profile?.updated_at ? (
-                <span className="cc-small">Last updated: {new Date(profile.updated_at).toLocaleString()}</span>
-              ) : (
-                <span className="cc-small">No profile record yet.</span>
-              )}
-            </div>
-          </div>
+          <ProfileFieldCard
+            title="Languages spoken"
+            encryptedLabel="Languages spoken (E2EE)"
+            summaryLabel="Languages spoken summary"
+            encryptedValue={languagesSpoken}
+            summaryValue={languagesSummary}
+            disabled={!vaultKey}
+            onEncryptedChange={setLanguagesSpoken}
+            onSummaryChange={setLanguagesSummary}
+            onCopyToSummary={() => copyOneToSummary("languages")}
+          />
         </div>
 
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Medications</h2>
+              <h2 className="cc-h2">Clinician summary preview</h2>
               <div className="cc-subtle">
-                Used by <b>Medication logs</b>.
+                These summary fields are readable to permitted members without vault unlock.
               </div>
             </div>
-            <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-              Open logs
+            <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
+              Open summary
             </Link>
           </div>
 
-          <div className="cc-panel-soft cc-stack">
-            <div className="cc-grid-2">
-              <div className="cc-field">
-                <div className="cc-label">Name</div>
-                <input className="cc-input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Sertraline" />
-              </div>
-
-              <div className="cc-field">
-                <div className="cc-label">Dosage</div>
-                <input className="cc-input" value={newDosage} onChange={(e) => setNewDosage(e.target.value)} placeholder="e.g. 50mg" />
-              </div>
+          <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+            <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
+              Safety notes
             </div>
-
-            <div className="cc-field">
-              <div className="cc-label">Schedule text</div>
-              <input className="cc-input" value={newScheduleText} onChange={(e) => setNewScheduleText(e.target.value)} placeholder="e.g. once daily in the morning" />
-            </div>
-
-            <div className="cc-row">
-              <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
-                {medsSaving === "create" ? "Adding…" : "Add medication"}
-              </button>
-              <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
-                {medsLoading ? "Loading…" : "Refresh"}
-              </button>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {safetySummary || "—"}
             </div>
           </div>
 
-          {meds.length === 0 ? (
-            <div className="cc-small">No medications yet.</div>
-          ) : (
-            <div className="cc-stack">
-              {meds.map((m) => (
-                <MedicationEditor key={m.id} medication={m} busy={medsSaving === m.id} onSave={(patch) => updateMedication(m, patch)} />
-              ))}
+          <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+            <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
+              Allergies
             </div>
-          )}
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {allergiesSummary || "—"}
+            </div>
+          </div>
+
+          <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+            <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
+              Diagnoses
+            </div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {diagnosesSummary || "—"}
+            </div>
+          </div>
+
+          <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+            <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
+              Communication notes
+            </div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {commSummary || "—"}
+            </div>
+          </div>
+
+          <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+            <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
+              Languages spoken
+            </div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
+              {languagesSummary || "—"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <h2 className="cc-h2">Medications</h2>
+            <div className="cc-subtle">
+              Used by <b>Medication logs</b>.
+            </div>
+          </div>
+          <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
+            Open logs
+          </Link>
+        </div>
+
+        <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+          <div className="cc-strong">Add medication</div>
+
+          <div className="cc-grid-2">
+            <div className="cc-field">
+              <div className="cc-label">Name</div>
+              <input
+                className="cc-input"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Sertraline"
+              />
+            </div>
+
+            <div className="cc-field">
+              <div className="cc-label">Dosage</div>
+              <input
+                className="cc-input"
+                value={newDosage}
+                onChange={(e) => setNewDosage(e.target.value)}
+                placeholder="e.g. 50mg"
+              />
+            </div>
+          </div>
+
+          <div className="cc-field">
+            <div className="cc-label">Schedule text</div>
+            <input
+              className="cc-input"
+              value={newScheduleText}
+              onChange={(e) => setNewScheduleText(e.target.value)}
+              placeholder="e.g. once daily in the morning"
+            />
+          </div>
+
+          <div className="cc-row">
+            <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
+              {medsSaving === "create" ? "Adding…" : "Add medication"}
+            </button>
+            <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
+              {medsLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+
+        {meds.length === 0 ? (
+          <div className="cc-small">No medications yet.</div>
+        ) : (
+          <div className="cc-stack">
+            {meds.map((m) => (
+              <MedicationEditor key={m.id} medication={m} busy={medsSaving === m.id} onSave={(patch) => updateMedication(m, patch)} />
+            ))}
+          </div>
+        )}
+      </div>
+    </MobileShell>
+  );
+}
+
+function ProfileFieldCard({
+  title,
+  encryptedLabel,
+  summaryLabel,
+  encryptedValue,
+  summaryValue,
+  disabled,
+  emphasise,
+  onEncryptedChange,
+  onSummaryChange,
+  onCopyToSummary,
+}: {
+  title: string;
+  encryptedLabel: string;
+  summaryLabel: string;
+  encryptedValue: string;
+  summaryValue: string;
+  disabled: boolean;
+  emphasise?: boolean;
+  onEncryptedChange: (value: string) => void;
+  onSummaryChange: (value: string) => void;
+  onCopyToSummary: () => void;
+}) {
+  return (
+    <div
+      className="cc-panel-soft cc-stack"
+      style={{
+        padding: 16,
+        borderRadius: 20,
+        border: emphasise ? "1px solid rgba(214, 76, 76, 0.18)" : undefined,
+      }}
+    >
+      <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
+        <div className="cc-strong">{title}</div>
+        <button className="cc-btn" type="button" onClick={onCopyToSummary} disabled={disabled}>
+          Copy to summary
+        </button>
+      </div>
+
+      <div className="cc-grid-2">
+        <div className="cc-field">
+          <div className="cc-label">{encryptedLabel}</div>
+          <textarea
+            className="cc-textarea"
+            value={encryptedValue}
+            onChange={(e) => onEncryptedChange(e.target.value)}
+            disabled={disabled}
+          />
+        </div>
+
+        <div className="cc-field">
+          <div className="cc-label">{summaryLabel}</div>
+          <textarea className="cc-textarea" value={summaryValue} onChange={(e) => onSummaryChange(e.target.value)} />
         </div>
       </div>
     </div>
@@ -523,11 +675,11 @@ function MedicationEditor({
     (scheduleText.trim() || "") !== (medication.schedule_text ?? "");
 
   return (
-    <div className="cc-panel">
-      <div className="cc-row-between">
+    <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+      <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
         <div className="cc-wrap">
           <div className="cc-strong">{medication.name}</div>
-          <div className="cc-small cc-wrap">{medication.id}</div>
+          <div className="cc-small cc-subtle">Created: {new Date(medication.created_at).toLocaleString()}</div>
         </div>
         <span className={`cc-pill ${medication.active ? "cc-pill-primary" : "cc-pill-danger"}`}>
           {medication.active ? "Active" : "Inactive"}
@@ -544,13 +696,23 @@ function MedicationEditor({
 
         <div className="cc-field">
           <div className="cc-label">Dosage</div>
-          <input className="cc-input" value={dosage} onChange={(e) => setDosage(e.target.value)} placeholder="Optional" />
+          <input
+            className="cc-input"
+            value={dosage}
+            onChange={(e) => setDosage(e.target.value)}
+            placeholder="Optional"
+          />
         </div>
       </div>
 
       <div className="cc-field">
         <div className="cc-label">Schedule text</div>
-        <input className="cc-input" value={scheduleText} onChange={(e) => setScheduleText(e.target.value)} placeholder="Optional" />
+        <input
+          className="cc-input"
+          value={scheduleText}
+          onChange={(e) => setScheduleText(e.target.value)}
+          placeholder="Optional"
+        />
       </div>
 
       <div className="cc-row">
@@ -571,8 +733,6 @@ function MedicationEditor({
         <button className="cc-btn" disabled={busy} onClick={() => onSave({ active: !medication.active })}>
           {busy ? "…" : medication.active ? "Deactivate" : "Reactivate"}
         </button>
-
-        <span className="cc-small">Created: {new Date(medication.created_at).toLocaleString()}</span>
       </div>
     </div>
   );
