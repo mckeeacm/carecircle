@@ -31,12 +31,11 @@ type AppointmentRow = {
   location: string | null;
 };
 
-type JournalPreview = {
+type MedicationLogRow = {
   id: string;
   created_at: string;
-  journal_type: string;
-  pain_level: number | null;
-  shared_to_circle: boolean;
+  status: string | null;
+  medication_id: string;
 };
 
 function isUuid(s: string) {
@@ -102,7 +101,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
-  const [sharedJournals, setSharedJournals] = useState<JournalPreview[]>([]);
+  const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
 
   const [loading, setLoading] = useState(false);
 
@@ -164,16 +163,20 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       if (mErr) throw mErr;
       setMeds((m ?? []) as MedicationRow[]);
 
-      const { data: j, error: jErr } = await supabase
-        .from("journal_entries")
-        .select("id, created_at, journal_type, pain_level, shared_to_circle")
-        .eq("patient_id", patientId)
-        .eq("shared_to_circle", true)
-        .order("created_at", { ascending: false })
-        .limit(5);
+      const fourDaysAgo = new Date();
+      fourDaysAgo.setHours(0, 0, 0, 0);
+      fourDaysAgo.setDate(fourDaysAgo.getDate() - 3);
 
-      if (jErr) throw jErr;
-      setSharedJournals((j ?? []) as JournalPreview[]);
+      const { data: ml, error: mlErr } = await supabase
+        .from("medication_logs")
+        .select("id, created_at, status, medication_id")
+        .eq("patient_id", patientId)
+        .gte("created_at", fourDaysAgo.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      if (mlErr) throw mlErr;
+      setMedLogs((ml ?? []) as MedicationLogRow[]);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_summary");
     } finally {
@@ -186,6 +189,12 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
+  function medicationLabel(medicationId: string) {
+    const med = meds.find((m) => m.id === medicationId);
+    if (!med) return medicationId;
+    return `${med.name}${med.dosage ? ` (${med.dosage})` : ""}`;
+  }
+
   return (
     <MobileShell
       title="Clinician summary"
@@ -193,9 +202,22 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       patientId={patientId}
       hideBottomNav
       rightSlot={
-        <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-          Today
-        </Link>
+        <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span className="cc-pill cc-pill-primary">{patient?.display_name ?? "Patient"}</span>
+          <span className="cc-pill">Summary view</span>
+          <span className="cc-pill">
+            Updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}
+          </span>
+          <Link className="cc-btn" href={`/app/patients/${patientId}/profile`}>
+            Profile
+          </Link>
+          <Link className="cc-btn" href="/app/hub">
+            Hub
+          </Link>
+          <button className="cc-btn" onClick={load} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
       }
     >
       {msg ? (
@@ -204,52 +226,6 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
-
-      <div
-        className="cc-card cc-card-pad"
-        style={{
-          padding: 18,
-        }}
-      >
-        <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
-          <div>
-            <h2 className="cc-h2" style={{ marginBottom: 6 }}>
-              Emergency overview
-            </h2>
-            <div className="cc-subtle">
-              Readable without vault unlock. Prioritised for quick scanning in urgent situations.
-            </div>
-          </div>
-
-          <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <Link className="cc-btn" href={`/app/patients/${patientId}/profile`}>
-              Profile
-            </Link>
-            <Link className="cc-btn" href="/app/hub">
-              Hub
-            </Link>
-            <button className="cc-btn" onClick={load} disabled={loading}>
-              {loading ? "Loading…" : "Refresh"}
-            </button>
-          </div>
-        </div>
-
-        <div className="cc-spacer-12" />
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span className="cc-pill cc-pill-primary">{patient?.display_name ?? "Patient"}</span>
-          <span className="cc-pill">Summary view</span>
-          <span className="cc-pill">
-            Updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}
-          </span>
-        </div>
-      </div>
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad cc-stack">
@@ -344,24 +320,24 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       <div className="cc-card cc-card-pad">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Recent shared journal entries</h2>
-            <div className="cc-subtle">Latest shared context from the circle.</div>
+            <h2 className="cc-h2">Medication logs — last 4 days</h2>
+            <div className="cc-subtle">Recent medication activity for quick review.</div>
           </div>
 
-          <Link className="cc-btn" href={`/app/patients/${patientId}/journals`}>
-            Open journals
+          <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
+            Open logs
           </Link>
         </div>
 
         <div className="cc-spacer-12" />
 
-        {sharedJournals.length === 0 ? (
-          <div className="cc-small">No shared journal entries.</div>
+        {medLogs.length === 0 ? (
+          <div className="cc-small">No medication logs in the last 4 days.</div>
         ) : (
           <div className="cc-stack">
-            {sharedJournals.map((j) => (
+            {medLogs.map((log) => (
               <div
-                key={j.id}
+                key={log.id}
                 className="cc-panel-soft"
                 style={{
                   padding: 14,
@@ -370,15 +346,16 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
               >
                 <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
                   <div>
-                    <div className="cc-strong">{j.journal_type}</div>
+                    <div className="cc-strong">{medicationLabel(log.medication_id)}</div>
                     <div className="cc-small" style={{ marginTop: 4 }}>
-                      {new Date(j.created_at).toLocaleString()}
+                      {new Date(log.created_at).toLocaleString()}
                     </div>
                   </div>
 
                   <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    {j.pain_level != null ? <span className="cc-pill">Pain: {j.pain_level}</span> : null}
-                    <span className="cc-pill cc-pill-primary">Shared</span>
+                    <span className={`cc-pill ${log.status === "taken" ? "cc-pill-primary" : ""}`}>
+                      {log.status ?? "—"}
+                    </span>
                   </div>
                 </div>
               </div>
