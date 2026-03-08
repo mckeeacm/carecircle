@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type Mode = "login" | "signup" | "reset";
@@ -34,6 +34,8 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
+const PENDING_INVITE_KEY = "carecircle:pending-invite-token:v1";
+
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
@@ -59,8 +61,6 @@ function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
   }
 }
 
-const PENDING_INVITE_KEY = "carecircle:pending-invite-token:v1";
-
 function readPendingInviteToken(): string {
   try {
     return (localStorage.getItem(PENDING_INVITE_KEY) ?? "").trim();
@@ -81,9 +81,18 @@ function clearPendingInviteToken() {
   } catch {}
 }
 
+function readInviteFromLocation(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const url = new URL(window.location.href);
+    return (url.searchParams.get("invite") ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
 export default function Home() {
   const router = useRouter();
-  const sp = useSearchParams();
   const supabase = useMemo(() => supabaseBrowser(), []);
 
   const [mode, setMode] = useState<Mode>("login");
@@ -95,14 +104,10 @@ export default function Home() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [inviteTokenFromUrl, setInviteTokenFromUrl] = useState("");
 
   async function routeAfterAuth(userId: string) {
-    const inviteFromUrl = (sp.get("invite") ?? "").trim();
-    const pendingInvite = inviteFromUrl || readPendingInviteToken();
-
-    if (inviteFromUrl) {
-      writePendingInviteToken(inviteFromUrl);
-    }
+    const pendingInvite = inviteTokenFromUrl || readPendingInviteToken();
 
     if (pendingInvite) {
       router.replace(`/app/onboarding?invite=${encodeURIComponent(pendingInvite)}`);
@@ -176,12 +181,17 @@ export default function Home() {
   }
 
   useEffect(() => {
-    let active = true;
-
-    const inviteFromUrl = (sp.get("invite") ?? "").trim();
-    if (inviteFromUrl) {
-      writePendingInviteToken(inviteFromUrl);
+    const token = readInviteFromLocation();
+    if (token) {
+      writePendingInviteToken(token);
+      setInviteTokenFromUrl(token);
+    } else {
+      setInviteTokenFromUrl("");
     }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
 
     (async () => {
       try {
@@ -213,7 +223,7 @@ export default function Home() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [router, sp, supabase]);
+  }, [inviteTokenFromUrl, router, supabase]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
