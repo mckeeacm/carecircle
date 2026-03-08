@@ -11,6 +11,7 @@ import {
   wrapVaultKeyForRecipient,
   type WrappedKeyV1,
 } from "@/lib/e2ee/vaultShares";
+import MobileShell from "@/app/components/MobileShell";
 
 type CacheRecord = {
   v: 1;
@@ -19,13 +20,7 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
-type StatusKind =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "working"
-  | "waiting"
-  | "error";
+type StatusKind = "idle" | "loading" | "ready" | "working" | "waiting" | "error";
 
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
@@ -111,8 +106,7 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{
   const kp: any = await getOrCreateDeviceKeypair();
 
   const rawSk =
-    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ??
-    null;
+    pickUint8(kp, ["secretKey", "secret_key", "sk", "privateKey", "private_key"]) ?? null;
 
   if (!(rawSk instanceof Uint8Array)) {
     throw new Error("device_keypair_missing_keys");
@@ -280,8 +274,7 @@ export default function VaultInitClient() {
     if (!share?.wrapped_key) return false;
 
     const wrapped = share.wrapped_key as WrappedKeyV1;
-    const { publicKey: myPublicKey, privateKey: myPrivateKey } =
-      await getMatchedBoxKeypairOrThrow();
+    const { publicKey: myPublicKey, privateKey: myPrivateKey } = await getMatchedBoxKeypairOrThrow();
 
     const vaultKey = await unwrapVaultKeyForMe({
       wrapped,
@@ -293,7 +286,7 @@ export default function VaultInitClient() {
     return true;
   }
 
-  async function shareOrInitialiseAsController(userId: string) {
+  async function shareOrInitialiseAsController(userId: string): Promise<number> {
     const cachedVault = readCachedVaultKey(pid, userId);
 
     if (cachedVault) {
@@ -313,7 +306,11 @@ export default function VaultInitClient() {
 
       const compatible = (pubKeys ?? []).filter((p: any) => p.algorithm === "crypto_box_seal");
 
-      if (compatible.length === 0) return;
+      console.log("vault share userIds", userIds);
+      console.log("vault share pubKeys", pubKeys);
+      console.log("vault share compatible", compatible);
+
+      if (compatible.length === 0) return 0;
 
       const { data: existing, error: exErr } = await supabase
         .from("patient_vault_shares")
@@ -324,7 +321,11 @@ export default function VaultInitClient() {
       const existingSet = new Set((existing ?? []).map((r: any) => r.user_id).filter(Boolean));
       const targets = compatible.filter((p: any) => !existingSet.has(p.user_id));
 
-      if (targets.length === 0) return;
+      console.log("vault share existing", existing);
+      console.log("vault share existingSet", Array.from(existingSet));
+      console.log("vault share targets", targets);
+
+      if (targets.length === 0) return 0;
 
       const rows = await Promise.all(
         targets.map(async (p: any) => {
@@ -337,12 +338,17 @@ export default function VaultInitClient() {
         })
       );
 
+      console.log("vault share rows to upsert", rows);
+
       const { error: upErr } = await supabase
         .from("patient_vault_shares")
         .upsert(rows, { onConflict: "patient_id,user_id" });
+
+      console.log("vault share upsert error", upErr);
+
       if (upErr) throw upErr;
 
-      return;
+      return rows.length;
     }
 
     const { data: members, error: memErr } = await supabase
@@ -360,7 +366,12 @@ export default function VaultInitClient() {
     if (pkErr) throw pkErr;
 
     const compatible = (pubKeys ?? []).filter((p: any) => p.algorithm === "crypto_box_seal");
-    if (compatible.length === 0) return;
+
+    console.log("vault init members", userIds);
+    console.log("vault init pubKeys", pubKeys);
+    console.log("vault init compatible", compatible);
+
+    if (compatible.length === 0) return 0;
 
     const sodium = await getSodium();
     const vaultKey = sodium.randombytes_buf(32);
@@ -378,10 +389,17 @@ export default function VaultInitClient() {
       })
     );
 
+    console.log("vault init rows to upsert", rows);
+
     const { error: upErr } = await supabase
       .from("patient_vault_shares")
       .upsert(rows, { onConflict: "patient_id,user_id" });
+
+    console.log("vault init upsert error", upErr);
+
     if (upErr) throw upErr;
+
+    return rows.length;
   }
 
   async function fixSecureAccess() {
@@ -468,9 +486,7 @@ export default function VaultInitClient() {
       } else {
         setStatusKind("error");
         setStatusTitle("Secure access could not be completed");
-        setStatusText(
-          "Please try again. If this keeps happening, use Advanced troubleshooting below."
-        );
+        setStatusText("Please try again. If this keeps happening, use Advanced troubleshooting below.");
         setMsg(text);
       }
 
@@ -510,9 +526,14 @@ export default function VaultInitClient() {
       if (!user?.id) throw new Error("not_authenticated");
       if (isController !== true) throw new Error("Only a controller can share secure access.");
 
-      await shareOrInitialiseAsController(user.id);
+      const sharedCount = await shareOrInitialiseAsController(user.id);
       await refreshState({ id: user.id, email: user.email });
-      setMsg("Secure access shared to any members who were ready but missing a share.");
+
+      setMsg(
+        sharedCount > 0
+          ? `Secure access shared to ${sharedCount} member${sharedCount === 1 ? "" : "s"}.`
+          : "No ready members were missing a secure share."
+      );
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_share");
     } finally {
@@ -607,157 +628,153 @@ export default function VaultInitClient() {
 
   if (loading) {
     return (
-      <div className="cc-page">
-        <div className="cc-container cc-stack">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Secure access</h1>
-            <div className="cc-subtle">Loading…</div>
-          </div>
-          <div className="cc-card cc-card-pad">Checking secure access…</div>
-        </div>
-      </div>
+      <MobileShell
+        title="Secure access"
+        subtitle="Loading secure circle access"
+        patientId={isUuid(pid) ? pid : undefined}
+        rightSlot={
+          <Link className="cc-btn" href="/app/account">
+            Account
+          </Link>
+        }
+      >
+        <div className="cc-card cc-card-pad">Checking secure access…</div>
+      </MobileShell>
     );
   }
 
   return (
-    <div className="cc-page">
-      <div className="cc-container cc-stack">
-        <div className="cc-row-between">
-          <div>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Secure access</h1>
-            <div className="cc-subtle cc-wrap">Circle: {pid || "—"}</div>
-            {email ? <div className="cc-small cc-subtle cc-wrap">Signed in as: {email}</div> : null}
-          </div>
+    <MobileShell
+      title="Secure access"
+      subtitle={email ? `Signed in as ${email}` : pid || "Circle secure access"}
+      patientId={isUuid(pid) ? pid : undefined}
+      rightSlot={
+        <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <Link className="cc-btn" href="/app/hub">
+            Hub
+          </Link>
+          <Link className="cc-btn" href="/app/account">
+            Account
+          </Link>
+        </div>
+      }
+    >
+      {msg ? (
+        <div className="cc-status cc-status-error">
+          <div className="cc-status-error-title">Message</div>
+          <div className="cc-wrap">{msg}</div>
+        </div>
+      ) : null}
 
-          <div className="cc-row">
-            <Link className="cc-btn" href="/app/hub">
-              Hub
+      <div
+        className={`cc-card cc-card-pad cc-stack ${
+          statusKind === "ready"
+            ? "cc-panel-green"
+            : statusKind === "waiting"
+            ? "cc-panel-blue"
+            : statusKind === "error"
+            ? "cc-status cc-status-error"
+            : ""
+        }`}
+      >
+        <div className="cc-strong" style={{ fontSize: 28 }}>
+          {statusTitle}
+        </div>
+        <div className="cc-subtle cc-wrap">{statusText}</div>
+
+        <div className="cc-row">
+          <button
+            className="cc-btn cc-btn-primary"
+            onClick={fixSecureAccess}
+            disabled={busy === "fix"}
+          >
+            {busy === "fix" ? "Fixing secure access…" : "Fix secure access"}
+          </button>
+
+          {hasCached && isUuid(pid) ? (
+            <Link className="cc-btn" href={`/app/patients/${pid}/today`}>
+              Continue to Today
             </Link>
-            <Link className="cc-btn" href="/app/account">
-              Account
-            </Link>
-          </div>
-        </div>
-
-        {msg ? (
-          <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Message</div>
-            <div className="cc-wrap">{msg}</div>
-          </div>
-        ) : null}
-
-        <div
-          className={`cc-card cc-card-pad cc-stack ${
-            statusKind === "ready"
-              ? "cc-panel-green"
-              : statusKind === "waiting"
-              ? "cc-panel-blue"
-              : statusKind === "error"
-              ? "cc-status cc-status-error"
-              : ""
-          }`}
-        >
-          <div className="cc-strong" style={{ fontSize: 28 }}>
-            {statusTitle}
-          </div>
-          <div className="cc-subtle cc-wrap">{statusText}</div>
-
-          <div className="cc-row">
-            <button
-              className="cc-btn cc-btn-primary"
-              onClick={fixSecureAccess}
-              disabled={busy === "fix"}
-            >
-              {busy === "fix" ? "Fixing secure access…" : "Fix secure access"}
-            </button>
-
-            {hasCached ? (
-              <Link className="cc-btn" href={`/app/patients/${pid}/today`}>
-                Continue to Today
-              </Link>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-strong">What this does</div>
-          <div className="cc-small cc-subtle">
-            This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.
-          </div>
-        </div>
-
-        <div className="cc-card cc-card-pad cc-stack">
-          <div className="cc-row-between">
-            <div className="cc-strong">Advanced troubleshooting</div>
-            <button className="cc-btn" onClick={() => setDebugOpen((v) => !v)}>
-              {debugOpen ? "Hide" : "Show"}
-            </button>
-          </div>
-
-          {debugOpen ? (
-            <>
-              <div className="cc-row" style={{ flexWrap: "wrap" }}>
-                <span className={`cc-pill ${hasPublicKey ? "cc-pill-primary" : ""}`}>
-                  Device key: {hasPublicKey ? "OK" : hasPublicKey === null ? "unknown" : "missing"}
-                </span>
-                <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
-                  Share row: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
-                </span>
-                <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
-                  Cached vault: {hasCached ? "present" : "missing"}
-                </span>
-                <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
-                  Controller: {isController === null ? "unknown" : isController ? "true" : "false"}
-                </span>
-                <span className="cc-pill">{myAlg || "—"}</span>
-              </div>
-
-              <div className="cc-row">
-                <button className="cc-btn" onClick={() => refreshState()} disabled={!!busy}>
-                  Refresh status
-                </button>
-
-                <button
-                  className="cc-btn"
-                  onClick={resetThisDeviceAndForgetVault}
-                  disabled={busy === "reset" || !uid}
-                >
-                  {busy === "reset" ? "Resetting…" : "Reset this device"}
-                </button>
-
-                {isController ? (
-                  <button
-                    className="cc-btn"
-                    onClick={shareKeyToNewMembers}
-                    disabled={busy === "share"}
-                  >
-                    {busy === "share" ? "Sharing…" : "Share to ready members"}
-                  </button>
-                ) : null}
-              </div>
-
-              {isController ? (
-                <div className="cc-panel">
-                  <div className="cc-strong">Danger zone</div>
-                  <div className="cc-small cc-subtle">
-                    Creating a NEW circle key can leave older encrypted content tied to the previous key.
-                  </div>
-                  <div className="cc-spacer-12" />
-                  <button
-                    className="cc-btn cc-btn-danger"
-                    onClick={initialiseNewVaultKey}
-                    disabled={busy === "rekey"}
-                  >
-                    {busy === "rekey" ? "Rekeying…" : "Initialise NEW secure key"}
-                  </button>
-                </div>
-              ) : null}
-            </>
           ) : null}
         </div>
       </div>
-    </div>
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-strong">What this does</div>
+        <div className="cc-small cc-subtle">
+          This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.
+        </div>
+      </div>
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div className="cc-strong">Advanced troubleshooting</div>
+          <button className="cc-btn" onClick={() => setDebugOpen((v) => !v)}>
+            {debugOpen ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        {debugOpen ? (
+          <>
+            <div className="cc-row" style={{ flexWrap: "wrap" }}>
+              <span className={`cc-pill ${hasPublicKey ? "cc-pill-primary" : ""}`}>
+                Device key: {hasPublicKey ? "OK" : hasPublicKey === null ? "unknown" : "missing"}
+              </span>
+              <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
+                Share row: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
+              </span>
+              <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
+                Cached vault: {hasCached ? "present" : "missing"}
+              </span>
+              <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
+                Controller: {isController === null ? "unknown" : isController ? "true" : "false"}
+              </span>
+              <span className="cc-pill">{myAlg || "—"}</span>
+            </div>
+
+            <div className="cc-row">
+              <button className="cc-btn" onClick={() => refreshState()} disabled={!!busy}>
+                Refresh status
+              </button>
+
+              <button
+                className="cc-btn"
+                onClick={resetThisDeviceAndForgetVault}
+                disabled={busy === "reset" || !uid}
+              >
+                {busy === "reset" ? "Resetting…" : "Reset this device"}
+              </button>
+
+              {isController ? (
+                <button
+                  className="cc-btn"
+                  onClick={shareKeyToNewMembers}
+                  disabled={busy === "share"}
+                >
+                  {busy === "share" ? "Sharing…" : "Share to ready members"}
+                </button>
+              ) : null}
+            </div>
+
+            {isController ? (
+              <div className="cc-panel">
+                <div className="cc-strong">Danger zone</div>
+                <div className="cc-small cc-subtle">
+                  Creating a NEW circle key can leave older encrypted content tied to the previous key.
+                </div>
+                <div className="cc-spacer-12" />
+                <button
+                  className="cc-btn cc-btn-danger"
+                  onClick={initialiseNewVaultKey}
+                  disabled={busy === "rekey"}
+                >
+                  {busy === "rekey" ? "Rekeying…" : "Initialise NEW secure key"}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </MobileShell>
   );
 }
