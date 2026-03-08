@@ -8,19 +8,57 @@ type BottomNavProps = {
   patientId?: string;
 };
 
-function navClass(active: boolean) {
-  return `cc-bottom-nav-item ${active ? "cc-bottom-nav-item-active" : ""}`;
+function navClass(active: boolean, disabled = false) {
+  return `cc-bottom-nav-item ${active ? "cc-bottom-nav-item-active" : ""} ${
+    disabled ? "cc-bottom-nav-item-disabled" : ""
+  }`;
+}
+
+function NavItem({
+  href,
+  active,
+  disabled,
+  icon,
+  label,
+}: {
+  href?: string;
+  active: boolean;
+  disabled?: boolean;
+  icon: string;
+  label: string;
+}) {
+  if (!href || disabled) {
+    return (
+      <button
+        type="button"
+        className={navClass(active, true)}
+        disabled
+        aria-disabled="true"
+        style={{ cursor: "not-allowed" }}
+      >
+        <span className="cc-bottom-nav-icon">{icon}</span>
+        <span className="cc-bottom-nav-label">{label}</span>
+      </button>
+    );
+  }
+
+  return (
+    <Link className={navClass(active)} href={href}>
+      <span className="cc-bottom-nav-icon">{icon}</span>
+      <span className="cc-bottom-nav-label">{label}</span>
+    </Link>
+  );
 }
 
 export default function BottomNav({ active, patientId }: BottomNavProps) {
-  const todayHref = patientId ? `/app/patients/${patientId}/today` : "/app/today";
-  const journalHref = patientId ? `/app/patients/${patientId}/journals` : "/app/journal";
-  const messagesHref = patientId ? `/app/patients/${patientId}/dm` : "/app/messages";
-  const profileHref = patientId ? `/app/patients/${patientId}/profile` : "/app/profile";
+  const todayHref = patientId ? `/app/patients/${patientId}/today` : undefined;
+  const journalHref = patientId ? `/app/patients/${patientId}/journals` : undefined;
+  const messagesHref = patientId ? `/app/patients/${patientId}/dm` : undefined;
+  const profileHref = patientId ? `/app/patients/${patientId}/profile` : undefined;
 
   const accountHref = "/app/account";
   const permissionsHref = "/app/account/permissions";
-  const vaultHref = patientId ? `/app/patients/${patientId}/vault-init` : "/app/vault";
+  const vaultHref = patientId ? `/app/patients/${patientId}/vault-init` : undefined;
 
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
@@ -46,27 +84,37 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
     };
   }, []);
 
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [patientId]);
+
   return (
     <nav className="cc-bottom-nav" aria-label="Primary navigation">
-      <Link className={navClass(active === "today")} href={todayHref}>
-        <span className="cc-bottom-nav-icon">◷</span>
-        <span className="cc-bottom-nav-label">Today</span>
-      </Link>
+      <NavItem href={todayHref} active={active === "today"} disabled={!patientId} icon="◷" label="Today" />
 
-      <Link className={navClass(active === "journal")} href={journalHref}>
-        <span className="cc-bottom-nav-icon">✎</span>
-        <span className="cc-bottom-nav-label">Journal</span>
-      </Link>
+      <NavItem
+        href={journalHref}
+        active={active === "journal"}
+        disabled={!patientId}
+        icon="✎"
+        label="Journal"
+      />
 
-      <Link className={navClass(active === "messages")} href={messagesHref}>
-        <span className="cc-bottom-nav-icon">✉</span>
-        <span className="cc-bottom-nav-label">Messages</span>
-      </Link>
+      <NavItem
+        href={messagesHref}
+        active={active === "messages"}
+        disabled={!patientId}
+        icon="✉"
+        label="Messages"
+      />
 
-      <Link className={navClass(active === "profile")} href={profileHref}>
-        <span className="cc-bottom-nav-icon">☰</span>
-        <span className="cc-bottom-nav-label">Profile</span>
-      </Link>
+      <NavItem
+        href={profileHref}
+        active={active === "profile"}
+        disabled={!patientId}
+        icon="☰"
+        label="Profile"
+      />
 
       <div
         ref={moreRef}
@@ -127,15 +175,27 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
               Permissions
             </Link>
 
-            <Link
-              className="cc-btn"
-              href={vaultHref}
-              role="menuitem"
-              onClick={() => setMoreOpen(false)}
-              style={{ justifyContent: "flex-start", minHeight: 46 }}
-            >
-              Vault
-            </Link>
+            {vaultHref ? (
+              <Link
+                className="cc-btn"
+                href={vaultHref}
+                role="menuitem"
+                onClick={() => setMoreOpen(false)}
+                style={{ justifyContent: "flex-start", minHeight: 46 }}
+              >
+                Vault
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="cc-btn cc-btn-disabled"
+                disabled
+                aria-disabled="true"
+                style={{ justifyContent: "flex-start", minHeight: 46, cursor: "not-allowed" }}
+              >
+                Vault
+              </button>
+            )}
           </div>
         ) : null}
       </div>

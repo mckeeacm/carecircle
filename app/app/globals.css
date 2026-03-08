@@ -554,4 +554,9 @@ img {
   .cc-subtle {
     font-size: 12px;
   }
+
+  .cc-bottom-nav-item-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
 }
