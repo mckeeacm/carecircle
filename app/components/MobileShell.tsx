@@ -41,6 +41,7 @@ export default function MobileShell({
   subtitle,
   patientId,
   children,
+  hideBottomNav = false,
   rightSlot,
 }: MobileShellProps) {
   const pathname = usePathname();
@@ -49,7 +50,9 @@ export default function MobileShell({
   return (
     <div className="cc-page">
       <div className="cc-app-shell">
-        <div className="cc-app-shell-inner">
+        <div
+          className={`cc-app-shell-inner ${hideBottomNav ? "cc-app-shell-inner-no-nav" : ""}`}
+        >
           <header className="cc-mobile-header cc-card">
             <div className="cc-mobile-header-main">
               <div className="cc-kicker">CareCircle</div>
@@ -74,12 +77,10 @@ export default function MobileShell({
             </div>
           </header>
 
-          <main className="cc-mobile-main">
-            {children}
-          </main>
+          <main className="cc-mobile-main">{children}</main>
         </div>
 
-        <BottomNav active={active} patientId={patientId} />
+        {!hideBottomNav ? <BottomNav active={active} patientId={patientId} /> : null}
       </div>
     </div>
   );
