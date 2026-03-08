@@ -5,7 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { getSodium } from "@/lib/e2ee/sodium";
-import { getOrCreateDeviceKeypair } from "@/lib/e2ee/deviceKeys";
+import {
+  getOrCreateDeviceKeypair,
+  resetDeviceKeypair,
+} from "@/lib/e2ee/deviceKeys";
 import {
   unwrapVaultKeyForMe,
   wrapVaultKeyForRecipient,
@@ -54,7 +57,7 @@ function isUuid(s: unknown): s is string {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
+function bytesToBase64(bytes: Uint8Array) {
   let bin = "";
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   return btoa(bin);
@@ -98,6 +101,12 @@ function writeCachedVaultKey(pid: string, uid: string, vaultKey: Uint8Array) {
   } catch {}
 }
 
+function forgetCachedVaultKey(pid: string, uid: string) {
+  try {
+    localStorage.removeItem(cacheKey(pid, uid));
+  } catch {}
+}
+
 function readPendingInviteToken() {
   try {
     return (localStorage.getItem(PENDING_INVITE_KEY) ?? "").trim();
@@ -132,7 +141,10 @@ function normaliseSecretKey(sk: Uint8Array): Uint8Array {
   return sk;
 }
 
-async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array }> {
+async function getMatchedBoxKeypairOrThrow(): Promise<{
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
+}> {
   const kp: any = await getOrCreateDeviceKeypair();
 
   const rawSk =
@@ -143,7 +155,6 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; p
   }
 
   const privateKey = normaliseSecretKey(rawSk);
-
   const sodium = await getSodium();
   const publicKey = sodium.crypto_scalarmult_base(privateKey);
 
@@ -152,6 +163,16 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; p
   }
 
   return { publicKey, privateKey };
+}
+
+function isKeyMismatchError(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("incorrect key pair") ||
+    m.includes("incorrect keypair") ||
+    m.includes("ciphertext") ||
+    m.includes("cannot be decrypted")
+  );
 }
 
 function StepRow({ label, active, done }: { label: string; active: boolean; done: boolean }) {
@@ -190,8 +211,10 @@ export default function OnboardingClient() {
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
 
   const [deviceKeyOk, setDeviceKeyOk] = useState(false);
+  const [deviceKeyMatchesServer, setDeviceKeyMatchesServer] = useState<boolean | null>(null);
   const [hasVaultShare, setHasVaultShare] = useState<boolean>(false);
   const [hasCachedVault, setHasCachedVault] = useState<boolean>(false);
+  const [vaultUnlockNeedsReshare, setVaultUnlockNeedsReshare] = useState(false);
 
   const [inviteStatus, setInviteStatus] = useState<
     "idle" | "checking" | "need_auth" | "accepting" | "accepted" | "error"
@@ -245,22 +268,37 @@ export default function OnboardingClient() {
       const realUid = userId ?? uid;
       if (!realUid) {
         setDeviceKeyOk(false);
+        setDeviceKeyMatchesServer(null);
         return false;
       }
 
+      const local = await getMatchedBoxKeypairOrThrow();
+
       const { data, error } = await supabase
         .from("user_public_keys")
-        .select("user_id, algorithm")
+        .select("user_id, public_key, algorithm")
         .eq("user_id", realUid)
         .maybeSingle();
 
       if (error) throw error;
 
-      const ok = !!data?.user_id && ((data as any)?.algorithm ?? "") === "crypto_box_seal";
-      setDeviceKeyOk(ok);
-      return ok;
+      if (!data?.user_id) {
+        setDeviceKeyOk(false);
+        setDeviceKeyMatchesServer(null);
+        return false;
+      }
+
+      const alg = (data as any)?.algorithm ?? "";
+      const serverPublicKey = String((data as any)?.public_key ?? "").trim();
+      const localPublicKey = bytesToBase64(local.publicKey);
+      const matches = alg === "crypto_box_seal" && !!serverPublicKey && serverPublicKey === localPublicKey;
+
+      setDeviceKeyOk(matches);
+      setDeviceKeyMatchesServer(matches);
+      return matches;
     } catch {
       setDeviceKeyOk(false);
+      setDeviceKeyMatchesServer(null);
       return false;
     }
   }
@@ -370,6 +408,7 @@ export default function OnboardingClient() {
         setHasVaultShare(false);
         setHasCachedVault(false);
         setDeviceKeyOk(false);
+        setDeviceKeyMatchesServer(null);
         setHasProfile(false);
         setLoading(false);
         return;
@@ -547,6 +586,7 @@ export default function OnboardingClient() {
   async function enableE2EEOnThisDevice() {
     setBusy("enable-e2ee");
     setMsg(null);
+    setVaultUnlockNeedsReshare(false);
 
     try {
       if (!uid) throw new Error("not_authenticated");
@@ -564,8 +604,44 @@ export default function OnboardingClient() {
       if (error) throw error;
 
       setDeviceKeyOk(true);
+      setDeviceKeyMatchesServer(true);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_enable_e2ee");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resetSecureDeviceOnThisDevice() {
+    setBusy("reset-device");
+    setMsg(null);
+    setVaultUnlockNeedsReshare(false);
+
+    try {
+      if (!uid) throw new Error("not_authenticated");
+
+      if (selectedPatientId) {
+        forgetCachedVaultKey(selectedPatientId, uid);
+      }
+
+      const { publicKey } = await resetDeviceKeypair();
+
+      const { error } = await supabase.from("user_public_keys").upsert(
+        {
+          user_id: uid,
+          public_key: bytesToBase64(publicKey),
+          algorithm: "crypto_box_seal",
+        },
+        { onConflict: "user_id" }
+      );
+      if (error) throw error;
+
+      setDeviceKeyOk(true);
+      setDeviceKeyMatchesServer(true);
+      setHasCachedVault(false);
+      setMsg("This device now has a fresh secure key. The controller must now share secure access again.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_reset_secure_device");
     } finally {
       setBusy(null);
     }
@@ -574,6 +650,7 @@ export default function OnboardingClient() {
   async function unlockVaultOnThisDevice() {
     setBusy("unlock-vault");
     setMsg(null);
+    setVaultUnlockNeedsReshare(false);
 
     try {
       if (!uid || !selectedPatientId) throw new Error("missing_circle_or_user");
@@ -595,7 +672,16 @@ export default function OnboardingClient() {
       writeCachedVaultKey(selectedPatientId, uid, vaultKey);
       setHasCachedVault(true);
     } catch (e: any) {
-      setMsg(e?.message ?? "failed_to_unlock_vault");
+      const text = e?.message ?? "failed_to_unlock_vault";
+      if (isKeyMismatchError(text)) {
+        setVaultUnlockNeedsReshare(true);
+        setHasCachedVault(false);
+        setMsg(
+          "This secure share was created for an older device key. Reset this secure device, then ask the controller to share access again."
+        );
+      } else {
+        setMsg(text);
+      }
     } finally {
       setBusy(null);
     }
@@ -649,6 +735,7 @@ export default function OnboardingClient() {
 
       setHasVaultShare(true);
       setHasCachedVault(true);
+      setVaultUnlockNeedsReshare(false);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_init_new_vault");
     } finally {
@@ -701,6 +788,7 @@ export default function OnboardingClient() {
       if (upErr) throw upErr;
 
       setHasVaultShare(true);
+      setMsg("Vault access shared to ready members.");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_share_vault");
     } finally {
@@ -904,7 +992,7 @@ export default function OnboardingClient() {
 
             <div className="cc-row">
               <span className={`cc-pill ${deviceKeyOk ? "cc-pill-primary" : ""}`}>
-                Device key: {deviceKeyOk ? "OK" : "missing"}
+                Device key: {deviceKeyOk ? "OK" : "needs attention"}
               </span>
               <span className={`cc-pill ${hasVaultShare ? "cc-pill-primary" : ""}`}>
                 Share row: {hasVaultShare ? "present" : "missing"}
@@ -1018,9 +1106,27 @@ export default function OnboardingClient() {
                 <div className="cc-panel-blue">
                   <div className="cc-strong">What you need</div>
                   <div className="cc-subtle">
-                    1. This device needs its secure key. 2. Your circle needs a vault share for you. 3. This device then needs to unlock and cache that vault.
+                    1. This device needs one valid secure key. 2. Your circle needs a vault share for that exact key. 3. This device then unlocks and caches the vault.
                   </div>
                 </div>
+
+                {deviceKeyMatchesServer === false ? (
+                  <div className="cc-status cc-status-error">
+                    <div className="cc-status-error-title">Secure device mismatch</div>
+                    <div className="cc-subtle">
+                      This device’s local secure key does not match the key currently registered for your account. Reset this secure device, then continue.
+                    </div>
+                  </div>
+                ) : null}
+
+                {vaultUnlockNeedsReshare ? (
+                  <div className="cc-status cc-status-error">
+                    <div className="cc-status-error-title">Secure share needs re-sharing</div>
+                    <div className="cc-subtle">
+                      This circle share was created for an older device key. Reset this secure device, then ask the controller to share vault access again.
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="cc-row">
                   <button
@@ -1029,6 +1135,14 @@ export default function OnboardingClient() {
                     disabled={busy === "enable-e2ee" || deviceKeyOk}
                   >
                     {deviceKeyOk ? "Device key ready" : busy === "enable-e2ee" ? "Enabling…" : "Enable secure key on this device"}
+                  </button>
+
+                  <button
+                    className="cc-btn"
+                    onClick={resetSecureDeviceOnThisDevice}
+                    disabled={busy === "reset-device" || !uid}
+                  >
+                    {busy === "reset-device" ? "Resetting…" : "Reset secure device on this device"}
                   </button>
 
                   {isController ? (
@@ -1051,6 +1165,12 @@ export default function OnboardingClient() {
                     >
                       {busy === "share-vault" ? "Sharing…" : "Share vault to members"}
                     </button>
+                  </div>
+                ) : null}
+
+                {!isController ? (
+                  <div className="cc-small cc-subtle">
+                    If your secure key was reset, the circle controller must share access to you again before unlock can work.
                   </div>
                 ) : null}
 
