@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.carecircle.app",
+      "sha256_cert_fingerprints": [
+        "E7:2A:43:E7:B2:C5:C5:0E:1B:75:63:61:03:EE:1E:40:7A:76:F7:45:76:D2:32:3F:7A:37:7B:F0:0B:98:0E:E6"
+      ]
+    }
+  }
+]
