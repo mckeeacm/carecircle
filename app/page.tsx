@@ -120,7 +120,9 @@ export default function Home() {
         return;
       }
 
-      if (!password) throw new Error("Please enter your password.");
+      if (!password) {
+        throw new Error("Please enter your password.");
+      }
 
       if (mode === "signup") {
         if (password.length < 8) {
@@ -142,14 +144,16 @@ export default function Home() {
         return;
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
 
-      if (error) throw error;
+        if (error) throw error;
 
-      routeAfterAuth();
+        routeAfterAuth();
+      }
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong.");
     } finally {
