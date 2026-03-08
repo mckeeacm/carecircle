@@ -25,6 +25,12 @@ type PatientProfileRow = {
   safety_notes_summary: string | null;
   diagnoses_summary: string | null;
   languages_spoken_summary: string | null;
+  has_health_wellbeing_lpa: boolean | null;
+  health_wellbeing_lpa_holder_name: string | null;
+  has_respect_form: boolean | null;
+  respect_form_holder_name: string | null;
+  has_unofficial_representative: boolean | null;
+  unofficial_representative_name: string | null;
 };
 
 type MedicationRow = {
@@ -75,6 +81,13 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   const [safetySummary, setSafetySummary] = useState("");
   const [diagnosesSummary, setDiagnosesSummary] = useState("");
   const [languagesSummary, setLanguagesSummary] = useState("");
+
+  const [hasHealthWellbeingLpa, setHasHealthWellbeingLpa] = useState(false);
+  const [healthWellbeingLpaHolderName, setHealthWellbeingLpaHolderName] = useState("");
+  const [hasRespectForm, setHasRespectForm] = useState(false);
+  const [respectFormHolderName, setRespectFormHolderName] = useState("");
+  const [hasUnofficialRepresentative, setHasUnofficialRepresentative] = useState(false);
+  const [unofficialRepresentativeName, setUnofficialRepresentativeName] = useState("");
 
   const [medsLoading, setMedsLoading] = useState(false);
   const [medsSaving, setMedsSaving] = useState<string | null>(null);
@@ -129,7 +142,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary"
+          "patient_id, created_at, updated_at, communication_notes_encrypted, allergies_encrypted, safety_notes_encrypted, diagnoses_encrypted, languages_spoken_encrypted, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary, has_health_wellbeing_lpa, health_wellbeing_lpa_holder_name, has_respect_form, respect_form_holder_name, has_unofficial_representative, unofficial_representative_name"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
@@ -166,6 +179,13 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       setSafetySummary(row?.safety_notes_summary ?? "");
       setDiagnosesSummary(row?.diagnoses_summary ?? "");
       setLanguagesSummary(row?.languages_spoken_summary ?? "");
+
+      setHasHealthWellbeingLpa(!!row?.has_health_wellbeing_lpa);
+      setHealthWellbeingLpaHolderName(row?.health_wellbeing_lpa_holder_name ?? "");
+      setHasRespectForm(!!row?.has_respect_form);
+      setRespectFormHolderName(row?.respect_form_holder_name ?? "");
+      setHasUnofficialRepresentative(!!row?.has_unofficial_representative);
+      setUnofficialRepresentativeName(row?.unofficial_representative_name ?? "");
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_profile");
     } finally {
@@ -222,6 +242,16 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           safety_notes_summary: safetySummary.trim() || null,
           diagnoses_summary: diagnosesSummary.trim() || null,
           languages_spoken_summary: languagesSummary.trim() || null,
+          has_health_wellbeing_lpa: hasHealthWellbeingLpa,
+          health_wellbeing_lpa_holder_name: hasHealthWellbeingLpa
+            ? healthWellbeingLpaHolderName.trim() || null
+            : null,
+          has_respect_form: hasRespectForm,
+          respect_form_holder_name: hasRespectForm ? respectFormHolderName.trim() || null : null,
+          has_unofficial_representative: hasUnofficialRepresentative,
+          unofficial_representative_name: hasUnofficialRepresentative
+            ? unofficialRepresentativeName.trim() || null
+            : null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "patient_id" }
@@ -388,6 +418,32 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         </div>
       </div>
 
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <h2 className="cc-h2">Advance planning</h2>
+            <div className="cc-subtle">
+              Record key decision-making and representation details for handover and care.
+            </div>
+          </div>
+        </div>
+
+        <AdvancePlanningEditor
+          hasHealthWellbeingLpa={hasHealthWellbeingLpa}
+          healthWellbeingLpaHolderName={healthWellbeingLpaHolderName}
+          hasRespectForm={hasRespectForm}
+          respectFormHolderName={respectFormHolderName}
+          hasUnofficialRepresentative={hasUnofficialRepresentative}
+          unofficialRepresentativeName={unofficialRepresentativeName}
+          onHasHealthWellbeingLpaChange={setHasHealthWellbeingLpa}
+          onHealthWellbeingLpaHolderNameChange={setHealthWellbeingLpaHolderName}
+          onHasRespectFormChange={setHasRespectForm}
+          onRespectFormHolderNameChange={setRespectFormHolderName}
+          onHasUnofficialRepresentativeChange={setHasUnofficialRepresentative}
+          onUnofficialRepresentativeNameChange={setUnofficialRepresentativeName}
+        />
+      </div>
+
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
@@ -471,6 +527,15 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
               Open summary
             </Link>
           </div>
+
+          <AdvancePlanningSummaryCard
+            hasHealthWellbeingLpa={hasHealthWellbeingLpa}
+            healthWellbeingLpaHolderName={healthWellbeingLpaHolderName}
+            hasRespectForm={hasRespectForm}
+            respectFormHolderName={respectFormHolderName}
+            hasUnofficialRepresentative={hasUnofficialRepresentative}
+            unofficialRepresentativeName={unofficialRepresentativeName}
+          />
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
@@ -588,6 +653,187 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         )}
       </div>
     </MobileShell>
+  );
+}
+
+function YesNoButtons({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: 10,
+      }}
+    >
+      <button
+        type="button"
+        className={`cc-btn ${value ? "cc-btn-primary" : ""}`}
+        onClick={() => onChange(true)}
+        style={{ minHeight: 46 }}
+      >
+        Yes
+      </button>
+      <button
+        type="button"
+        className={`cc-btn ${!value ? "cc-btn-primary" : ""}`}
+        onClick={() => onChange(false)}
+        style={{ minHeight: 46 }}
+      >
+        No
+      </button>
+    </div>
+  );
+}
+
+function AdvancePlanningEditor({
+  hasHealthWellbeingLpa,
+  healthWellbeingLpaHolderName,
+  hasRespectForm,
+  respectFormHolderName,
+  hasUnofficialRepresentative,
+  unofficialRepresentativeName,
+  onHasHealthWellbeingLpaChange,
+  onHealthWellbeingLpaHolderNameChange,
+  onHasRespectFormChange,
+  onRespectFormHolderNameChange,
+  onHasUnofficialRepresentativeChange,
+  onUnofficialRepresentativeNameChange,
+}: {
+  hasHealthWellbeingLpa: boolean;
+  healthWellbeingLpaHolderName: string;
+  hasRespectForm: boolean;
+  respectFormHolderName: string;
+  hasUnofficialRepresentative: boolean;
+  unofficialRepresentativeName: string;
+  onHasHealthWellbeingLpaChange: (value: boolean) => void;
+  onHealthWellbeingLpaHolderNameChange: (value: string) => void;
+  onHasRespectFormChange: (value: boolean) => void;
+  onRespectFormHolderNameChange: (value: string) => void;
+  onHasUnofficialRepresentativeChange: (value: boolean) => void;
+  onUnofficialRepresentativeNameChange: (value: string) => void;
+}) {
+  return (
+    <div className="cc-stack">
+      <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+        <div className="cc-strong">Health and Wellbeing Power of Attorney</div>
+        <YesNoButtons value={hasHealthWellbeingLpa} onChange={onHasHealthWellbeingLpaChange} />
+        {hasHealthWellbeingLpa ? (
+          <div className="cc-field">
+            <div className="cc-label">Name of person who holds it</div>
+            <input
+              className="cc-input"
+              value={healthWellbeingLpaHolderName}
+              onChange={(e) => onHealthWellbeingLpaHolderNameChange(e.target.value)}
+              placeholder="Enter full name"
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+        <div className="cc-strong">RESPECT form in place</div>
+        <YesNoButtons value={hasRespectForm} onChange={onHasRespectFormChange} />
+        {hasRespectForm ? (
+          <div className="cc-field">
+            <div className="cc-label">Name of person who holds it</div>
+            <input
+              className="cc-input"
+              value={respectFormHolderName}
+              onChange={(e) => onRespectFormHolderNameChange(e.target.value)}
+              placeholder="Enter full name"
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+        <div className="cc-strong">
+          Unofficially nominated personal representative they feel can best speak for them
+        </div>
+        <YesNoButtons value={hasUnofficialRepresentative} onChange={onHasUnofficialRepresentativeChange} />
+        {hasUnofficialRepresentative ? (
+          <div className="cc-field">
+            <div className="cc-label">Name of person who holds it</div>
+            <input
+              className="cc-input"
+              value={unofficialRepresentativeName}
+              onChange={(e) => onUnofficialRepresentativeNameChange(e.target.value)}
+              placeholder="Enter full name"
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AdvancePlanningSummaryCard({
+  hasHealthWellbeingLpa,
+  healthWellbeingLpaHolderName,
+  hasRespectForm,
+  respectFormHolderName,
+  hasUnofficialRepresentative,
+  unofficialRepresentativeName,
+}: {
+  hasHealthWellbeingLpa: boolean;
+  healthWellbeingLpaHolderName: string | null;
+  hasRespectForm: boolean;
+  respectFormHolderName: string | null;
+  hasUnofficialRepresentative: boolean;
+  unofficialRepresentativeName: string | null;
+}) {
+  return (
+    <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
+      <div className="cc-small cc-strong">Advance planning</div>
+
+      <AdvancePlanningSummaryRow
+        label="Health and Wellbeing Power of Attorney"
+        enabled={hasHealthWellbeingLpa}
+        name={healthWellbeingLpaHolderName}
+      />
+
+      <AdvancePlanningSummaryRow
+        label="RESPECT form in place"
+        enabled={hasRespectForm}
+        name={respectFormHolderName}
+      />
+
+      <AdvancePlanningSummaryRow
+        label="Unofficially nominated personal representative"
+        enabled={hasUnofficialRepresentative}
+        name={unofficialRepresentativeName}
+      />
+    </div>
+  );
+}
+
+function AdvancePlanningSummaryRow({
+  label,
+  enabled,
+  name,
+}: {
+  label: string;
+  enabled: boolean;
+  name: string | null | undefined;
+}) {
+  return (
+    <div className="cc-wrap">
+      <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
+        <div className="cc-small cc-strong">{label}</div>
+        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>{enabled ? "Yes" : "No"}</span>
+      </div>
+      {enabled ? (
+        <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
+          Holder: <b>{name?.trim() || "Not recorded"}</b>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

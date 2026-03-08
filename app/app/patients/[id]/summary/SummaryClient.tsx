@@ -15,6 +15,12 @@ type PatientProfileSummaryRow = {
   safety_notes_summary: string | null;
   diagnoses_summary: string | null;
   languages_spoken_summary: string | null;
+  has_health_wellbeing_lpa: boolean | null;
+  health_wellbeing_lpa_holder_name: string | null;
+  has_respect_form: boolean | null;
+  respect_form_holder_name: string | null;
+  has_unofficial_representative: boolean | null;
+  unofficial_representative_name: string | null;
 };
 
 type MedicationRow = {
@@ -99,6 +105,13 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
   const [languagesSpoken, setLanguagesSpoken] = useState<string>("");
   const [profileUpdatedAt, setProfileUpdatedAt] = useState<string | null>(null);
 
+  const [hasHealthWellbeingLpa, setHasHealthWellbeingLpa] = useState(false);
+  const [healthWellbeingLpaHolderName, setHealthWellbeingLpaHolderName] = useState("");
+  const [hasRespectForm, setHasRespectForm] = useState(false);
+  const [respectFormHolderName, setRespectFormHolderName] = useState("");
+  const [hasUnofficialRepresentative, setHasUnofficialRepresentative] = useState(false);
+  const [unofficialRepresentativeName, setUnofficialRepresentativeName] = useState("");
+
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
@@ -123,7 +136,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
         .select(
-          "patient_id, updated_at, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary"
+          "patient_id, updated_at, communication_notes_summary, allergies_summary, safety_notes_summary, diagnoses_summary, languages_spoken_summary, has_health_wellbeing_lpa, health_wellbeing_lpa_holder_name, has_respect_form, respect_form_holder_name, has_unofficial_representative, unofficial_representative_name"
         )
         .eq("patient_id", patientId)
         .maybeSingle();
@@ -137,6 +150,13 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       setSafetyNotes(row?.safety_notes_summary ?? "");
       setDiagnoses(row?.diagnoses_summary ?? "");
       setLanguagesSpoken(row?.languages_spoken_summary ?? "");
+
+      setHasHealthWellbeingLpa(!!row?.has_health_wellbeing_lpa);
+      setHealthWellbeingLpaHolderName(row?.health_wellbeing_lpa_holder_name ?? "");
+      setHasRespectForm(!!row?.has_respect_form);
+      setRespectFormHolderName(row?.respect_form_holder_name ?? "");
+      setHasUnofficialRepresentative(!!row?.has_unofficial_representative);
+      setUnofficialRepresentativeName(row?.unofficial_representative_name ?? "");
 
       try {
         const { data: a, error: aErr } = await supabase
@@ -237,6 +257,22 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
           <SummaryBlock title="Communication notes" value={commNotes} />
           <SummaryBlock title="Languages spoken" value={languagesSpoken} />
         </div>
+      </div>
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div>
+          <h2 className="cc-h2">Advance planning</h2>
+          <div className="cc-subtle">Important representation and decision-making details.</div>
+        </div>
+
+        <AdvancePlanningSummaryCard
+          hasHealthWellbeingLpa={hasHealthWellbeingLpa}
+          healthWellbeingLpaHolderName={healthWellbeingLpaHolderName}
+          hasRespectForm={hasRespectForm}
+          respectFormHolderName={respectFormHolderName}
+          hasUnofficialRepresentative={hasUnofficialRepresentative}
+          unofficialRepresentativeName={unofficialRepresentativeName}
+        />
       </div>
 
       <div className="cc-grid-2-125">
@@ -362,5 +398,65 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
         </div>
       </div>
     </MobileShell>
+  );
+}
+
+function AdvancePlanningSummaryCard({
+  hasHealthWellbeingLpa,
+  healthWellbeingLpaHolderName,
+  hasRespectForm,
+  respectFormHolderName,
+  hasUnofficialRepresentative,
+  unofficialRepresentativeName,
+}: {
+  hasHealthWellbeingLpa: boolean;
+  healthWellbeingLpaHolderName: string | null;
+  hasRespectForm: boolean;
+  respectFormHolderName: string | null;
+  hasUnofficialRepresentative: boolean;
+  unofficialRepresentativeName: string | null;
+}) {
+  return (
+    <div className="cc-stack">
+      <AdvancePlanningSummaryRow
+        label="Health and Wellbeing Power of Attorney"
+        enabled={hasHealthWellbeingLpa}
+        name={healthWellbeingLpaHolderName}
+      />
+      <AdvancePlanningSummaryRow
+        label="RESPECT form in place"
+        enabled={hasRespectForm}
+        name={respectFormHolderName}
+      />
+      <AdvancePlanningSummaryRow
+        label="Unofficially nominated personal representative"
+        enabled={hasUnofficialRepresentative}
+        name={unofficialRepresentativeName}
+      />
+    </div>
+  );
+}
+
+function AdvancePlanningSummaryRow({
+  label,
+  enabled,
+  name,
+}: {
+  label: string;
+  enabled: boolean;
+  name: string | null | undefined;
+}) {
+  return (
+    <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
+      <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
+        <div className="cc-strong">{label}</div>
+        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>{enabled ? "Yes" : "No"}</span>
+      </div>
+      {enabled ? (
+        <div className="cc-small cc-subtle" style={{ marginTop: 8 }}>
+          Holder: <b>{name?.trim() || "Not recorded"}</b>
+        </div>
+      ) : null}
+    </div>
   );
 }

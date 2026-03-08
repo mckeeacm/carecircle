@@ -52,6 +52,17 @@ type ReminderGroupMemberRow = {
   medication_id: string;
 };
 
+type ReminderGroupState = {
+  group: ReminderGroupRow;
+  medicationIds: string[];
+  dueAt: Date;
+  closesAt: Date;
+  state: "upcoming" | "due" | "taken" | "missed";
+  missingMedicationIds: string[];
+  takenMedicationIds: string[];
+  missedMedicationIds: string[];
+};
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -64,6 +75,7 @@ const STATUS_OPTIONS = [
 ] as const;
 
 const REMINDER_CHANNEL_ID = "medication-reminders";
+const SYSTEM_NOTE_PREFIX = "__SYSTEM_NOTES__:";
 
 function reminderStorageKey(patientId: string) {
   return `carecircle:android-med-reminder-ids:${patientId}`;
@@ -120,6 +132,41 @@ function parseReminderTime(value: string): { hour: number; minute: number } | nu
   return { hour, minute };
 }
 
+function startOfToday(now: Date) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+}
+
+function endOfToday(now: Date) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+}
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function reminderTimeForToday(reminderTime: string, now: Date) {
+  const parsed = parseReminderTime(reminderTime);
+  if (!parsed) return null;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), parsed.hour, parsed.minute, 0, 0);
+}
+
+function formatReminderDisplayTime(date: Date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function isSystemNotesPlaintext(value: string | undefined) {
+  return !!value && value.startsWith(SYSTEM_NOTE_PREFIX);
+}
+
+function stripSystemPrefix(value: string | undefined) {
+  if (!value) return "";
+  return isSystemNotesPlaintext(value) ? value.slice(SYSTEM_NOTE_PREFIX.length).trim() : value;
+}
+
 export default function MedicationLogsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -138,13 +185,14 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   const [savingReminder, setSavingReminder] = useState(false);
   const [busyReminderId, setBusyReminderId] = useState<string | null>(null);
 
-  const [medicationId, setMedicationId] = useState<string>("");
+  const [selectedMedicationIds, setSelectedMedicationIds] = useState<string[]>([]);
   const [status, setStatus] = useState<string>("taken");
   const [note, setNote] = useState<string>("");
 
   const [reminderName, setReminderName] = useState<string>("");
   const [reminderTime, setReminderTime] = useState<string>("20:00");
   const [selectedReminderMedIds, setSelectedReminderMedIds] = useState<string[]>([]);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
   function medLabelFrom(list: MedicationRow[], id: string) {
     const m = list.find((x) => x.id === id);
@@ -267,19 +315,25 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       const medsList = (m ?? []) as MedicationRow[];
       setMeds(medsList);
 
-      if (!medicationId && medsList[0]?.id) {
-        setMedicationId(medsList[0].id);
+      if (selectedMedicationIds.length === 0 && medsList[0]?.id) {
+        setSelectedMedicationIds([medsList[0].id]);
+      } else {
+        setSelectedMedicationIds((prev) => prev.filter((id) => medsList.some((m) => m.id === id)));
       }
+
+      const todayStart = startOfToday(new Date()).toISOString();
 
       const { data: l, error: lErr } = await supabase
         .from("medication_logs")
         .select("id, patient_id, medication_id, status, note_encrypted, created_by, created_at")
         .eq("patient_id", patientId)
+        .gte("created_at", todayStart)
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(200);
 
       if (lErr) throw lErr;
-      setLogs((l ?? []) as MedicationLogRow[]);
+      const loadedLogs = (l ?? []) as MedicationLogRow[];
+      setLogs(loadedLogs);
 
       const { data: rg, error: rgErr } = await supabase
         .from("medication_reminder_groups")
@@ -310,6 +364,38 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
         setReminderMembers(memberList);
         await syncNativeReminderNotifications(groups, memberList, medsList);
       }
+
+      if (vaultKey) {
+        const missedWithNotes = loadedLogs.filter((x) => x.status === "missed" && x.note_encrypted);
+        if (missedWithNotes.length > 0) {
+          const pairs = await Promise.all(
+            missedWithNotes.map(async (row) => {
+              try {
+                const plain = await decryptStringWithLocalCache({
+                  patientId,
+                  table: "medication_logs",
+                  rowId: row.id,
+                  column: "note_encrypted",
+                  env: row.note_encrypted as CipherEnvelopeV1,
+                  vaultKey,
+                });
+                return [row.id, plain] as const;
+              } catch {
+                return null;
+              }
+            })
+          );
+
+          const additions: Record<string, string> = {};
+          for (const pair of pairs) {
+            if (pair) additions[pair[0]] = pair[1];
+          }
+
+          if (Object.keys(additions).length > 0) {
+            setNotePlainById((prev) => ({ ...prev, ...additions }));
+          }
+        }
+      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_medication_logs");
     } finally {
@@ -322,39 +408,67 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 30000);
+
+    return () => window.clearInterval(id);
+  }, []);
+
+  async function createLogsForMedicationIds(params: {
+    medicationIds: string[];
+    status: string;
+    noteText?: string;
+    systemNote?: boolean;
+  }) {
+    const medicationIds = Array.from(new Set(params.medicationIds)).filter(Boolean);
+    if (medicationIds.length === 0) return;
+
+    if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    if (authErr) throw authErr;
+    const uid = auth.user?.id;
+    if (!uid) throw new Error("not_authenticated");
+
+    let noteEnv: CipherEnvelopeV1 | null = null;
+    const noteText = params.noteText?.trim() ?? "";
+
+    if (noteText) {
+      if (!vaultKey) throw new Error("no_vault_share");
+      noteEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: params.systemNote ? `${SYSTEM_NOTE_PREFIX} ${noteText}` : noteText,
+        aad: { table: "medication_logs", column: "note_encrypted", patient_id: patientId },
+      });
+    }
+
+    const rows = medicationIds.map((medicationId) => ({
+      patient_id: patientId,
+      medication_id: medicationId,
+      status: params.status,
+      created_by: uid,
+      note_encrypted: noteEnv,
+    }));
+
+    const { error } = await supabase.from("medication_logs").insert(rows);
+    if (error) throw error;
+  }
+
   async function createLog() {
     if (!vaultKey) return setMsg("no_vault_share");
-    if (!medicationId) return setMsg("select_medication");
+    if (selectedMedicationIds.length === 0) return setMsg("select_medication");
 
     setSaving(true);
     setMsg(null);
 
     try {
-      if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
-
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
-      const uid = auth.user?.id;
-      if (!uid) throw new Error("not_authenticated");
-
-      let noteEnv: CipherEnvelopeV1 | null = null;
-      if (note.trim()) {
-        noteEnv = await vaultEncryptString({
-          vaultKey,
-          plaintext: note,
-          aad: { table: "medication_logs", column: "note_encrypted", patient_id: patientId },
-        });
-      }
-
-      const { error } = await supabase.from("medication_logs").insert({
-        patient_id: patientId,
-        medication_id: medicationId,
+      await createLogsForMedicationIds({
+        medicationIds: selectedMedicationIds,
         status,
-        created_by: uid,
-        note_encrypted: noteEnv,
+        noteText: note,
       });
-
-      if (error) throw error;
 
       setNote("");
       setStatus("taken");
@@ -477,7 +591,8 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     setNotePlainById((prev) => ({ ...prev, [l.id]: plain }));
   }
 
-  function whoLabel(createdBy: string) {
+  function whoLabel(createdBy: string, plainNote?: string) {
+    if (isSystemNotesPlaintext(plainNote)) return "System notes";
     const m = membersById[createdBy];
     if (!m) return createdBy;
     return m.nickname?.trim() || createdBy;
@@ -500,6 +615,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
   function statusClass(value: string | null) {
     if (value === "taken") return "cc-pill-primary";
+    if (value === "missed") return "cc-pill-danger";
     return "";
   }
 
@@ -520,12 +636,160 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     );
   }
 
-  const selectedMedication = meds.find((m) => m.id === medicationId) ?? null;
+  function toggleQuickMedication(mid: string) {
+    setSelectedMedicationIds((prev) =>
+      prev.includes(mid) ? prev.filter((x) => x !== mid) : [...prev, mid]
+    );
+  }
+
+  const selectedMedicationNames = meds
+    .filter((m) => selectedMedicationIds.includes(m.id))
+    .map((m) => m.name);
+
+  const reminderStates = useMemo<ReminderGroupState[]>(() => {
+    const now = new Date(nowTick);
+    const activeGroups = reminderGroups
+      .filter((g) => g.active)
+      .map((group) => {
+        const dueAt = reminderTimeForToday(group.reminder_time, now);
+        if (!dueAt) return null;
+        return { group, dueAt };
+      })
+      .filter(Boolean) as { group: ReminderGroupRow; dueAt: Date }[];
+
+    const sorted = activeGroups.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());
+
+    return sorted.map((entry, index) => {
+      const nextDueToday = sorted[index + 1]?.dueAt ?? endOfToday(now);
+      const medicationIds = reminderMembers
+        .filter((m) => m.group_id === entry.group.id)
+        .map((m) => m.medication_id);
+
+      const relevantLogs = logs.filter((log) => {
+        const created = new Date(log.created_at);
+        return (
+          medicationIds.includes(log.medication_id) &&
+          sameDay(created, now) &&
+          created.getTime() >= entry.dueAt.getTime() &&
+          created.getTime() < nextDueToday.getTime()
+        );
+      });
+
+      const takenMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid && log.status === "taken")
+      );
+
+      const missedMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid && log.status === "missed")
+      );
+
+      const completedMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid)
+      );
+
+      const missingMedicationIds = medicationIds.filter((mid) => !completedMedicationIds.includes(mid));
+
+      let state: ReminderGroupState["state"] = "upcoming";
+      if (missingMedicationIds.length === 0 && medicationIds.length > 0) {
+        state = missedMedicationIds.length > 0 ? "missed" : "taken";
+      } else if (now.getTime() < entry.dueAt.getTime()) {
+        state = "upcoming";
+      } else if (now.getTime() >= nextDueToday.getTime()) {
+        state = "missed";
+      } else {
+        state = "due";
+      }
+
+      return {
+        group: entry.group,
+        medicationIds,
+        dueAt: entry.dueAt,
+        closesAt: nextDueToday,
+        state,
+        missingMedicationIds,
+        takenMedicationIds,
+        missedMedicationIds,
+      };
+    });
+  }, [logs, nowTick, reminderGroups, reminderMembers]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function autoMarkMissedOverdue() {
+      if (!vaultKey) return;
+      if (reminderStates.length === 0) return;
+
+      const overdue = reminderStates.filter(
+        (state) => state.state === "missed" && state.missingMedicationIds.length > 0
+      );
+
+      if (overdue.length === 0) return;
+
+      try {
+        for (const state of overdue) {
+          if (cancelled) return;
+
+          await createLogsForMedicationIds({
+            medicationIds: state.missingMedicationIds,
+            status: "missed",
+            noteText: `Auto-marked missed after the reminder window closed for ${state.group.name}.`,
+            systemNote: true,
+          });
+        }
+
+        if (!cancelled) {
+          await refresh();
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setMsg(e?.message ?? "failed_to_auto_mark_missed");
+        }
+      }
+    }
+
+    autoMarkMissedOverdue();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reminderStates, vaultKey]);
+
+  async function markReminderTaken(state: ReminderGroupState) {
+    if (state.medicationIds.length === 0) return;
+
+    setBusyReminderId(state.group.id);
+    setMsg(null);
+
+    try {
+      const idsToLog =
+        state.missingMedicationIds.length > 0 ? state.missingMedicationIds : state.medicationIds;
+
+      await createLogsForMedicationIds({
+        medicationIds: idsToLog,
+        status: "taken",
+      });
+
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_mark_reminder_taken");
+    } finally {
+      setBusyReminderId(null);
+    }
+  }
+
+  const selectedMedicationSubtitle =
+    selectedMedicationNames.length === 0
+      ? "Track medication activity"
+      : selectedMedicationNames.length === 1
+      ? selectedMedicationNames[0]
+      : `${selectedMedicationNames.length} medications selected`;
 
   return (
     <MobileShell
       title="Medication logs"
-      subtitle={selectedMedication ? selectedMedication.name : "Track medication activity"}
+      subtitle={selectedMedicationSubtitle}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
@@ -551,7 +815,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
         <div className="cc-row-between">
           <div>
             <h2 className="cc-h2">Quick log</h2>
-            <div className="cc-subtle">Tap a medication, choose a status, and save.</div>
+            <div className="cc-subtle">Tap one or more medications, choose a status, and save.</div>
           </div>
 
           <button className="cc-btn" onClick={refresh} disabled={loading}>
@@ -576,13 +840,13 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                 }}
               >
                 {meds.map((m) => {
-                  const selected = medicationId === m.id;
+                  const selected = selectedMedicationIds.includes(m.id);
                   return (
                     <button
                       key={m.id}
                       type="button"
                       className={`cc-btn ${selected ? "cc-btn-primary" : ""}`}
-                      onClick={() => setMedicationId(m.id)}
+                      onClick={() => toggleQuickMedication(m.id)}
                       style={{
                         minHeight: 64,
                         justifyContent: "flex-start",
@@ -646,7 +910,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
               <button
                 className="cc-btn cc-btn-primary"
                 onClick={createLog}
-                disabled={!vaultKey || saving || !medicationId}
+                disabled={!vaultKey || saving || selectedMedicationIds.length === 0}
               >
                 {saving ? "Saving…" : "Save log"}
               </button>
@@ -665,6 +929,97 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
             On Android app builds, active reminders are also scheduled as device notifications.
           </div>
         </div>
+
+        {reminderStates.length > 0 ? (
+          <div className="cc-stack">
+            <div className="cc-strong">Today’s reminder status</div>
+
+            {reminderStates.map((state) => {
+              const busy = busyReminderId === state.group.id;
+              const statePillClass =
+                state.state === "taken"
+                  ? "cc-pill-primary"
+                  : state.state === "missed"
+                  ? "cc-pill-danger"
+                  : "";
+
+              return (
+                <div
+                  key={`state-${state.group.id}`}
+                  className="cc-panel-soft"
+                  style={{
+                    padding: 16,
+                    borderRadius: 20,
+                    border:
+                      state.state === "missed"
+                        ? "1px solid rgba(220, 38, 38, 0.18)"
+                        : undefined,
+                  }}
+                >
+                  <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
+                    <div className="cc-wrap" style={{ flex: 1 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 8,
+                          alignItems: "center",
+                          marginBottom: 6,
+                        }}
+                      >
+                        <span className={`cc-pill ${statePillClass}`}>
+                          {state.state === "upcoming"
+                            ? "Upcoming"
+                            : state.state === "due"
+                            ? "Due now"
+                            : state.state === "taken"
+                            ? "Taken"
+                            : "Missed"}
+                        </span>
+                        <span className="cc-small cc-subtle">
+                          {formatReminderDisplayTime(state.dueAt)} →{" "}
+                          {state.closesAt.getHours() === 23 && state.closesAt.getMinutes() === 59
+                            ? "Midnight"
+                            : formatReminderDisplayTime(state.closesAt)}
+                        </span>
+                      </div>
+
+                      <div className="cc-strong">{state.group.name}</div>
+
+                      <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
+                        {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                      </div>
+
+                      {state.state === "missed" && state.missingMedicationIds.length > 0 ? (
+                        <div
+                          className="cc-small"
+                          style={{ marginTop: 8, color: "crimson", fontWeight: 800 }}
+                        >
+                          Missed: {state.missingMedicationIds.map((id) => medLabel(id)).join(" • ")}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <button
+                        className="cc-btn cc-btn-primary"
+                        onClick={() => markReminderTaken(state)}
+                        disabled={
+                          busy ||
+                          state.medicationIds.length === 0 ||
+                          state.state === "missed" ||
+                          state.state === "taken"
+                        }
+                      >
+                        {busy ? "Saving…" : state.state === "taken" ? "Taken" : "Taken"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
           <div className="cc-strong">New reminder</div>
@@ -778,7 +1133,11 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       <button className="cc-btn" onClick={() => toggleReminderActive(group)} disabled={busy}>
                         {busy ? "…" : group.active ? "Pause" : "Activate"}
                       </button>
-                      <button className="cc-btn cc-btn-danger" onClick={() => deleteReminderGroup(group.id)} disabled={busy}>
+                      <button
+                        className="cc-btn cc-btn-danger"
+                        onClick={() => deleteReminderGroup(group.id)}
+                        disabled={busy}
+                      >
                         {busy ? "…" : "Delete"}
                       </button>
                     </div>
@@ -805,6 +1164,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
             {logs.map((l) => {
               const plain = notePlainById[l.id];
               const hasNote = !!l.note_encrypted;
+              const displayNote = stripSystemPrefix(plain);
 
               return (
                 <div
@@ -813,6 +1173,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                   style={{
                     padding: 14,
                     borderRadius: 18,
+                    border: l.status === "missed" ? "1px solid rgba(220, 38, 38, 0.18)" : undefined,
                   }}
                 >
                   <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
@@ -839,7 +1200,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       ) : null}
 
                       <div className="cc-small cc-subtle" style={{ marginTop: 8 }}>
-                        Logged by <b>{whoLabel(l.created_by)}</b>
+                        Logged by <b>{whoLabel(l.created_by, plain)}</b>
                       </div>
                     </div>
 
@@ -860,7 +1221,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {plain || "—"}
+                        {displayNote || "—"}
                       </div>
                     </div>
                   ) : null}
