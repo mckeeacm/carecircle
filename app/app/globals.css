@@ -21,14 +21,6 @@
     0 8px 24px rgba(0, 0, 0, 0.06);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --cc-bg: #0b1220;
-    --cc-card: rgba(15, 23, 42, 0.88);
-    --cc-border: rgba(255, 255, 255, 0.08);
-  }
-}
-
 /* =====================
    Base
 ===================== */
@@ -72,6 +64,7 @@ textarea,
 select,
 button {
   color-scheme: light;
+  font: inherit;
 }
 
 /* =====================
@@ -235,6 +228,7 @@ button {
   box-shadow: var(--cc-shadow);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  color: #0f172a;
 }
 
 .cc-card-pad {
@@ -254,6 +248,7 @@ button {
   background: rgba(201, 211, 224, 0.2);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  color: #0f172a;
 }
 
 .cc-panel-soft {
@@ -263,6 +258,7 @@ button {
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  color: #0f172a;
 }
 
 .cc-panel-green {
@@ -272,6 +268,7 @@ button {
   background: rgba(127, 175, 163, 0.12);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  color: #0f172a;
 }
 
 .cc-panel-blue {
@@ -281,6 +278,7 @@ button {
   background: rgba(94, 127, 163, 0.12);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  color: #0f172a;
 }
 
 /* =====================
@@ -327,6 +325,7 @@ button {
   background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  color: #0f172a;
 }
 
 .cc-pill-primary {
@@ -420,6 +419,7 @@ button {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   cursor: pointer;
+  color: #0f172a;
 }
 
 .cc-tab-active {
@@ -475,6 +475,7 @@ button {
   background: rgba(255, 255, 255, 0.86);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  color: #0f172a;
 }
 
 .cc-status-ok {
