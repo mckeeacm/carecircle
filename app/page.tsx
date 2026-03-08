@@ -1,13 +1,89 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type Mode = "login" | "signup" | "reset";
 
+type CircleMembership = {
+  patient_id: string;
+  role: string | null;
+  nickname: string | null;
+  is_controller: boolean | null;
+  created_at: string;
+};
+
+type ShareRow = {
+  patient_id: string;
+};
+
+type ProfileRow = {
+  patient_id: string;
+};
+
+type PublicKeyRow = {
+  user_id: string;
+  algorithm: string | null;
+};
+
+type CacheRecord = {
+  v: 1;
+  createdAt: number;
+  expiresAt: number;
+  vaultKeyB64: string;
+};
+
+function isUuid(s: unknown): s is string {
+  if (typeof s !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+}
+
+function cacheKey(pid: string, uid: string) {
+  return `carecircle:vaultkey:v1:${pid}:${uid}`;
+}
+
+function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(pid, uid));
+    if (!raw) return null;
+    const rec = JSON.parse(raw) as CacheRecord;
+    if (!rec || rec.v !== 1) return null;
+    if (!rec.expiresAt || Date.now() > rec.expiresAt) {
+      localStorage.removeItem(cacheKey(pid, uid));
+      return null;
+    }
+    return new Uint8Array(1);
+  } catch {
+    return null;
+  }
+}
+
+const PENDING_INVITE_KEY = "carecircle:pending-invite-token:v1";
+
+function readPendingInviteToken(): string {
+  try {
+    return (localStorage.getItem(PENDING_INVITE_KEY) ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writePendingInviteToken(token: string) {
+  try {
+    if (token.trim()) localStorage.setItem(PENDING_INVITE_KEY, token.trim());
+  } catch {}
+}
+
+function clearPendingInviteToken() {
+  try {
+    localStorage.removeItem(PENDING_INVITE_KEY);
+  } catch {}
+}
+
 export default function Home() {
   const router = useRouter();
+  const sp = useSearchParams();
   const supabase = useMemo(() => supabaseBrowser(), []);
 
   const [mode, setMode] = useState<Mode>("login");
@@ -16,24 +92,120 @@ export default function Home() {
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  async function routeAfterAuth(userId: string) {
+    const inviteFromUrl = (sp.get("invite") ?? "").trim();
+    const pendingInvite = inviteFromUrl || readPendingInviteToken();
+
+    if (inviteFromUrl) {
+      writePendingInviteToken(inviteFromUrl);
+    }
+
+    if (pendingInvite) {
+      router.replace(`/app/onboarding?invite=${encodeURIComponent(pendingInvite)}`);
+      return;
+    }
+
+    const { data: publicKeyRow, error: pkErr } = await supabase
+      .from("user_public_keys")
+      .select("user_id, algorithm")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (pkErr) throw pkErr;
+
+    const hasDeviceKey =
+      !!(publicKeyRow as PublicKeyRow | null)?.user_id &&
+      (((publicKeyRow as PublicKeyRow | null)?.algorithm ?? "") === "crypto_box_seal");
+
+    const { data: pm, error: memErr } = await supabase
+      .from("patient_members")
+      .select("patient_id, role, nickname, is_controller, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    if (memErr) throw memErr;
+
+    const memberships = (pm ?? []) as CircleMembership[];
+    const patientIds = memberships.map((m) => m.patient_id).filter(isUuid);
+
+    if (patientIds.length === 0) {
+      router.replace("/app/onboarding");
+      return;
+    }
+
+    if (!hasDeviceKey) {
+      router.replace(`/app/onboarding?pid=${encodeURIComponent(patientIds[0])}`);
+      return;
+    }
+
+    const { data: shares, error: shareErr } = await supabase
+      .from("patient_vault_shares")
+      .select("patient_id")
+      .eq("user_id", userId)
+      .in("patient_id", patientIds);
+
+    if (shareErr) throw shareErr;
+
+    const { data: profiles, error: profileErr } = await supabase
+      .from("patient_profiles")
+      .select("patient_id")
+      .in("patient_id", patientIds);
+
+    if (profileErr) throw profileErr;
+
+    const shareSet = new Set(((shares ?? []) as ShareRow[]).map((r) => r.patient_id));
+    const profileSet = new Set(((profiles ?? []) as ProfileRow[]).map((r) => r.patient_id));
+
+    const firstIncompletePid =
+      patientIds.find((pid) => !shareSet.has(pid)) ||
+      patientIds.find((pid) => !readCachedVaultKey(pid, userId)) ||
+      patientIds.find((pid) => !profileSet.has(pid)) ||
+      "";
+
+    if (firstIncompletePid) {
+      router.replace(`/app/onboarding?pid=${encodeURIComponent(firstIncompletePid)}`);
+      return;
+    }
+
+    clearPendingInviteToken();
+    router.replace("/app/hub");
+  }
 
   useEffect(() => {
     let active = true;
 
+    const inviteFromUrl = (sp.get("invite") ?? "").trim();
+    if (inviteFromUrl) {
+      writePendingInviteToken(inviteFromUrl);
+    }
+
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (active && data.session) {
-        router.replace("/app/hub");
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        if (!active) return;
+
+        if (data.session?.user?.id) {
+          await routeAfterAuth(data.session.user.id);
+          return;
+        }
+      } catch (e: any) {
+        if (active) setError(e?.message ?? "Failed to check session.");
+      } finally {
+        if (active) setCheckingSession(false);
       }
     })();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        router.replace("/app/hub");
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user?.id) {
+        await routeAfterAuth(session.user.id);
       }
     });
 
@@ -41,7 +213,7 @@ export default function Home() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [router, supabase]);
+  }, [router, sp, supabase]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -80,8 +252,8 @@ export default function Home() {
 
         if (error) throw error;
 
-        if (data.session) {
-          router.replace("/app/hub");
+        if (data.user?.id) {
+          await routeAfterAuth(data.user.id);
           return;
         }
 
@@ -89,14 +261,15 @@ export default function Home() {
         return;
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (error) throw error;
+      if (!data.user?.id) throw new Error("Sign-in succeeded, but no user session was returned.");
 
-      router.replace("/app/hub");
+      await routeAfterAuth(data.user.id);
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong.");
     } finally {
@@ -116,6 +289,39 @@ export default function Home() {
     return loading ? "Signing in…" : "Sign in";
   }
 
+  if (checkingSession) {
+    return (
+      <main
+        style={{
+          minHeight: "100dvh",
+          background: "linear-gradient(180deg, #dfe9e5 0%, #e8f1ed 100%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom))",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 420,
+            background: "rgba(255,255,255,0.88)",
+            border: "1px solid rgba(0,0,0,0.06)",
+            borderRadius: 28,
+            padding: 24,
+            boxShadow: "0 18px 50px rgba(48, 73, 67, 0.12)",
+            backdropFilter: "blur(10px)",
+          }}
+        >
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>CareCircle</h1>
+          <p style={{ marginTop: 12, marginBottom: 0, fontSize: 16, lineHeight: 1.5 }}>
+            Checking your sign-in…
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main
       style={{
@@ -124,7 +330,7 @@ export default function Home() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: 24,
+        padding: "max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom))",
       }}
     >
       <div
@@ -182,6 +388,9 @@ export default function Home() {
             <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Email</span>
             <input
               type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -196,6 +405,8 @@ export default function Home() {
               <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Password</span>
               <input
                 type="password"
+                autoCapitalize="none"
+                autoCorrect="off"
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -211,6 +422,8 @@ export default function Home() {
               <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Confirm password</span>
               <input
                 type="password"
+                autoCapitalize="none"
+                autoCorrect="off"
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -278,7 +491,15 @@ export default function Home() {
           }}
         >
           {mode !== "login" ? (
-            <button type="button" onClick={() => { setMode("login"); setMsg(null); setError(null); }} style={linkButtonStyle}>
+            <button
+              type="button"
+              onClick={() => {
+                setMode("login");
+                setMsg(null);
+                setError(null);
+              }}
+              style={linkButtonStyle}
+            >
               Back to sign in
             </button>
           ) : null}

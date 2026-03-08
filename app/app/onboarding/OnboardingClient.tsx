@@ -43,6 +43,8 @@ type CacheRecord = {
   vaultKeyB64: string;
 };
 
+const PENDING_INVITE_KEY = "carecircle:pending-invite-token:v1";
+
 function safeBool(v: unknown) {
   return v === true;
 }
@@ -93,6 +95,26 @@ function writeCachedVaultKey(pid: string, uid: string, vaultKey: Uint8Array) {
   };
   try {
     localStorage.setItem(cacheKey(pid, uid), JSON.stringify(rec));
+  } catch {}
+}
+
+function readPendingInviteToken() {
+  try {
+    return (localStorage.getItem(PENDING_INVITE_KEY) ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writePendingInviteToken(token: string) {
+  try {
+    if (token.trim()) localStorage.setItem(PENDING_INVITE_KEY, token.trim());
+  } catch {}
+}
+
+function clearPendingInviteToken() {
+  try {
+    localStorage.removeItem(PENDING_INVITE_KEY);
   } catch {}
 }
 
@@ -148,8 +170,10 @@ export default function OnboardingClient() {
   const router = useRouter();
   const sp = useSearchParams();
 
-  const inviteToken = (sp.get("invite") ?? "").trim();
+  const inviteTokenFromUrl = (sp.get("invite") ?? "").trim();
+  const preferredPatientIdFromUrl = (sp.get("pid") ?? "").trim();
 
+  const [resolvedInviteToken, setResolvedInviteToken] = useState<string>("");
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>("");
   const [displayGreeting, setDisplayGreeting] = useState<string>("there");
@@ -186,14 +210,14 @@ export default function OnboardingClient() {
   const isController = safeBool(selectedMembership?.is_controller);
 
   const currentStep: StepId = useMemo(() => {
-    if (inviteToken && inviteStatus !== "accepted") return "invite";
+    if (resolvedInviteToken && inviteStatus !== "accepted") return "invite";
     if (!selectedPatientId) return "circle";
     if (!deviceKeyOk || !hasVaultShare || !hasCachedVault) return "vault";
     if (!hasProfile) return "profile";
     if (isController) return "permissions";
     return "finish";
   }, [
-    inviteToken,
+    resolvedInviteToken,
     inviteStatus,
     selectedPatientId,
     deviceKeyOk,
@@ -215,7 +239,7 @@ export default function OnboardingClient() {
       if (!me) {
         setUid(null);
         setUserEmail("");
-        setInviteStatus(inviteToken ? "need_auth" : "idle");
+        setInviteStatus(resolvedInviteToken ? "need_auth" : "idle");
         setMemberships([]);
         setPatientsById({});
         setSelectedPatientId("");
@@ -267,10 +291,14 @@ export default function OnboardingClient() {
       (pts ?? []).forEach((p: any) => (map[p.id] = p as PatientRow));
       setPatientsById(map);
 
-      if (!selectedPatientId || !ids.includes(selectedPatientId)) {
-        const controller = ms.find((m) => safeBool(m.is_controller));
-        setSelectedPatientId(controller?.patient_id ?? ids[0]);
-      }
+      const preferredPid =
+        (inviteResult?.patient_id && isUuid(inviteResult.patient_id) ? inviteResult.patient_id : "") ||
+        (isUuid(preferredPatientIdFromUrl) ? preferredPatientIdFromUrl : "") ||
+        (selectedPatientId && ids.includes(selectedPatientId) ? selectedPatientId : "") ||
+        (ms.find((m) => safeBool(m.is_controller))?.patient_id ?? "") ||
+        ids[0];
+
+      setSelectedPatientId(preferredPid);
 
       await refreshDeviceKey();
     } catch (e: any) {
@@ -341,7 +369,7 @@ export default function OnboardingClient() {
   }
 
   async function acceptInviteIfPresent() {
-    if (!inviteToken) return;
+    if (!resolvedInviteToken) return;
 
     setMsg(null);
     setInviteResult(null);
@@ -359,7 +387,7 @@ export default function OnboardingClient() {
       setInviteStatus("accepting");
 
       const { data, error } = await supabase.rpc("patient_invite_accept", {
-        p_token: inviteToken,
+        p_token: resolvedInviteToken,
       });
 
       if (error) throw error;
@@ -367,12 +395,14 @@ export default function OnboardingClient() {
       const res = data as InviteAcceptResult;
       setInviteResult(res);
       setInviteStatus("accepted");
+      clearPendingInviteToken();
+      setResolvedInviteToken("");
 
       await refresh();
       setSelectedPatientId(res.patient_id);
       await refreshVaultState(res.patient_id, auth.user.id);
 
-      router.replace("/app/onboarding");
+      router.replace(`/app/onboarding?pid=${encodeURIComponent(res.patient_id)}`);
     } catch (e: any) {
       setInviteStatus("error");
       setMsg(e?.message ?? "failed_to_accept_invite");
@@ -380,12 +410,27 @@ export default function OnboardingClient() {
   }
 
   useEffect(() => {
+    const token = inviteTokenFromUrl || readPendingInviteToken();
+    if (token) {
+      writePendingInviteToken(token);
+      setResolvedInviteToken(token);
+    } else {
+      setResolvedInviteToken("");
+    }
+  }, [inviteTokenFromUrl]);
+
+  useEffect(() => {
     (async () => {
       await refresh();
-      if (inviteToken) await acceptInviteIfPresent();
     })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [resolvedInviteToken]);
+
+  useEffect(() => {
+    if (!resolvedInviteToken) return;
+    acceptInviteIfPresent().catch((e: any) => setMsg(e?.message ?? "failed_to_accept_invite"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedInviteToken]);
 
   useEffect(() => {
     if (!uid || !selectedPatientId) return;
@@ -431,6 +476,7 @@ export default function OnboardingClient() {
       await refresh();
       setSelectedPatientId(pid);
       setMsg("Circle created. Next, set up secure access on this device.");
+      router.replace(`/app/onboarding?pid=${encodeURIComponent(pid)}`);
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_create_circle");
     } finally {
@@ -732,7 +778,7 @@ export default function OnboardingClient() {
           <div className="cc-card cc-card-pad cc-stack">
             <div className="cc-strong">Setup steps</div>
 
-            {inviteToken ? (
+            {resolvedInviteToken ? (
               <StepRow label="Join circle from invite" active={currentStep === "invite"} done={inviteStatus === "accepted"} />
             ) : null}
 

@@ -58,8 +58,13 @@ body {
     Helvetica, Arial, sans-serif;
 }
 
-a {
+a,
+a:visited,
+a:hover,
+a:active,
+a:focus {
   color: inherit;
+  text-decoration: none;
 }
 
 input,
@@ -336,12 +341,17 @@ button {
    Buttons + tabs
 ===================== */
 
-.cc-btn {
+.cc-btn,
+.cc-btn:visited,
+.cc-btn:hover,
+.cc-btn:active,
+.cc-btn:focus {
   border-radius: 14px;
   padding: 10px 14px;
   font-weight: 800;
   border: 1px solid rgba(0, 0, 0, 0.1);
   background: rgba(255, 255, 255, 0.82);
+  color: #0f172a;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   cursor: pointer;
@@ -368,15 +378,29 @@ button {
   pointer-events: none;
 }
 
-.cc-btn-primary {
+.cc-btn-primary,
+.cc-btn-primary:visited,
+.cc-btn-primary:hover,
+.cc-btn-primary:active,
+.cc-btn-primary:focus {
   background: rgba(94, 127, 163, 0.18);
+  color: #0f172a;
 }
 
-.cc-btn-secondary {
+.cc-btn-secondary,
+.cc-btn-secondary:visited,
+.cc-btn-secondary:hover,
+.cc-btn-secondary:active,
+.cc-btn-secondary:focus {
   background: rgba(127, 175, 163, 0.2);
+  color: #0f172a;
 }
 
-.cc-btn-danger {
+.cc-btn-danger,
+.cc-btn-danger:visited,
+.cc-btn-danger:hover,
+.cc-btn-danger:active,
+.cc-btn-danger:focus {
   color: crimson;
 }
 
@@ -424,6 +448,7 @@ button {
   border-radius: 14px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: rgba(255, 255, 255, 0.9);
+  color: #0f172a;
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
 }
@@ -518,7 +543,11 @@ button {
   gap: 16px;
 }
 
-.cc-logo-chip {
+.cc-logo-chip,
+.cc-logo-chip:visited,
+.cc-logo-chip:hover,
+.cc-logo-chip:active,
+.cc-logo-chip:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -527,6 +556,7 @@ button {
   border-radius: 16px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: rgba(255, 255, 255, 0.82);
+  color: #0f172a;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   text-decoration: none;
@@ -568,11 +598,15 @@ button {
     0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-.cc-bottom-nav-item {
+.cc-bottom-nav-item,
+.cc-bottom-nav-item:visited,
+.cc-bottom-nav-item:hover,
+.cc-bottom-nav-item:active,
+.cc-bottom-nav-item:focus {
   min-height: 62px;
   border-radius: 16px;
   text-decoration: none;
-  color: inherit;
+  color: #0f172a;
 
   display: grid;
   place-items: center;
@@ -583,9 +617,14 @@ button {
   border: 1px solid transparent;
 }
 
-.cc-bottom-nav-item-active {
+.cc-bottom-nav-item-active,
+.cc-bottom-nav-item-active:visited,
+.cc-bottom-nav-item-active:hover,
+.cc-bottom-nav-item-active:active,
+.cc-bottom-nav-item-active:focus {
   background: rgba(94, 127, 163, 0.14);
   border-color: rgba(94, 127, 163, 0.18);
+  color: #0f172a;
 }
 
 .cc-bottom-nav-icon {
