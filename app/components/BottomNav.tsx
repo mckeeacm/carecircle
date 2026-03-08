@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 type BottomNavProps = {
@@ -16,7 +17,34 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
   const journalHref = patientId ? `/app/patients/${patientId}/journals` : "/app/hub";
   const messagesHref = patientId ? `/app/patients/${patientId}/dm` : "/app/hub";
   const profileHref = patientId ? `/app/patients/${patientId}/profile` : "/app/account";
-  const moreHref = "/app/hub";
+
+  const accountHref = "/app/account";
+  const permissionsHref = patientId ? `/app/patients/${patientId}/permissions` : "/app/account";
+  const vaultHref = patientId ? `/app/patients/${patientId}/vault-init` : "/app/account";
+
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onPointerDown(e: MouseEvent) {
+      if (!moreRef.current) return;
+      if (!moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    }
+
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoreOpen(false);
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, []);
 
   return (
     <nav className="cc-bottom-nav" aria-label="Primary navigation">
@@ -40,10 +68,77 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
         <span className="cc-bottom-nav-label">Profile</span>
       </Link>
 
-      <Link className={navClass(active === "more")} href={moreHref}>
-        <span className="cc-bottom-nav-icon">⋯</span>
-        <span className="cc-bottom-nav-label">More</span>
-      </Link>
+      <div
+        ref={moreRef}
+        style={{
+          position: "relative",
+          display: "flex",
+          flex: 1,
+        }}
+      >
+        <button
+          type="button"
+          className={navClass(active === "more" || moreOpen)}
+          onClick={() => setMoreOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          style={{
+            width: "100%",
+          }}
+        >
+          <span className="cc-bottom-nav-icon">⋯</span>
+          <span className="cc-bottom-nav-label">More</span>
+        </button>
+
+        {moreOpen ? (
+          <div
+            className="cc-card"
+            role="menu"
+            aria-label="More navigation"
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: "calc(100% + 10px)",
+              minWidth: 220,
+              padding: 10,
+              borderRadius: 18,
+              display: "grid",
+              gap: 8,
+              zIndex: 50,
+            }}
+          >
+            <Link
+              className="cc-btn"
+              href={accountHref}
+              role="menuitem"
+              onClick={() => setMoreOpen(false)}
+              style={{ justifyContent: "flex-start", minHeight: 46 }}
+            >
+              Account
+            </Link>
+
+            <Link
+              className="cc-btn"
+              href={permissionsHref}
+              role="menuitem"
+              onClick={() => setMoreOpen(false)}
+              style={{ justifyContent: "flex-start", minHeight: 46 }}
+            >
+              Permissions
+            </Link>
+
+            <Link
+              className="cc-btn"
+              href={vaultHref}
+              role="menuitem"
+              onClick={() => setMoreOpen(false)}
+              style={{ justifyContent: "flex-start", minHeight: 46 }}
+            >
+              Vault
+            </Link>
+          </div>
+        ) : null}
+      </div>
     </nav>
   );
 }
