@@ -6,60 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 
 type Mode = "login" | "signup" | "reset";
 
-type CircleMembership = {
-  patient_id: string;
-  role: string | null;
-  nickname: string | null;
-  is_controller: boolean | null;
-  created_at: string;
-};
-
-type ShareRow = {
-  patient_id: string;
-};
-
-type ProfileRow = {
-  patient_id: string;
-};
-
-type PublicKeyRow = {
-  user_id: string;
-  algorithm: string | null;
-};
-
-type CacheRecord = {
-  v: 1;
-  createdAt: number;
-  expiresAt: number;
-  vaultKeyB64: string;
-};
-
 const PENDING_INVITE_KEY = "carecircle:pending-invite-token:v1";
-
-function isUuid(s: unknown): s is string {
-  if (typeof s !== "string") return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
-}
-
-function cacheKey(pid: string, uid: string) {
-  return `carecircle:vaultkey:v1:${pid}:${uid}`;
-}
-
-function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
-  try {
-    const raw = localStorage.getItem(cacheKey(pid, uid));
-    if (!raw) return null;
-    const rec = JSON.parse(raw) as CacheRecord;
-    if (!rec || rec.v !== 1) return null;
-    if (!rec.expiresAt || Date.now() > rec.expiresAt) {
-      localStorage.removeItem(cacheKey(pid, uid));
-      return null;
-    }
-    return new Uint8Array(1);
-  } catch {
-    return null;
-  }
-}
 
 function readPendingInviteToken(): string {
   try {
@@ -72,12 +19,6 @@ function readPendingInviteToken(): string {
 function writePendingInviteToken(token: string) {
   try {
     if (token.trim()) localStorage.setItem(PENDING_INVITE_KEY, token.trim());
-  } catch {}
-}
-
-function clearPendingInviteToken() {
-  try {
-    localStorage.removeItem(PENDING_INVITE_KEY);
   } catch {}
 }
 
@@ -104,89 +45,24 @@ export default function Home() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [inviteTokenFromUrl, setInviteTokenFromUrl] = useState("");
+  const [inviteToken, setInviteToken] = useState("");
 
-  async function routeAfterAuth(userId: string) {
-    const pendingInvite = inviteTokenFromUrl || readPendingInviteToken();
+  function routeAfterAuth() {
+    const pendingInvite = inviteToken || readPendingInviteToken();
 
     if (pendingInvite) {
       router.replace(`/app/onboarding?invite=${encodeURIComponent(pendingInvite)}`);
       return;
     }
 
-    const { data: publicKeyRow, error: pkErr } = await supabase
-      .from("user_public_keys")
-      .select("user_id, algorithm")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (pkErr) throw pkErr;
-
-    const hasDeviceKey =
-      !!(publicKeyRow as PublicKeyRow | null)?.user_id &&
-      (((publicKeyRow as PublicKeyRow | null)?.algorithm ?? "") === "crypto_box_seal");
-
-    const { data: pm, error: memErr } = await supabase
-      .from("patient_members")
-      .select("patient_id, role, nickname, is_controller, created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true });
-
-    if (memErr) throw memErr;
-
-    const memberships = (pm ?? []) as CircleMembership[];
-    const patientIds = memberships.map((m) => m.patient_id).filter(isUuid);
-
-    if (patientIds.length === 0) {
-      router.replace("/app/onboarding");
-      return;
-    }
-
-    if (!hasDeviceKey) {
-      router.replace(`/app/onboarding?pid=${encodeURIComponent(patientIds[0])}`);
-      return;
-    }
-
-    const { data: shares, error: shareErr } = await supabase
-      .from("patient_vault_shares")
-      .select("patient_id")
-      .eq("user_id", userId)
-      .in("patient_id", patientIds);
-
-    if (shareErr) throw shareErr;
-
-    const { data: profiles, error: profileErr } = await supabase
-      .from("patient_profiles")
-      .select("patient_id")
-      .in("patient_id", patientIds);
-
-    if (profileErr) throw profileErr;
-
-    const shareSet = new Set(((shares ?? []) as ShareRow[]).map((r) => r.patient_id));
-    const profileSet = new Set(((profiles ?? []) as ProfileRow[]).map((r) => r.patient_id));
-
-    const firstIncompletePid =
-      patientIds.find((pid) => !shareSet.has(pid)) ||
-      patientIds.find((pid) => !readCachedVaultKey(pid, userId)) ||
-      patientIds.find((pid) => !profileSet.has(pid)) ||
-      "";
-
-    if (firstIncompletePid) {
-      router.replace(`/app/onboarding?pid=${encodeURIComponent(firstIncompletePid)}`);
-      return;
-    }
-
-    clearPendingInviteToken();
-    router.replace("/app/hub");
+    router.replace("/app/onboarding");
   }
 
   useEffect(() => {
     const token = readInviteFromLocation();
     if (token) {
       writePendingInviteToken(token);
-      setInviteTokenFromUrl(token);
-    } else {
-      setInviteTokenFromUrl("");
+      setInviteToken(token);
     }
   }, []);
 
@@ -201,7 +77,7 @@ export default function Home() {
         if (!active) return;
 
         if (data.session?.user?.id) {
-          await routeAfterAuth(data.session.user.id);
+          routeAfterAuth();
           return;
         }
       } catch (e: any) {
@@ -215,7 +91,7 @@ export default function Home() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user?.id) {
-        await routeAfterAuth(session.user.id);
+        routeAfterAuth();
       }
     });
 
@@ -223,7 +99,7 @@ export default function Home() {
       active = false;
       subscription.unsubscribe();
     };
-  }, [inviteTokenFromUrl, router, supabase]);
+  }, [inviteToken, router, supabase]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -255,31 +131,25 @@ export default function Home() {
           throw new Error("Passwords do not match.");
         }
 
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email: cleanEmail,
           password,
         });
 
         if (error) throw error;
 
-        if (data.user?.id) {
-          await routeAfterAuth(data.user.id);
-          return;
-        }
-
-        setMsg("Account created. Check your email if confirmation is enabled.");
+        routeAfterAuth();
         return;
       }
 
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
       });
 
       if (error) throw error;
-      if (!data.user?.id) throw new Error("Sign-in succeeded, but no user session was returned.");
 
-      await routeAfterAuth(data.user.id);
+      routeAfterAuth();
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong.");
     } finally {
@@ -293,278 +163,198 @@ export default function Home() {
     return "Sign in";
   }
 
-  function buttonForMode() {
-    if (mode === "signup") return loading ? "Creating account…" : "Create account";
-    if (mode === "reset") return loading ? "Sending…" : "Send reset email";
-    return loading ? "Signing in…" : "Sign in";
+  function subtitleForMode() {
+    if (mode === "signup") return "Set up your CareCircle account to continue.";
+    if (mode === "reset") return "We’ll send you a password reset email.";
+    return "Shared meds, appointments, and care notes — without confusion.";
   }
 
   if (checkingSession) {
     return (
-      <main
-        style={{
-          minHeight: "100dvh",
-          background: "linear-gradient(180deg, #dfe9e5 0%, #e8f1ed 100%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom))",
-        }}
-      >
+      <div className="cc-page">
         <div
+          className="cc-container"
           style={{
-            width: "100%",
-            maxWidth: 420,
-            background: "rgba(255,255,255,0.88)",
-            border: "1px solid rgba(0,0,0,0.06)",
-            borderRadius: 28,
-            padding: 24,
-            boxShadow: "0 18px 50px rgba(48, 73, 67, 0.12)",
-            backdropFilter: "blur(10px)",
+            minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>CareCircle</h1>
-          <p style={{ marginTop: 12, marginBottom: 0, fontSize: 16, lineHeight: 1.5 }}>
-            Checking your sign-in…
-          </p>
+          <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 540 }}>
+            <div className="cc-stack">
+              <div className="cc-kicker">CareCircle</div>
+              <h1 className="cc-h1" style={{ fontSize: 34 }}>
+                CareCircle
+              </h1>
+              <div style={{ fontSize: 18, lineHeight: 1.45 }}>Checking your sign-in…</div>
+            </div>
+          </div>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100dvh",
-        background: "linear-gradient(180deg, #dfe9e5 0%, #e8f1ed 100%)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom))",
-      }}
-    >
+    <div className="cc-page">
       <div
+        className="cc-container"
         style={{
-          width: "100%",
-          maxWidth: 420,
-          background: "rgba(255,255,255,0.88)",
-          border: "1px solid rgba(0,0,0,0.06)",
-          borderRadius: 28,
-          padding: 24,
-          boxShadow: "0 18px 50px rgba(48, 73, 67, 0.12)",
-          backdropFilter: "blur(10px)",
+          minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
-        <div style={{ marginBottom: 18 }}>
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 700,
-              letterSpacing: "0.01em",
-              color: "#48635b",
-              marginBottom: 8,
-            }}
-          >
-            CareCircle
+        <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 540 }}>
+          <div className="cc-stack">
+            <div>
+              <div className="cc-kicker">CareCircle</div>
+              <h1 className="cc-h1" style={{ fontSize: 34, marginTop: 6 }}>
+                {titleForMode()}
+              </h1>
+              <div
+                style={{
+                  marginTop: 12,
+                  fontSize: 18,
+                  lineHeight: 1.45,
+                  maxWidth: 420,
+                }}
+              >
+                {subtitleForMode()}
+              </div>
+            </div>
+
+            {msg ? (
+              <div className="cc-status cc-status-ok">
+                <div className="cc-wrap">{msg}</div>
+              </div>
+            ) : null}
+
+            {error ? (
+              <div className="cc-status cc-status-error">
+                <div className="cc-status-error-title">Error</div>
+                <div className="cc-wrap">{error}</div>
+              </div>
+            ) : null}
+
+            <form onSubmit={handleSubmit} className="cc-stack">
+              <div className="cc-field">
+                <div className="cc-label">Email</div>
+                <input
+                  className="cc-input"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  placeholder="name@example.com"
+                />
+              </div>
+
+              {mode !== "reset" ? (
+                <div className="cc-field">
+                  <div className="cc-label">Password</div>
+                  <input
+                    className="cc-input"
+                    type="password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
+                  />
+                </div>
+              ) : null}
+
+              {mode === "signup" ? (
+                <div className="cc-field">
+                  <div className="cc-label">Confirm password</div>
+                  <input
+                    className="cc-input"
+                    type="password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={loading}
+                    placeholder="Repeat your password"
+                  />
+                </div>
+              ) : null}
+
+              <div className="cc-row">
+                <button type="submit" className="cc-btn cc-btn-primary" disabled={loading}>
+                  {mode === "signup"
+                    ? loading
+                      ? "Creating account…"
+                      : "Create account"
+                    : mode === "reset"
+                    ? loading
+                      ? "Sending…"
+                      : "Send reset email"
+                    : loading
+                    ? "Signing in…"
+                    : "Sign in"}
+                </button>
+              </div>
+            </form>
+
+            <div className="cc-stack" style={{ gap: 10 }}>
+              {mode !== "login" ? (
+                <button
+                  type="button"
+                  className="cc-btn"
+                  onClick={() => {
+                    setMode("login");
+                    setMsg(null);
+                    setError(null);
+                  }}
+                  style={{ justifyContent: "flex-start" }}
+                >
+                  Back to sign in
+                </button>
+              ) : null}
+
+              {mode === "login" ? (
+                <>
+                  <button
+                    type="button"
+                    className="cc-btn"
+                    onClick={() => {
+                      setMode("reset");
+                      setMsg(null);
+                      setError(null);
+                    }}
+                    style={{ justifyContent: "flex-start" }}
+                  >
+                    Forgot password?
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cc-btn"
+                    onClick={() => {
+                      setMode("signup");
+                      setMsg(null);
+                      setError(null);
+                    }}
+                    style={{ justifyContent: "flex-start" }}
+                  >
+                    Create a new account
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
-
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 28,
-              lineHeight: 1.1,
-              fontWeight: 800,
-              color: "#111",
-            }}
-          >
-            {titleForMode()}
-          </h1>
-
-          <p
-            style={{
-              marginTop: 12,
-              marginBottom: 0,
-              fontSize: 16,
-              lineHeight: 1.5,
-              color: "#2f3b37",
-            }}
-          >
-            Shared meds, appointments, and care notes — without confusion.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: 14 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Email</span>
-            <input
-              type="email"
-              inputMode="email"
-              autoCapitalize="none"
-              autoCorrect="off"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-              style={inputStyle}
-              placeholder="name@example.com"
-            />
-          </label>
-
-          {mode !== "reset" ? (
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Password</span>
-              <input
-                type="password"
-                autoCapitalize="none"
-                autoCorrect="off"
-                autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-                style={inputStyle}
-                placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
-              />
-            </label>
-          ) : null}
-
-          {mode === "signup" ? (
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: "#24312d" }}>Confirm password</span>
-              <input
-                type="password"
-                autoCapitalize="none"
-                autoCorrect="off"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={loading}
-                style={inputStyle}
-                placeholder="Repeat your password"
-              />
-            </label>
-          ) : null}
-
-          {msg ? (
-            <div
-              style={{
-                borderRadius: 18,
-                padding: "12px 14px",
-                background: "rgba(86, 163, 120, 0.12)",
-                color: "#194d2f",
-                fontSize: 14,
-                lineHeight: 1.45,
-              }}
-            >
-              {msg}
-            </div>
-          ) : null}
-
-          {error ? (
-            <div
-              style={{
-                borderRadius: 18,
-                padding: "12px 14px",
-                background: "rgba(204, 67, 67, 0.1)",
-                color: "#7c1f1f",
-                fontSize: 14,
-                lineHeight: 1.45,
-              }}
-            >
-              {error}
-            </div>
-          ) : null}
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              minHeight: 52,
-              borderRadius: 18,
-              border: "none",
-              background: "#4b7a6c",
-              color: "white",
-              fontSize: 16,
-              fontWeight: 700,
-              cursor: loading ? "default" : "pointer",
-              opacity: loading ? 0.8 : 1,
-            }}
-          >
-            {buttonForMode()}
-          </button>
-        </form>
-
-        <div
-          style={{
-            marginTop: 18,
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          {mode !== "login" ? (
-            <button
-              type="button"
-              onClick={() => {
-                setMode("login");
-                setMsg(null);
-                setError(null);
-              }}
-              style={linkButtonStyle}
-            >
-              Back to sign in
-            </button>
-          ) : null}
-
-          {mode === "login" ? (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("reset");
-                  setMsg(null);
-                  setError(null);
-                }}
-                style={linkButtonStyle}
-              >
-                Forgot password?
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("signup");
-                  setMsg(null);
-                  setError(null);
-                }}
-                style={linkButtonStyle}
-              >
-                Create a new account
-              </button>
-            </>
-          ) : null}
         </div>
       </div>
-    </main>
+    </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  minHeight: 48,
-  borderRadius: 16,
-  border: "1px solid rgba(0,0,0,0.1)",
-  background: "rgba(255,255,255,0.92)",
-  padding: "0 14px",
-  fontSize: 16,
-  outline: "none",
-};
-
-const linkButtonStyle: React.CSSProperties = {
-  background: "transparent",
-  border: "none",
-  padding: 0,
-  textAlign: "left",
-  color: "#4b7a6c",
-  fontSize: 15,
-  fontWeight: 600,
-  cursor: "pointer",
-};

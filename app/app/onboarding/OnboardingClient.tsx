@@ -156,7 +156,10 @@ async function getMatchedBoxKeypairOrThrow(): Promise<{ publicKey: Uint8Array; p
 
 function StepRow({ label, active, done }: { label: string; active: boolean; done: boolean }) {
   return (
-    <div className={`cc-panel-soft cc-row ${active ? "cc-panel-blue" : ""}`} style={{ justifyContent: "flex-start" }}>
+    <div
+      className={`cc-panel-soft cc-row ${active ? "cc-panel-blue" : ""}`}
+      style={{ justifyContent: "flex-start" }}
+    >
       <span className={`cc-pill ${done ? "cc-pill-primary" : ""}`} style={{ minWidth: 34, textAlign: "center" }}>
         {done ? "✓" : "•"}
       </span>
@@ -227,6 +230,127 @@ export default function OnboardingClient() {
     isController,
   ]);
 
+  useEffect(() => {
+    const token = inviteTokenFromUrl || readPendingInviteToken();
+    if (token) {
+      writePendingInviteToken(token);
+      setResolvedInviteToken(token);
+    } else {
+      setResolvedInviteToken("");
+    }
+  }, [inviteTokenFromUrl]);
+
+  async function refreshDeviceKey(userId?: string | null) {
+    try {
+      const realUid = userId ?? uid;
+      if (!realUid) {
+        setDeviceKeyOk(false);
+        return false;
+      }
+
+      const { data, error } = await supabase
+        .from("user_public_keys")
+        .select("user_id, algorithm")
+        .eq("user_id", realUid)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      const ok = !!data?.user_id && ((data as any)?.algorithm ?? "") === "crypto_box_seal";
+      setDeviceKeyOk(ok);
+      return ok;
+    } catch {
+      setDeviceKeyOk(false);
+      return false;
+    }
+  }
+
+  async function refreshVaultState(patientId: string, userId: string) {
+    setHasVaultShare(false);
+    setHasCachedVault(false);
+
+    try {
+      const cached = readCachedVaultKey(patientId, userId);
+      setHasCachedVault(!!cached);
+
+      const { data, error } = await supabase
+        .from("patient_vault_shares")
+        .select("wrapped_key")
+        .eq("patient_id", patientId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      setHasVaultShare(!!data?.wrapped_key);
+    } catch {
+      setHasVaultShare(false);
+    }
+  }
+
+  async function refreshProfileStep(patientId: string) {
+    try {
+      const { data, error } = await supabase
+        .from("patient_profiles")
+        .select("patient_id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+
+      if (error) throw error;
+      setHasProfile(!!data);
+    } catch {
+      setHasProfile(false);
+    }
+  }
+
+  async function determinePreferredCircle(params: {
+    userId: string;
+    membershipsList: CircleMembership[];
+    inviteAcceptedPid?: string;
+    preferredPidFromUrl?: string;
+    deviceKeyReady: boolean;
+  }) {
+    const ids = Array.from(new Set(params.membershipsList.map((m) => m.patient_id))).filter(isUuid);
+    if (ids.length === 0) return { preferredPid: "", allComplete: false };
+
+    const { data: shares, error: shareErr } = await supabase
+      .from("patient_vault_shares")
+      .select("patient_id")
+      .eq("user_id", params.userId)
+      .in("patient_id", ids);
+
+    if (shareErr) throw shareErr;
+
+    const { data: profiles, error: profileErr } = await supabase
+      .from("patient_profiles")
+      .select("patient_id")
+      .in("patient_id", ids);
+
+    if (profileErr) throw profileErr;
+
+    const shareSet = new Set(((shares ?? []) as { patient_id: string }[]).map((r) => r.patient_id));
+    const profileSet = new Set(((profiles ?? []) as { patient_id: string }[]).map((r) => r.patient_id));
+
+    const firstIncompletePid =
+      !params.deviceKeyReady
+        ? ids[0]
+        : ids.find((pid) => !shareSet.has(pid)) ||
+          ids.find((pid) => !readCachedVaultKey(pid, params.userId)) ||
+          ids.find((pid) => !profileSet.has(pid)) ||
+          "";
+
+    const preferredPid =
+      (params.inviteAcceptedPid && isUuid(params.inviteAcceptedPid) ? params.inviteAcceptedPid : "") ||
+      (params.preferredPidFromUrl && isUuid(params.preferredPidFromUrl) ? params.preferredPidFromUrl : "") ||
+      firstIncompletePid ||
+      (params.membershipsList.find((m) => safeBool(m.is_controller))?.patient_id ?? "") ||
+      ids[0];
+
+    return {
+      preferredPid,
+      allComplete: !!params.deviceKeyReady && !firstIncompletePid,
+    };
+  }
+
   async function refresh() {
     setLoading(true);
     setMsg(null);
@@ -276,7 +400,7 @@ export default function OnboardingClient() {
         setHasVaultShare(false);
         setHasCachedVault(false);
         setHasProfile(false);
-        await refreshDeviceKey();
+        await refreshDeviceKey(me.id);
         return;
       }
 
@@ -288,83 +412,31 @@ export default function OnboardingClient() {
       if (pErr) throw pErr;
 
       const map: Record<string, PatientRow> = {};
-      (pts ?? []).forEach((p: any) => (map[p.id] = p as PatientRow));
+      (pts ?? []).forEach((p: any) => {
+        map[p.id] = p as PatientRow;
+      });
       setPatientsById(map);
 
-      const preferredPid =
-        (inviteResult?.patient_id && isUuid(inviteResult.patient_id) ? inviteResult.patient_id : "") ||
-        (isUuid(preferredPatientIdFromUrl) ? preferredPatientIdFromUrl : "") ||
-        (selectedPatientId && ids.includes(selectedPatientId) ? selectedPatientId : "") ||
-        (ms.find((m) => safeBool(m.is_controller))?.patient_id ?? "") ||
-        ids[0];
+      const deviceKeyReady = await refreshDeviceKey(me.id);
+
+      const { preferredPid, allComplete } = await determinePreferredCircle({
+        userId: me.id,
+        membershipsList: ms,
+        inviteAcceptedPid: inviteResult?.patient_id,
+        preferredPidFromUrl: preferredPatientIdFromUrl,
+        deviceKeyReady,
+      });
 
       setSelectedPatientId(preferredPid);
 
-      await refreshDeviceKey();
+      if (!resolvedInviteToken && allComplete) {
+        router.replace("/app/hub");
+        return;
+      }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_onboarding");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function refreshDeviceKey() {
-    try {
-      const { data: auth, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
-      const me = auth.user;
-      if (!me?.id) {
-        setDeviceKeyOk(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("user_public_keys")
-        .select("user_id, algorithm")
-        .eq("user_id", me.id)
-        .maybeSingle();
-
-      if (error) throw error;
-      setDeviceKeyOk(!!data?.user_id && ((data as any)?.algorithm ?? "") === "crypto_box_seal");
-    } catch {
-      setDeviceKeyOk(false);
-    }
-  }
-
-  async function refreshVaultState(patientId: string, userId: string) {
-    setHasVaultShare(false);
-    setHasCachedVault(false);
-
-    try {
-      const cached = readCachedVaultKey(patientId, userId);
-      setHasCachedVault(!!cached);
-
-      const { data, error } = await supabase
-        .from("patient_vault_shares")
-        .select("wrapped_key")
-        .eq("patient_id", patientId)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (error) throw error;
-      setHasVaultShare(!!data?.wrapped_key);
-    } catch {
-      setHasVaultShare(false);
-    }
-  }
-
-  async function refreshProfileStep(patientId: string) {
-    try {
-      const { data, error } = await supabase
-        .from("patient_profiles")
-        .select("patient_id")
-        .eq("patient_id", patientId)
-        .maybeSingle();
-
-      if (error) throw error;
-      setHasProfile(!!data);
-    } catch {
-      setHasProfile(false);
     }
   }
 
@@ -410,19 +482,7 @@ export default function OnboardingClient() {
   }
 
   useEffect(() => {
-    const token = inviteTokenFromUrl || readPendingInviteToken();
-    if (token) {
-      writePendingInviteToken(token);
-      setResolvedInviteToken(token);
-    } else {
-      setResolvedInviteToken("");
-    }
-  }, [inviteTokenFromUrl]);
-
-  useEffect(() => {
-    (async () => {
-      await refresh();
-    })().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
+    refresh().catch((e: any) => setMsg(e?.message ?? "failed_to_load_onboarding"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedInviteToken]);
 
@@ -524,6 +584,7 @@ export default function OnboardingClient() {
         .eq("patient_id", selectedPatientId)
         .eq("user_id", uid)
         .maybeSingle();
+
       if (shareErr) throw shareErr;
       if (!share?.wrapped_key) throw new Error("No vault share found yet.");
 
@@ -664,31 +725,51 @@ export default function OnboardingClient() {
       const communicationEnv = await vaultEncryptString({
         vaultKey,
         plaintext: communicationNotes,
-        aad: { table: "patient_profiles", column: "communication_notes_encrypted", patient_id: selectedPatientId },
+        aad: {
+          table: "patient_profiles",
+          column: "communication_notes_encrypted",
+          patient_id: selectedPatientId,
+        },
       });
 
       const allergiesEnv = await vaultEncryptString({
         vaultKey,
         plaintext: allergies,
-        aad: { table: "patient_profiles", column: "allergies_encrypted", patient_id: selectedPatientId },
+        aad: {
+          table: "patient_profiles",
+          column: "allergies_encrypted",
+          patient_id: selectedPatientId,
+        },
       });
 
       const safetyEnv = await vaultEncryptString({
         vaultKey,
         plaintext: safetyNotes,
-        aad: { table: "patient_profiles", column: "safety_notes_encrypted", patient_id: selectedPatientId },
+        aad: {
+          table: "patient_profiles",
+          column: "safety_notes_encrypted",
+          patient_id: selectedPatientId,
+        },
       });
 
       const diagnosesEnv = await vaultEncryptString({
         vaultKey,
         plaintext: diagnoses,
-        aad: { table: "patient_profiles", column: "diagnoses_encrypted", patient_id: selectedPatientId },
+        aad: {
+          table: "patient_profiles",
+          column: "diagnoses_encrypted",
+          patient_id: selectedPatientId,
+        },
       });
 
       const languagesEnv = await vaultEncryptString({
         vaultKey,
         plaintext: languagesSpoken,
-        aad: { table: "patient_profiles", column: "languages_spoken_encrypted", patient_id: selectedPatientId },
+        aad: {
+          table: "patient_profiles",
+          column: "languages_spoken_encrypted",
+          patient_id: selectedPatientId,
+        },
       });
 
       const { error } = await supabase.from("patient_profiles").upsert(
@@ -719,6 +800,7 @@ export default function OnboardingClient() {
     if (!selectedPatientId) return;
     setBusy("seed");
     setMsg(null);
+
     try {
       const { error } = await supabase.rpc("permissions_seed_defaults", { pid: selectedPatientId });
       if (error) throw error;
@@ -779,7 +861,11 @@ export default function OnboardingClient() {
             <div className="cc-strong">Setup steps</div>
 
             {resolvedInviteToken ? (
-              <StepRow label="Join circle from invite" active={currentStep === "invite"} done={inviteStatus === "accepted"} />
+              <StepRow
+                label="Join circle from invite"
+                active={currentStep === "invite"}
+                done={inviteStatus === "accepted"}
+              />
             ) : null}
 
             <StepRow label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
@@ -799,14 +885,7 @@ export default function OnboardingClient() {
             <StepRow
               label="Permissions defaults"
               active={currentStep === "permissions"}
-              done={
-                !!selectedPatientId &&
-                deviceKeyOk &&
-                hasVaultShare &&
-                hasCachedVault &&
-                hasProfile &&
-                !isController
-              }
+              done={!!selectedPatientId && deviceKeyOk && hasVaultShare && hasCachedVault && hasProfile && !isController}
             />
 
             <StepRow label="Finish" active={currentStep === "finish"} done={currentStep === "finish"} />
@@ -824,12 +903,21 @@ export default function OnboardingClient() {
             ) : null}
 
             <div className="cc-row">
-              <span className={`cc-pill ${deviceKeyOk ? "cc-pill-primary" : ""}`}>Device key: {deviceKeyOk ? "OK" : "missing"}</span>
-              <span className={`cc-pill ${hasVaultShare ? "cc-pill-primary" : ""}`}>Share row: {hasVaultShare ? "present" : "missing"}</span>
+              <span className={`cc-pill ${deviceKeyOk ? "cc-pill-primary" : ""}`}>
+                Device key: {deviceKeyOk ? "OK" : "missing"}
+              </span>
+              <span className={`cc-pill ${hasVaultShare ? "cc-pill-primary" : ""}`}>
+                Share row: {hasVaultShare ? "present" : "missing"}
+              </span>
             </div>
+
             <div className="cc-row">
-              <span className={`cc-pill ${hasCachedVault ? "cc-pill-primary" : ""}`}>Cached vault: {hasCachedVault ? "present" : "missing"}</span>
-              <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>Controller: {isController ? "true" : "false"}</span>
+              <span className={`cc-pill ${hasCachedVault ? "cc-pill-primary" : ""}`}>
+                Cached vault: {hasCachedVault ? "present" : "missing"}
+              </span>
+              <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
+                Controller: {isController ? "true" : "false"}
+              </span>
             </div>
           </div>
 
@@ -841,7 +929,9 @@ export default function OnboardingClient() {
 
                 {inviteStatus === "checking" || inviteStatus === "accepting" ? (
                   <div className="cc-status cc-status-loading">
-                    <div className="cc-strong">{inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}</div>
+                    <div className="cc-strong">
+                      {inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}
+                    </div>
                     <div className="cc-subtle">Please keep this page open.</div>
                   </div>
                 ) : null}
@@ -866,7 +956,9 @@ export default function OnboardingClient() {
                     <div className="cc-strong">
                       {inviteResult.already_member ? "You’re already linked to this circle." : "You’ve joined the circle."}
                     </div>
-                    <div className="cc-subtle">Role: <b>{inviteResult.role}</b></div>
+                    <div className="cc-subtle">
+                      Role: <b>{inviteResult.role}</b>
+                    </div>
                   </div>
                 ) : null}
               </>
@@ -887,7 +979,8 @@ export default function OnboardingClient() {
                         </option>
                         {memberships.map((m) => (
                           <option key={m.patient_id} value={m.patient_id}>
-                            {(patientsById[m.patient_id]?.display_name ?? m.patient_id) + (safeBool(m.is_controller) ? " (controller)" : "")}
+                            {(patientsById[m.patient_id]?.display_name ?? m.patient_id) +
+                              (safeBool(m.is_controller) ? " (controller)" : "")}
                           </option>
                         ))}
                       </select>
@@ -930,12 +1023,20 @@ export default function OnboardingClient() {
                 </div>
 
                 <div className="cc-row">
-                  <button className="cc-btn cc-btn-secondary" onClick={enableE2EEOnThisDevice} disabled={busy === "enable-e2ee" || deviceKeyOk}>
+                  <button
+                    className="cc-btn cc-btn-secondary"
+                    onClick={enableE2EEOnThisDevice}
+                    disabled={busy === "enable-e2ee" || deviceKeyOk}
+                  >
                     {deviceKeyOk ? "Device key ready" : busy === "enable-e2ee" ? "Enabling…" : "Enable secure key on this device"}
                   </button>
 
                   {isController ? (
-                    <button className="cc-btn cc-btn-primary" onClick={initialiseNewVaultKey} disabled={busy === "init-vault" || !deviceKeyOk}>
+                    <button
+                      className="cc-btn cc-btn-primary"
+                      onClick={initialiseNewVaultKey}
+                      disabled={busy === "init-vault" || !deviceKeyOk}
+                    >
                       {busy === "init-vault" ? "Initialising…" : "Initialise new vault"}
                     </button>
                   ) : null}
@@ -943,14 +1044,22 @@ export default function OnboardingClient() {
 
                 {isController ? (
                   <div className="cc-row">
-                    <button className="cc-btn" onClick={shareKeyToMembers} disabled={busy === "share-vault" || !deviceKeyOk}>
+                    <button
+                      className="cc-btn"
+                      onClick={shareKeyToMembers}
+                      disabled={busy === "share-vault" || !deviceKeyOk}
+                    >
                       {busy === "share-vault" ? "Sharing…" : "Share vault to members"}
                     </button>
                   </div>
                 ) : null}
 
                 <div className="cc-row">
-                  <button className="cc-btn cc-btn-primary" onClick={unlockVaultOnThisDevice} disabled={busy === "unlock-vault" || !deviceKeyOk || !hasVaultShare}>
+                  <button
+                    className="cc-btn cc-btn-primary"
+                    onClick={unlockVaultOnThisDevice}
+                    disabled={busy === "unlock-vault" || !deviceKeyOk || !hasVaultShare}
+                  >
                     {busy === "unlock-vault" ? "Unlocking…" : "Unlock vault on this device"}
                   </button>
                 </div>
