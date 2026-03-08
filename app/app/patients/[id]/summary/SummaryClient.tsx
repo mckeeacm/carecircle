@@ -424,12 +424,12 @@ function AdvancePlanningSummaryCard({
         name={healthWellbeingLpaHolderName}
       />
       <AdvancePlanningSummaryRow
-        label="RESPECT form in place"
+        label="RESPECT form or Emergency Care Plan"
         enabled={hasRespectForm}
         name={respectFormHolderName}
       />
       <AdvancePlanningSummaryRow
-        label="Unofficially nominated personal representative"
+        label="Nominated Advocate"
         enabled={hasUnofficialRepresentative}
         name={unofficialRepresentativeName}
       />

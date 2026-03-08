@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
+import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
+import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
+import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 
 type PatientRow = { id: string; display_name: string | null };
@@ -13,6 +16,7 @@ type JournalPreview = {
   created_at: string;
   journal_type: string;
   shared_to_circle: boolean;
+  created_by: string | null;
 };
 
 type AppointmentRow = {
@@ -22,11 +26,25 @@ type AppointmentRow = {
   location: string | null;
 };
 
+type AppointmentAuditRow = {
+  id: string;
+  appointment_id: string;
+  patient_id: string;
+  changed_by: string | null;
+  changed_at: string;
+  action: string;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+};
+
 type MedicationLogRow = {
   id: string;
   created_at: string;
   status: string | null;
   medication_id: string;
+  created_by: string;
+  note_encrypted: CipherEnvelopeV1 | null;
 };
 
 type MedicationRow = {
@@ -59,6 +77,35 @@ type DmThreadRow = {
   last_message_at?: string | null;
 };
 
+type MemberBasic = {
+  user_id: string;
+  nickname: string | null;
+  role: string | null;
+  is_controller: boolean | null;
+};
+
+type ReminderGroupState = {
+  group: ReminderGroupRow;
+  medicationIds: string[];
+  dueAt: Date;
+  closesAt: Date;
+  state: "upcoming" | "due" | "taken" | "missed";
+  missingMedicationIds: string[];
+  takenMedicationIds: string[];
+  missedMedicationIds: string[];
+};
+
+type ActivityItem = {
+  id: string;
+  at: string;
+  actorLabel: string;
+  title: string;
+  detail?: string;
+  tone?: "normal" | "danger" | "positive";
+};
+
+const SYSTEM_NOTE_PREFIX = "__SYSTEM_NOTES__:";
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -66,6 +113,91 @@ function isUuid(s: string) {
 function formatReminderTime(value: string) {
   const raw = value.includes(":") ? value.slice(0, 5) : value;
   return raw || value;
+}
+
+function parseReminderTime(value: string): { hour: number; minute: number } | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
+  if (!match) return null;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  return { hour, minute };
+}
+
+function startOfToday(now: Date) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+}
+
+function endOfToday(now: Date) {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+}
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function reminderTimeForToday(reminderTime: string, now: Date) {
+  const parsed = parseReminderTime(reminderTime);
+  if (!parsed) return null;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), parsed.hour, parsed.minute, 0, 0);
+}
+
+function formatReminderDisplayTime(date: Date) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function isSystemNotesPlaintext(value: string | undefined) {
+  return !!value && value.startsWith(SYSTEM_NOTE_PREFIX);
+}
+
+function stripSystemPrefix(value: string | undefined) {
+  if (!value) return "";
+  return isSystemNotesPlaintext(value) ? value.slice(SYSTEM_NOTE_PREFIX.length).trim() : value;
+}
+
+function fieldLabel(field: string) {
+  if (field === "starts_at") return "appointment start time";
+  if (field === "ends_at") return "appointment end time";
+  if (field === "title") return "appointment title";
+  if (field === "location") return "appointment location";
+  if (field === "provider") return "appointment provider";
+  if (field === "status") return "appointment status";
+  if (field === "transport_status") return "transport status";
+  if (field === "transport_by") return "transport arranged by";
+  if (field === "transport_proof_name") return "transport proof";
+  if (field === "notes_encrypted") return "appointment notes";
+  if (field === "appointment") return "appointment";
+  return field.replace(/_/g, " ");
+}
+
+function statusPillClass(value: string | null) {
+  if (value === "taken") return "cc-pill-primary";
+  if (value === "missed") return "cc-pill-danger";
+  return "";
+}
+
+function medicationStatusLabel(value: string | null) {
+  if (value === "taken") return "Taken";
+  if (value === "missed") return "Missed";
+  if (value === "refused") return "Refused";
+  if (value === "delayed") return "Delayed";
+  return value ?? "—";
 }
 
 export default function TodayClient({ patientId }: { patientId: string }) {
@@ -77,14 +209,20 @@ export default function TodayClient({ patientId }: { patientId: string }) {
   const [patient, setPatient] = useState<PatientRow | null>(null);
 
   const [journals, setJournals] = useState<JournalPreview[]>([]);
+  const [journals24h, setJournals24h] = useState<JournalPreview[]>([]);
   const [appointments, setAppointments] = useState<AppointmentRow[]>([]);
+  const [appointmentAuditLogs, setAppointmentAuditLogs] = useState<AppointmentAuditRow[]>([]);
   const [medLogs, setMedLogs] = useState<MedicationLogRow[]>([]);
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [reminderGroups, setReminderGroups] = useState<ReminderGroupRow[]>([]);
   const [reminderMembers, setReminderMembers] = useState<ReminderGroupMemberRow[]>([]);
+  const [membersById, setMembersById] = useState<Record<string, MemberBasic>>({});
+  const [notePlainById, setNotePlainById] = useState<Record<string, string>>({});
 
   const [dmStatus, setDmStatus] = useState<"ok" | "unavailable" | "loading">("loading");
   const [dmThreadCount, setDmThreadCount] = useState<number>(0);
+  const [busyReminderId, setBusyReminderId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
   async function load() {
     setLoading(true);
@@ -102,25 +240,49 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       if (pErr) throw pErr;
       setPatient(p as PatientRow);
 
+      const { data: memberRows, error: memberErr } = await supabase.rpc("patient_members_basic_list", {
+        pid: patientId,
+      });
+
+      if (!memberErr) {
+        const map: Record<string, MemberBasic> = {};
+        for (const r of (memberRows ?? []) as MemberBasic[]) {
+          map[r.user_id] = r;
+        }
+        setMembersById(map);
+      }
+
       const now = new Date();
+      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-      const startOfToday = new Date(now);
-      startOfToday.setHours(0, 0, 0, 0);
+      const startToday = startOfToday(now);
+      const endToday = endOfToday(now);
 
-      const endOfToday = new Date(now);
-      endOfToday.setHours(23, 59, 59, 999);
-
-      const { data: j, error: jErr } = await supabase
+      const { data: jToday, error: jTodayErr } = await supabase
         .from("journal_entries")
-        .select("id, created_at, journal_type, shared_to_circle")
+        .select("id, created_at, journal_type, shared_to_circle, created_by")
         .eq("patient_id", patientId)
-        .gte("created_at", startOfToday.toISOString())
-        .lte("created_at", endOfToday.toISOString())
+        .gte("created_at", startToday.toISOString())
+        .lte("created_at", endToday.toISOString())
         .order("created_at", { ascending: false })
-        .limit(5);
+        .limit(10);
 
-      if (jErr) throw jErr;
-      setJournals((j ?? []) as JournalPreview[]);
+      if (jTodayErr) throw jTodayErr;
+      setJournals((jToday ?? []) as JournalPreview[]);
+
+      const { data: j24, error: j24Err } = await supabase
+        .from("journal_entries")
+        .select("id, created_at, journal_type, shared_to_circle, created_by")
+        .eq("patient_id", patientId)
+        .gte("created_at", twentyFourHoursAgo.toISOString())
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (j24Err) {
+        setJournals24h([]);
+      } else {
+        setJournals24h((j24 ?? []) as JournalPreview[]);
+      }
 
       const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
@@ -140,6 +302,21 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         setAppointments([]);
       }
 
+      try {
+        const { data: aal, error: aalErr } = await supabase
+          .from("appointment_audit_logs")
+          .select("id, appointment_id, patient_id, changed_by, changed_at, action, field_name, old_value, new_value")
+          .eq("patient_id", patientId)
+          .gte("changed_at", twentyFourHoursAgo.toISOString())
+          .order("changed_at", { ascending: false })
+          .limit(100);
+
+        if (aalErr) throw aalErr;
+        setAppointmentAuditLogs((aal ?? []) as AppointmentAuditRow[]);
+      } catch {
+        setAppointmentAuditLogs([]);
+      }
+
       const { data: m, error: mErr } = await supabase
         .from("medications")
         .select("id, name, dosage, schedule_text, active")
@@ -152,15 +329,49 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
       const { data: ml, error: mlErr } = await supabase
         .from("medication_logs")
-        .select("id, created_at, status, medication_id")
+        .select("id, created_at, status, medication_id, created_by, note_encrypted")
         .eq("patient_id", patientId)
-        .gte("created_at", startOfToday.toISOString())
-        .lte("created_at", endOfToday.toISOString())
+        .gte("created_at", startToday.toISOString())
+        .lte("created_at", endToday.toISOString())
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(200);
 
       if (mlErr) throw mlErr;
-      setMedLogs((ml ?? []) as MedicationLogRow[]);
+
+      const todayLogs = (ml ?? []) as MedicationLogRow[];
+      setMedLogs(todayLogs);
+
+      if (vaultKey) {
+        const missedWithNotes = todayLogs.filter((x) => x.status === "missed" && x.note_encrypted);
+        if (missedWithNotes.length > 0) {
+          const pairs = await Promise.all(
+            missedWithNotes.map(async (row) => {
+              try {
+                const plain = await decryptStringWithLocalCache({
+                  patientId,
+                  table: "medication_logs",
+                  rowId: row.id,
+                  column: "note_encrypted",
+                  env: row.note_encrypted as CipherEnvelopeV1,
+                  vaultKey,
+                });
+                return [row.id, plain] as const;
+              } catch {
+                return null;
+              }
+            })
+          );
+
+          const additions: Record<string, string> = {};
+          for (const pair of pairs) {
+            if (pair) additions[pair[0]] = pair[1];
+          }
+
+          if (Object.keys(additions).length > 0) {
+            setNotePlainById((prev) => ({ ...prev, ...additions }));
+          }
+        }
+      }
 
       const { data: rg, error: rgErr } = await supabase
         .from("medication_reminder_groups")
@@ -216,7 +427,18 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
   useEffect(() => {
     load();
-  }, [patientId, supabase]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNowTick(Date.now());
+      load();
+    }, 30000);
+
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId]);
 
   function medLabel(id: string) {
     const med = meds.find((m) => m.id === id);
@@ -230,26 +452,237 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       .map((m) => medLabel(m.medication_id));
   }
 
-  function normaliseTimeToToday(reminderTime: string) {
-    const base = reminderTime.slice(0, 5);
-    const [hh, mm] = base.split(":").map(Number);
-    const d = new Date();
-    d.setHours(Number.isFinite(hh) ? hh : 0, Number.isFinite(mm) ? mm : 0, 0, 0);
-    return d;
+  function whoLabel(userId: string | null, notePlain?: string) {
+    if (isSystemNotesPlaintext(notePlain)) return "System notes";
+    if (!userId) return "Unknown";
+    const member = membersById[userId];
+    return member?.nickname?.trim() || userId;
   }
 
-  const now = new Date();
-  const dueSoonCutoff = new Date(now.getTime() + 60 * 60 * 1000);
+  async function createLogsForMedicationIds(params: {
+    medicationIds: string[];
+    status: string;
+    noteText?: string;
+    systemNote?: boolean;
+  }) {
+    const medicationIds = Array.from(new Set(params.medicationIds)).filter(Boolean);
+    if (medicationIds.length === 0) return;
 
-  const dueNowGroups = reminderGroups.filter((g) => {
-    const t = normaliseTimeToToday(g.reminder_time);
-    return t <= dueSoonCutoff;
-  });
+    if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
 
-  const laterTodayGroups = reminderGroups.filter((g) => {
-    const t = normaliseTimeToToday(g.reminder_time);
-    return t > dueSoonCutoff;
-  });
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    if (authErr) throw authErr;
+    const uid = auth.user?.id;
+    if (!uid) throw new Error("not_authenticated");
+
+    let noteEnv: CipherEnvelopeV1 | null = null;
+    const noteText = params.noteText?.trim() ?? "";
+
+    if (noteText) {
+      if (!vaultKey) throw new Error("no_vault_share");
+      noteEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: params.systemNote ? `${SYSTEM_NOTE_PREFIX} ${noteText}` : noteText,
+        aad: { table: "medication_logs", column: "note_encrypted", patient_id: patientId },
+      });
+    }
+
+    const rows = medicationIds.map((medicationId) => ({
+      patient_id: patientId,
+      medication_id: medicationId,
+      status: params.status,
+      created_by: uid,
+      note_encrypted: noteEnv,
+    }));
+
+    const { error } = await supabase.from("medication_logs").insert(rows);
+    if (error) throw error;
+  }
+
+  const reminderStates = useMemo<ReminderGroupState[]>(() => {
+    const now = new Date(nowTick);
+    const activeGroups = reminderGroups
+      .filter((g) => g.active)
+      .map((group) => {
+        const dueAt = reminderTimeForToday(group.reminder_time, now);
+        if (!dueAt) return null;
+        return { group, dueAt };
+      })
+      .filter(Boolean) as { group: ReminderGroupRow; dueAt: Date }[];
+
+    const sorted = activeGroups.sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime());
+
+    return sorted.map((entry, index) => {
+      const nextDueToday = sorted[index + 1]?.dueAt ?? endOfToday(now);
+      const medicationIds = reminderMembers
+        .filter((m) => m.group_id === entry.group.id)
+        .map((m) => m.medication_id);
+
+      const relevantLogs = medLogs.filter((log) => {
+        const created = new Date(log.created_at);
+        return (
+          medicationIds.includes(log.medication_id) &&
+          sameDay(created, now) &&
+          created.getTime() >= entry.dueAt.getTime() &&
+          created.getTime() < nextDueToday.getTime()
+        );
+      });
+
+      const takenMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid && log.status === "taken")
+      );
+
+      const missedMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid && log.status === "missed")
+      );
+
+      const completedMedicationIds = medicationIds.filter((mid) =>
+        relevantLogs.some((log) => log.medication_id === mid)
+      );
+
+      const missingMedicationIds = medicationIds.filter((mid) => !completedMedicationIds.includes(mid));
+
+      let state: ReminderGroupState["state"] = "upcoming";
+      if (missingMedicationIds.length === 0 && medicationIds.length > 0) {
+        state = missedMedicationIds.length > 0 ? "missed" : "taken";
+      } else if (now.getTime() < entry.dueAt.getTime()) {
+        state = "upcoming";
+      } else if (now.getTime() >= nextDueToday.getTime()) {
+        state = "missed";
+      } else {
+        state = "due";
+      }
+
+      return {
+        group: entry.group,
+        medicationIds,
+        dueAt: entry.dueAt,
+        closesAt: nextDueToday,
+        state,
+        missingMedicationIds,
+        takenMedicationIds,
+        missedMedicationIds,
+      };
+    });
+  }, [medLogs, nowTick, reminderGroups, reminderMembers]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function autoMarkMissedOverdue() {
+      if (!vaultKey) return;
+      if (reminderStates.length === 0) return;
+
+      const overdue = reminderStates.filter(
+        (state) => state.state === "missed" && state.missingMedicationIds.length > 0
+      );
+
+      if (overdue.length === 0) return;
+
+      try {
+        for (const state of overdue) {
+          if (cancelled) return;
+
+          await createLogsForMedicationIds({
+            medicationIds: state.missingMedicationIds,
+            status: "missed",
+            noteText: `Auto-marked missed after the reminder window closed for ${state.group.name}.`,
+            systemNote: true,
+          });
+        }
+
+        if (!cancelled) {
+          await load();
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setMsg(e?.message ?? "failed_to_auto_mark_missed");
+        }
+      }
+    }
+
+    autoMarkMissedOverdue();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reminderStates, vaultKey]);
+
+  async function markReminderTaken(state: ReminderGroupState) {
+    if (state.medicationIds.length === 0) return;
+
+    setBusyReminderId(state.group.id);
+    setMsg(null);
+
+    try {
+      const idsToLog =
+        state.missingMedicationIds.length > 0 ? state.missingMedicationIds : state.medicationIds;
+
+      await createLogsForMedicationIds({
+        medicationIds: idsToLog,
+        status: "taken",
+      });
+
+      await load();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_mark_reminder_taken");
+    } finally {
+      setBusyReminderId(null);
+    }
+  }
+
+  const dueNowGroups = reminderStates.filter((g) => g.state === "due" || g.state === "missed");
+  const laterTodayGroups = reminderStates.filter((g) => g.state === "upcoming");
+  const completedGroups = reminderStates.filter((g) => g.state === "taken");
+
+  const activityItems: ActivityItem[] = [
+    ...journals24h.map((j) => ({
+      id: `journal-${j.id}`,
+      at: j.created_at,
+      actorLabel: whoLabel(j.created_by),
+      title: `Added a ${j.journal_type} journal entry`,
+      detail: j.shared_to_circle ? "Shared to circle" : "Private entry",
+      tone: "normal" as const,
+    })),
+    ...medLogs.map((log) => {
+      const plain = notePlainById[log.id];
+      const cleanNote = stripSystemPrefix(plain);
+      return {
+        id: `medlog-${log.id}`,
+        at: log.created_at,
+        actorLabel: whoLabel(log.created_by, plain),
+        title: `Logged ${medLabel(log.medication_id)} as ${medicationStatusLabel(log.status).toLowerCase()}`,
+        detail: cleanNote || undefined,
+        tone:
+          log.status === "missed"
+            ? ("danger" as const)
+            : log.status === "taken"
+            ? ("positive" as const)
+            : ("normal" as const),
+      };
+    }),
+    ...appointmentAuditLogs.map((log) => ({
+      id: `apptaudit-${log.id}`,
+      at: log.changed_at,
+      actorLabel: whoLabel(log.changed_by),
+      title:
+        log.action === "insert"
+          ? `Created ${fieldLabel(log.field_name)}`
+          : log.action === "delete"
+          ? "Deleted appointment"
+          : `Updated ${fieldLabel(log.field_name)}`,
+      detail:
+        log.action === "update"
+          ? `${log.old_value ?? "—"} → ${log.new_value ?? "—"}`
+          : log.action === "insert"
+          ? log.new_value ?? undefined
+          : log.old_value ?? undefined,
+      tone: log.field_name === "status" && log.new_value === "cancelled" ? ("danger" as const) : ("normal" as const),
+    })),
+  ]
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, 50);
 
   return (
     <MobileShell
@@ -375,23 +808,61 @@ export default function TodayClient({ patientId }: { patientId: string }) {
             <div className="cc-stack">
               {dueNowGroups.length > 0 ? (
                 <div className="cc-panel-soft" style={{ padding: 14, borderRadius: 18 }}>
-                  <div className="cc-strong">Due now / soon</div>
+                  <div className="cc-strong">Due now / overdue</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
-                    {dueNowGroups.map((group) => (
-                      <div key={group.id} className="cc-panel" style={{ padding: 12 }}>
-                        <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 10 }}>
-                          <div>
-                            <div className="cc-strong">{group.name}</div>
-                            <div className="cc-small cc-subtle">{formatReminderTime(group.reminder_time)}</div>
-                            <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
-                              {reminderGroupMedicationLabels(group.id).join(" • ") || "No medications"}
+                    {dueNowGroups.map((state) => {
+                      const busy = busyReminderId === state.group.id;
+                      const pillClass =
+                        state.state === "missed" ? "cc-pill-danger" : "cc-pill-primary";
+
+                      return (
+                        <div
+                          key={state.group.id}
+                          className="cc-panel"
+                          style={{
+                            padding: 12,
+                            border: state.state === "missed" ? "1px solid rgba(220, 38, 38, 0.18)" : undefined,
+                          }}
+                        >
+                          <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 10 }}>
+                            <div>
+                              <div className="cc-strong">{state.group.name}</div>
+                              <div className="cc-small cc-subtle">
+                                {formatReminderDisplayTime(state.dueAt)} →{" "}
+                                {state.closesAt.getHours() === 23 && state.closesAt.getMinutes() === 59
+                                  ? "Midnight"
+                                  : formatReminderDisplayTime(state.closesAt)}
+                              </div>
+                              <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
+                                {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                              </div>
+                              {state.state === "missed" && state.missingMedicationIds.length > 0 ? (
+                                <div
+                                  className="cc-small"
+                                  style={{ marginTop: 8, color: "crimson", fontWeight: 800 }}
+                                >
+                                  Missed: {state.missingMedicationIds.map((id) => medLabel(id)).join(" • ")}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+                              <span className={`cc-pill ${pillClass}`}>
+                                {state.state === "missed" ? "Missed" : "Due"}
+                              </span>
+                              <button
+                                className="cc-btn cc-btn-primary"
+                                onClick={() => markReminderTaken(state)}
+                                disabled={busy || state.state === "missed" || state.state === "taken"}
+                              >
+                                {busy ? "Saving…" : "Taken"}
+                              </button>
                             </div>
                           </div>
-                          <span className="cc-pill cc-pill-primary">Due</span>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -401,17 +872,17 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                   <div className="cc-strong">Later today</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
-                    {laterTodayGroups.slice(0, 3).map((group) => (
-                      <div key={group.id} className="cc-panel" style={{ padding: 12 }}>
+                    {laterTodayGroups.slice(0, 4).map((state) => (
+                      <div key={state.group.id} className="cc-panel" style={{ padding: 12 }}>
                         <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 10 }}>
                           <div>
-                            <div className="cc-strong">{group.name}</div>
-                            <div className="cc-small cc-subtle">{formatReminderTime(group.reminder_time)}</div>
+                            <div className="cc-strong">{state.group.name}</div>
+                            <div className="cc-small cc-subtle">{formatReminderDisplayTime(state.dueAt)}</div>
                             <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
-                              {reminderGroupMedicationLabels(group.id).join(" • ") || "No medications"}
+                              {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
                             </div>
                           </div>
-                          <span className="cc-pill">{formatReminderTime(group.reminder_time)}</span>
+                          <span className="cc-pill">{formatReminderDisplayTime(state.dueAt)}</span>
                         </div>
                       </div>
                     ))}
@@ -419,21 +890,22 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                 </div>
               ) : null}
 
-              {medLogs.length > 0 ? (
+              {completedGroups.length > 0 ? (
                 <div className="cc-panel-soft" style={{ padding: 14, borderRadius: 18 }}>
-                  <div className="cc-strong">Logged today</div>
+                  <div className="cc-strong">Completed today</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
-                    {medLogs.slice(0, 4).map((log) => (
-                      <div key={log.id} className="cc-panel" style={{ padding: 12 }}>
+                    {completedGroups.slice(0, 4).map((state) => (
+                      <div key={state.group.id} className="cc-panel" style={{ padding: 12 }}>
                         <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 10 }}>
                           <div>
-                            <div className="cc-strong">{medLabel(log.medication_id)}</div>
-                            <div className="cc-small cc-subtle">{new Date(log.created_at).toLocaleString()}</div>
+                            <div className="cc-strong">{state.group.name}</div>
+                            <div className="cc-small cc-subtle">{formatReminderDisplayTime(state.dueAt)}</div>
+                            <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
+                              {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                            </div>
                           </div>
-                          <span className={`cc-pill ${log.status === "taken" ? "cc-pill-primary" : ""}`}>
-                            {log.status ?? "—"}
-                          </span>
+                          <span className="cc-pill cc-pill-primary">Taken</span>
                         </div>
                       </div>
                     ))}
@@ -447,33 +919,47 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
       <div className="cc-card cc-card-pad">
         <div className="cc-row-between">
-          <h2 className="cc-h2">Recent medication logs</h2>
-          <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-            Open
-          </Link>
+          <h2 className="cc-h2">Activity trail — last 24 hours</h2>
+          <button className="cc-btn" onClick={load} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
         </div>
         <div className="cc-spacer-12" />
-        {medLogs.length === 0 ? (
-          <div className="cc-small">No logs yet today.</div>
+
+        {activityItems.length === 0 ? (
+          <div className="cc-small">No recorded activity in the last 24 hours.</div>
         ) : (
           <div className="cc-stack">
-            {medLogs.slice(0, 5).map((l) => (
-              <div key={l.id} className="cc-panel-soft">
-                <div className="cc-row-between">
-                  <div className="cc-strong">{l.status ?? "—"}</div>
-                  <div className="cc-small">{new Date(l.created_at).toLocaleString()}</div>
+            {activityItems.map((item) => (
+              <div
+                key={item.id}
+                className="cc-panel-soft"
+                style={{
+                  border: item.tone === "danger" ? "1px solid rgba(220, 38, 38, 0.18)" : undefined,
+                }}
+              >
+                <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
+                  <div className="cc-wrap" style={{ flex: 1 }}>
+                    <div className="cc-strong">{item.title}</div>
+                    {item.detail ? (
+                      <div className="cc-small cc-subtle" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
+                        {item.detail}
+                      </div>
+                    ) : null}
+                    <div className="cc-small cc-subtle" style={{ marginTop: 8 }}>
+                      <b>{item.actorLabel}</b> • {new Date(item.at).toLocaleString()}
+                    </div>
+                  </div>
+                  {item.tone === "positive" ? (
+                    <span className="cc-pill cc-pill-primary">Done</span>
+                  ) : item.tone === "danger" ? (
+                    <span className="cc-pill cc-pill-danger">Attention</span>
+                  ) : null}
                 </div>
-                <div className="cc-small cc-wrap">{medLabel(l.medication_id)}</div>
               </div>
             ))}
           </div>
         )}
-      </div>
-
-      <div className="cc-row">
-        <button className="cc-btn" onClick={load} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
-        </button>
       </div>
     </MobileShell>
   );

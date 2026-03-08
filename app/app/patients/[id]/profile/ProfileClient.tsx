@@ -737,7 +737,7 @@ function AdvancePlanningEditor({
       </div>
 
       <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-        <div className="cc-strong">RESPECT form in place</div>
+        <div className="cc-strong">RESPECT form or Emergency Care Plan</div>
         <YesNoButtons value={hasRespectForm} onChange={onHasRespectFormChange} />
         {hasRespectForm ? (
           <div className="cc-field">
@@ -753,13 +753,11 @@ function AdvancePlanningEditor({
       </div>
 
       <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-        <div className="cc-strong">
-          Unofficially nominated personal representative they feel can best speak for them
-        </div>
+        <div className="cc-strong">Nominated Advocate</div>
         <YesNoButtons value={hasUnofficialRepresentative} onChange={onHasUnofficialRepresentativeChange} />
         {hasUnofficialRepresentative ? (
           <div className="cc-field">
-            <div className="cc-label">Name of person who holds it</div>
+            <div className="cc-label">Name of nominated advocate</div>
             <input
               className="cc-input"
               value={unofficialRepresentativeName}
@@ -799,13 +797,13 @@ function AdvancePlanningSummaryCard({
       />
 
       <AdvancePlanningSummaryRow
-        label="RESPECT form in place"
+        label="RESPECT form or Emergency Care Plan"
         enabled={hasRespectForm}
         name={respectFormHolderName}
       />
 
       <AdvancePlanningSummaryRow
-        label="Unofficially nominated personal representative"
+        label="Nominated Advocate"
         enabled={hasUnofficialRepresentative}
         name={unofficialRepresentativeName}
       />
