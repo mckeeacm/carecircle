@@ -40,6 +40,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
@@ -48,10 +49,12 @@ export default function Home() {
 
   function routeAfterAuth() {
     const pendingInvite = inviteToken || readPendingInviteToken();
+
     if (pendingInvite) {
       router.replace(`/app/onboarding?invite=${encodeURIComponent(pendingInvite)}`);
       return;
     }
+
     router.replace("/app/onboarding");
   }
 
@@ -70,7 +73,9 @@ export default function Home() {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
+
         if (!active) return;
+
         if (data.session?.user?.id) {
           routeAfterAuth();
           return;
@@ -85,7 +90,9 @@ export default function Home() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user?.id) routeAfterAuth();
+      if (session?.user?.id) {
+        routeAfterAuth();
+      }
     });
 
     return () => {
@@ -102,6 +109,7 @@ export default function Home() {
 
     try {
       const cleanEmail = email.trim().toLowerCase();
+
       if (!cleanEmail) throw new Error("Please enter your email address.");
 
       if (mode === "reset") {
@@ -114,8 +122,12 @@ export default function Home() {
       if (!password) throw new Error("Please enter your password.");
 
       if (mode === "signup") {
-        if (password.length < 8) throw new Error("Password must be at least 8 characters.");
-        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        if (password.length < 8) {
+          throw new Error("Password must be at least 8 characters.");
+        }
+        if (password !== confirmPassword) {
+          throw new Error("Passwords do not match.");
+        }
 
         const { error } = await supabase.auth.signUp({
           email: cleanEmail,
@@ -154,11 +166,33 @@ export default function Home() {
   if (checkingSession) {
     return (
       <div className="cc-page">
-        <div className="cc-container" style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
-          <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 540, outline: "3px solid rgba(94,127,163,0.18)" }}>
-            <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1" style={{ fontSize: 34, marginTop: 8 }}>CareCircle</h1>
-            <div style={{ marginTop: 12, fontSize: 18 }}>Checking your sign-in…</div>
+        <div
+          className="cc-container"
+          style={{
+            minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            className="cc-card cc-card-pad"
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              borderRadius: 28,
+              padding: 28,
+            }}
+          >
+            <div className="cc-stack" style={{ gap: 12 }}>
+              <div className="cc-kicker" style={{ fontSize: 15 }}>
+                CareCircle
+              </div>
+              <h1 className="cc-h1" style={{ fontSize: 40, lineHeight: 1 }}>
+                CareCircle
+              </h1>
+              <div style={{ fontSize: 20, lineHeight: 1.4 }}>Checking your sign-in…</div>
+            </div>
           </div>
         </div>
       </div>
@@ -167,13 +201,49 @@ export default function Home() {
 
   return (
     <div className="cc-page">
-      <div className="cc-container" style={{ minHeight: "100dvh", display: "grid", placeItems: "center" }}>
-        <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 540, outline: "3px solid rgba(127,175,159,0.18)" }}>
-          <div className="cc-stack">
-            <div>
-              <div className="cc-kicker">CareCircle</div>
-              <h1 className="cc-h1" style={{ fontSize: 34, marginTop: 8 }}>{title}</h1>
-              <div style={{ marginTop: 12, fontSize: 18, lineHeight: 1.45 }}>{subtitle}</div>
+      <div
+        className="cc-container"
+        style={{
+          minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          className="cc-card"
+          style={{
+            width: "100%",
+            maxWidth: 560,
+            borderRadius: 32,
+            padding: 28,
+            background: "rgba(255,255,255,0.94)",
+          }}
+        >
+          <div className="cc-stack" style={{ gap: 22 }}>
+            <div className="cc-stack" style={{ gap: 10 }}>
+              <div className="cc-kicker" style={{ fontSize: 15 }}>
+                CareCircle
+              </div>
+              <h1
+                className="cc-h1"
+                style={{
+                  fontSize: 48,
+                  lineHeight: 0.98,
+                  letterSpacing: "-0.03em",
+                }}
+              >
+                {title}
+              </h1>
+              <div
+                style={{
+                  fontSize: 21,
+                  lineHeight: 1.4,
+                  maxWidth: 460,
+                }}
+              >
+                {subtitle}
+              </div>
             </div>
 
             {msg ? (
@@ -189,69 +259,159 @@ export default function Home() {
               </div>
             ) : null}
 
-            <form onSubmit={handleSubmit} className="cc-stack">
+            <form onSubmit={handleSubmit} className="cc-stack" style={{ gap: 16 }}>
               <div className="cc-field">
-                <div className="cc-label">Email</div>
+                <div className="cc-label" style={{ fontSize: 15 }}>
+                  Email
+                </div>
                 <input
                   className="cc-input"
                   type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={loading}
                   placeholder="name@example.com"
+                  style={{
+                    minHeight: 56,
+                    fontSize: 18,
+                    borderRadius: 18,
+                  }}
                 />
               </div>
 
               {mode !== "reset" ? (
                 <div className="cc-field">
-                  <div className="cc-label">Password</div>
+                  <div className="cc-label" style={{ fontSize: 15 }}>
+                    Password
+                  </div>
                   <input
                     className="cc-input"
                     type="password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     disabled={loading}
                     placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
+                    style={{
+                      minHeight: 56,
+                      fontSize: 18,
+                      borderRadius: 18,
+                    }}
                   />
                 </div>
               ) : null}
 
               {mode === "signup" ? (
                 <div className="cc-field">
-                  <div className="cc-label">Confirm password</div>
+                  <div className="cc-label" style={{ fontSize: 15 }}>
+                    Confirm password
+                  </div>
                   <input
                     className="cc-input"
                     type="password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoComplete="new-password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     disabled={loading}
                     placeholder="Repeat your password"
+                    style={{
+                      minHeight: 56,
+                      fontSize: 18,
+                      borderRadius: 18,
+                    }}
                   />
                 </div>
               ) : null}
 
-              <div className="cc-row">
-                <button type="submit" className="cc-btn cc-btn-primary" disabled={loading}>
+              <div className="cc-row" style={{ marginTop: 4 }}>
+                <button
+                  type="submit"
+                  className="cc-btn cc-btn-primary"
+                  disabled={loading}
+                  style={{
+                    minHeight: 54,
+                    paddingInline: 22,
+                    borderRadius: 18,
+                    fontSize: 17,
+                  }}
+                >
                   {mode === "signup"
-                    ? loading ? "Creating account…" : "Create account"
+                    ? loading
+                      ? "Creating account…"
+                      : "Create account"
                     : mode === "reset"
-                    ? loading ? "Sending…" : "Send reset email"
-                    : loading ? "Signing in…" : "Sign in"}
+                    ? loading
+                      ? "Sending…"
+                      : "Send reset email"
+                    : loading
+                    ? "Signing in…"
+                    : "Sign in"}
                 </button>
               </div>
             </form>
 
             <div className="cc-stack" style={{ gap: 10 }}>
               {mode !== "login" ? (
-                <button type="button" className="cc-btn" onClick={() => { setMode("login"); setMsg(null); setError(null); }}>
+                <button
+                  type="button"
+                  className="cc-btn"
+                  onClick={() => {
+                    setMode("login");
+                    setMsg(null);
+                    setError(null);
+                  }}
+                  style={{
+                    justifyContent: "flex-start",
+                    minHeight: 50,
+                    borderRadius: 18,
+                    fontSize: 16,
+                  }}
+                >
                   Back to sign in
                 </button>
               ) : (
                 <>
-                  <button type="button" className="cc-btn" onClick={() => { setMode("reset"); setMsg(null); setError(null); }}>
+                  <button
+                    type="button"
+                    className="cc-btn"
+                    onClick={() => {
+                      setMode("reset");
+                      setMsg(null);
+                      setError(null);
+                    }}
+                    style={{
+                      justifyContent: "flex-start",
+                      minHeight: 50,
+                      borderRadius: 18,
+                      fontSize: 16,
+                    }}
+                  >
                     Forgot password?
                   </button>
-                  <button type="button" className="cc-btn" onClick={() => { setMode("signup"); setMsg(null); setError(null); }}>
+
+                  <button
+                    type="button"
+                    className="cc-btn"
+                    onClick={() => {
+                      setMode("signup");
+                      setMsg(null);
+                      setError(null);
+                    }}
+                    style={{
+                      justifyContent: "flex-start",
+                      minHeight: 50,
+                      borderRadius: 18,
+                      fontSize: 16,
+                    }}
+                  >
                     Create a new account
                   </button>
                 </>
