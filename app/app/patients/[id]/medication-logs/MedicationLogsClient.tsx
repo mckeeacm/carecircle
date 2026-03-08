@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { usePatientVault } from "@/lib/e2ee/PatientVaultProvider";
 import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
@@ -61,6 +63,63 @@ const STATUS_OPTIONS = [
   { value: "delayed", label: "Delayed" },
 ] as const;
 
+const REMINDER_CHANNEL_ID = "medication-reminders";
+
+function reminderStorageKey(patientId: string) {
+  return `carecircle:android-med-reminder-ids:${patientId}`;
+}
+
+function readScheduledReminderIds(patientId: string): number[] {
+  try {
+    const raw = localStorage.getItem(reminderStorageKey(patientId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => Number.isInteger(x));
+  } catch {
+    return [];
+  }
+}
+
+function writeScheduledReminderIds(patientId: string, ids: number[]) {
+  try {
+    localStorage.setItem(reminderStorageKey(patientId), JSON.stringify(ids));
+  } catch {}
+}
+
+function hashToPositiveInt(input: string) {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function reminderNotificationId(groupId: string) {
+  return 100000000 + (hashToPositiveInt(`medication-reminder:${groupId}`) % 900000000);
+}
+
+function parseReminderTime(value: string): { hour: number; minute: number } | null {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
+  if (!match) return null;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  return { hour, minute };
+}
+
 export default function MedicationLogsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -86,6 +145,99 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   const [reminderName, setReminderName] = useState<string>("");
   const [reminderTime, setReminderTime] = useState<string>("20:00");
   const [selectedReminderMedIds, setSelectedReminderMedIds] = useState<string[]>([]);
+
+  function medLabelFrom(list: MedicationRow[], id: string) {
+    const m = list.find((x) => x.id === id);
+    if (!m) return id;
+    return `${m.name}${m.dosage ? ` (${m.dosage})` : ""}`;
+  }
+
+  async function syncNativeReminderNotifications(
+    groups: ReminderGroupRow[],
+    members: ReminderGroupMemberRow[],
+    medications: MedicationRow[]
+  ) {
+    if (Capacitor.getPlatform() !== "android") return;
+
+    try {
+      const previouslyScheduledIds = readScheduledReminderIds(patientId);
+
+      if (previouslyScheduledIds.length > 0) {
+        await LocalNotifications.cancel({
+          notifications: previouslyScheduledIds.map((id) => ({ id })),
+        });
+      }
+
+      await LocalNotifications.createChannel({
+        id: REMINDER_CHANNEL_ID,
+        name: "Medication reminders",
+        description: "Daily medication reminder alarms",
+        importance: 5,
+        visibility: 1,
+      });
+
+      let permissions = await LocalNotifications.checkPermissions();
+      if (permissions.display !== "granted") {
+        permissions = await LocalNotifications.requestPermissions();
+      }
+
+      if (permissions.display !== "granted") {
+        writeScheduledReminderIds(patientId, []);
+        return;
+      }
+
+      const notifications = groups
+        .filter((group) => group.active)
+        .flatMap((group) => {
+          const parsedTime = parseReminderTime(group.reminder_time);
+          if (!parsedTime) return [];
+
+          const groupMedicationLabels = members
+            .filter((m) => m.group_id === group.id)
+            .map((m) => medLabelFrom(medications, m.medication_id));
+
+          const body =
+            groupMedicationLabels.length > 0
+              ? `Time for: ${groupMedicationLabels.join(", ")}`
+              : "Time to take your medication.";
+
+          return [
+            {
+              id: reminderNotificationId(group.id),
+              title: group.name?.trim() || "Medication reminder",
+              body,
+              channelId: REMINDER_CHANNEL_ID,
+              smallIcon: "ic_launcher",
+              schedule: {
+                on: {
+                  hour: parsedTime.hour,
+                  minute: parsedTime.minute,
+                },
+                allowWhileIdle: true,
+              },
+              extra: {
+                type: "medication_reminder_group",
+                patientId,
+                groupId: group.id,
+              },
+            },
+          ];
+        });
+
+      if (notifications.length === 0) {
+        writeScheduledReminderIds(patientId, []);
+        return;
+      }
+
+      await LocalNotifications.schedule({ notifications });
+      writeScheduledReminderIds(
+        patientId,
+        notifications.map((n) => n.id)
+      );
+    } catch (err) {
+      console.error("Failed to sync native medication reminders", err);
+    }
+  }
 
   async function refresh() {
     setLoading(true);
@@ -142,8 +294,10 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       setReminderGroups(groups);
 
       const groupIds = groups.map((g) => g.id);
+
       if (groupIds.length === 0) {
         setReminderMembers([]);
+        await syncNativeReminderNotifications(groups, [], medsList);
       } else {
         const { data: rm, error: rmErr } = await supabase
           .from("medication_reminder_group_members")
@@ -151,7 +305,10 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           .in("group_id", groupIds);
 
         if (rmErr) throw rmErr;
-        setReminderMembers((rm ?? []) as ReminderGroupMemberRow[]);
+
+        const memberList = (rm ?? []) as ReminderGroupMemberRow[];
+        setReminderMembers(memberList);
+        await syncNativeReminderNotifications(groups, memberList, medsList);
       }
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_load_medication_logs");
@@ -504,6 +661,9 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           <div className="cc-subtle">
             Create reminders for one medication or a group, such as Evening meds.
           </div>
+          <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
+            On Android app builds, active reminders are also scheduled as device notifications.
+          </div>
         </div>
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
@@ -576,7 +736,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           </div>
 
           <div className="cc-small cc-subtle">
-            This stores reminder schedules ready for app notifications later.
+            This stores reminder schedules and syncs them to Android notifications when available.
           </div>
         </div>
 
