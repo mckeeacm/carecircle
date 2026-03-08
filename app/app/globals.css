@@ -1,53 +1,33 @@
 @import "tailwindcss";
 
-/* =====================
-   CareCircle theme vars
-===================== */
 :root {
   color-scheme: light;
-
   --cc-bg: #f6f9fb;
-  --cc-card: rgba(255, 255, 255, 0.88);
-  --cc-border: rgba(0, 0, 0, 0.08);
-
-  --cc-primary: #5e7fa3;
-  --cc-secondary: #7faf9f;
-  --cc-muted: #6b7280;
-
+  --cc-card: rgba(255, 255, 255, 0.92);
+  --cc-border: rgba(15, 23, 42, 0.08);
+  --cc-text: #0f172a;
   --cc-radius: 16px;
-
   --cc-shadow:
     0 1px 2px rgba(0, 0, 0, 0.04),
     0 8px 24px rgba(0, 0, 0, 0.06);
 }
 
-/* =====================
-   Base
-===================== */
-
-html {
-  -webkit-text-size-adjust: 100%;
-}
-
 html,
 body {
   height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #dfe9e5 !important;
+  color: var(--cc-text) !important;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background:
-    linear-gradient(
-      rgba(246, 249, 251, 0.9),
-      rgba(246, 249, 251, 0.95)
-    ),
-    url("/images/carecircle-bg-main.png");
-  background-size: cover;
-  background-position: center;
-  background-attachment: fixed;
-
-  color: #0f172a;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+  background:
+    linear-gradient(rgba(246, 249, 251, 0.9), rgba(246, 249, 251, 0.95)),
+    url("/images/carecircle-bg-main.png") center / cover fixed !important;
 }
 
 a,
@@ -63,72 +43,18 @@ input,
 textarea,
 select,
 button {
-  color-scheme: light;
   font: inherit;
+  color-scheme: light;
 }
-
-/* =====================
-   Layout helpers
-===================== */
 
 .cc-page {
   position: relative;
   min-height: 100vh;
   padding: 24px;
-
   padding-left: max(24px, env(safe-area-inset-left));
   padding-right: max(24px, env(safe-area-inset-right));
   padding-top: max(24px, env(safe-area-inset-top));
   padding-bottom: max(24px, env(safe-area-inset-bottom));
-}
-
-.cc-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.18) 0%,
-      rgba(255, 255, 255, 0.06) 40%,
-      rgba(255, 255, 255, 0.12) 100%
-    ),
-    url("/images/carecircle-bg-texture.png");
-  background-size: cover;
-  background-position: center;
-  opacity: 0.2;
-  z-index: 0;
-}
-
-.cc-page::after {
-  content: "";
-  position: fixed;
-  bottom: 28px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 240px;
-  height: 78px;
-  pointer-events: none;
-  background: url("/images/carecircle-watermark.png") center / contain no-repeat;
-  opacity: 0.08;
-  z-index: 0;
-}
-
-@media (max-width: 520px) {
-  .cc-page {
-    padding: 14px;
-    padding-left: max(14px, env(safe-area-inset-left));
-    padding-right: max(14px, env(safe-area-inset-right));
-    padding-top: max(14px, env(safe-area-inset-top));
-    padding-bottom: max(14px, env(safe-area-inset-bottom));
-  }
-
-  .cc-page::after {
-    width: 180px;
-    height: 60px;
-    bottom: 18px;
-  }
 }
 
 .cc-container {
@@ -188,28 +114,17 @@ button {
 }
 
 @media (max-width: 520px) {
+  .cc-page {
+    padding: 14px;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-top: max(14px, env(safe-area-inset-top));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
   .cc-grid-3 {
     grid-template-columns: 1fr;
   }
-}
-
-.cc-spacer-12 {
-  height: 12px;
-}
-
-.cc-spacer-24 {
-  height: 24px;
-}
-
-.cc-sticky {
-  position: sticky;
-  top: 10px;
-  z-index: 5;
-}
-
-.cc-table-wrap {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .cc-wrap {
@@ -217,73 +132,47 @@ button {
   word-break: break-word;
 }
 
-/* =====================
-   Card + panel styling
-===================== */
-
 .cc-card {
-  background: var(--cc-card);
-  border: 1px solid var(--cc-border);
+  background: var(--cc-card) !important;
+  color: var(--cc-text) !important;
+  border: 1px solid var(--cc-border) !important;
   border-radius: var(--cc-radius);
   box-shadow: var(--cc-shadow);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  color: #0f172a;
 }
 
 .cc-card-pad {
   padding: 16px;
 }
 
-@media (max-width: 520px) {
-  .cc-card-pad {
-    padding: 14px;
-  }
-}
-
-.cc-panel {
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(201, 211, 224, 0.2);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  color: #0f172a;
-}
-
-.cc-panel-soft {
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  color: #0f172a;
-}
-
-.cc-panel-green {
-  padding: 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(127, 175, 163, 0.12);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  color: #0f172a;
-}
-
+.cc-panel,
+.cc-panel-soft,
+.cc-panel-green,
 .cc-panel-blue {
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: rgba(94, 127, 163, 0.12);
+  color: var(--cc-text) !important;
+  border: 1px solid rgba(15, 23, 42, 0.06) !important;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  color: #0f172a;
 }
 
-/* =====================
-   Typography helpers
-===================== */
+.cc-panel {
+  background: rgba(201, 211, 224, 0.2) !important;
+}
+
+.cc-panel-soft {
+  background: rgba(255, 255, 255, 0.78) !important;
+}
+
+.cc-panel-green {
+  background: rgba(127, 175, 163, 0.12) !important;
+}
+
+.cc-panel-blue {
+  background: rgba(94, 127, 163, 0.12) !important;
+}
 
 .cc-kicker {
   font-size: 12px;
@@ -321,24 +210,18 @@ button {
   padding: 4px 10px;
   border-radius: 999px;
   font-weight: 900;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  color: #0f172a;
+  color: var(--cc-text) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
 }
 
 .cc-pill-primary {
-  background: rgba(94, 127, 163, 0.18);
+  background: rgba(94, 127, 163, 0.18) !important;
 }
 
 .cc-pill-danger {
-  background: rgba(220, 38, 38, 0.12);
+  background: rgba(220, 38, 38, 0.12) !important;
 }
-
-/* =====================
-   Buttons + tabs
-===================== */
 
 .cc-btn,
 .cc-btn:visited,
@@ -348,26 +231,41 @@ button {
   border-radius: 14px;
   padding: 10px 14px;
   font-weight: 800;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.82);
-  color: #0f172a;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--cc-text) !important;
   cursor: pointer;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  transition: background 0.15s ease, transform 0.08s ease, border-color 0.15s ease;
 }
 
-.cc-btn:hover {
-  background: rgba(255, 255, 255, 0.95);
+.cc-btn-primary,
+.cc-btn-primary:visited,
+.cc-btn-primary:hover,
+.cc-btn-primary:active,
+.cc-btn-primary:focus {
+  background: rgba(94, 127, 163, 0.18) !important;
+  color: var(--cc-text) !important;
 }
 
-.cc-btn:active {
-  transform: translateY(1px);
+.cc-btn-secondary,
+.cc-btn-secondary:visited,
+.cc-btn-secondary:hover,
+.cc-btn-secondary:active,
+.cc-btn-secondary:focus {
+  background: rgba(127, 175, 163, 0.2) !important;
+  color: var(--cc-text) !important;
+}
+
+.cc-btn-danger,
+.cc-btn-danger:visited,
+.cc-btn-danger:hover,
+.cc-btn-danger:active,
+.cc-btn-danger:focus {
+  color: crimson !important;
 }
 
 .cc-btn:disabled,
@@ -376,59 +274,6 @@ button {
   cursor: not-allowed;
   pointer-events: none;
 }
-
-.cc-btn-primary,
-.cc-btn-primary:visited,
-.cc-btn-primary:hover,
-.cc-btn-primary:active,
-.cc-btn-primary:focus {
-  background: rgba(94, 127, 163, 0.18);
-  color: #0f172a;
-}
-
-.cc-btn-secondary,
-.cc-btn-secondary:visited,
-.cc-btn-secondary:hover,
-.cc-btn-secondary:active,
-.cc-btn-secondary:focus {
-  background: rgba(127, 175, 163, 0.2);
-  color: #0f172a;
-}
-
-.cc-btn-danger,
-.cc-btn-danger:visited,
-.cc-btn-danger:hover,
-.cc-btn-danger:active,
-.cc-btn-danger:focus {
-  color: crimson;
-}
-
-.cc-tabbar {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-
-.cc-tab {
-  border-radius: 999px;
-  padding: 10px 12px;
-  font-weight: 900;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  cursor: pointer;
-  color: #0f172a;
-}
-
-.cc-tab-active {
-  background: rgba(94, 127, 163, 0.22);
-}
-
-/* =====================
-   Inputs
-===================== */
 
 .cc-field {
   display: grid;
@@ -446,11 +291,10 @@ button {
   width: 100%;
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.9);
-  color: #0f172a;
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  color: var(--cc-text) !important;
+  box-sizing: border-box;
 }
 
 .cc-textarea {
@@ -458,24 +302,12 @@ button {
   resize: vertical;
 }
 
-.cc-check {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-/* =====================
-   Status callout
-===================== */
-
 .cc-status {
   padding: 12px;
   border-radius: 16px;
   border: 1px solid var(--cc-border);
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: #0f172a;
+  background: rgba(255, 255, 255, 0.9) !important;
+  color: var(--cc-text) !important;
 }
 
 .cc-status-ok {
@@ -493,208 +325,4 @@ button {
 .cc-status-error-title {
   color: crimson;
   font-weight: 900;
-}
-
-/* =====================
-   Mobile app shell
-===================== */
-
-.cc-app-shell {
-  min-height: 100vh;
-}
-
-.cc-app-shell-inner {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding-bottom: 96px;
-  position: relative;
-  z-index: 1;
-}
-
-.cc-mobile-header {
-  padding: 14px 16px;
-  margin-bottom: 16px;
-  background: rgba(255, 255, 255, 0.76);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.cc-mobile-header-main {
-  display: grid;
-  gap: 8px;
-}
-
-.cc-mobile-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.cc-mobile-title {
-  margin: 0;
-  font-size: 30px;
-  line-height: 1.05;
-  letter-spacing: -0.4px;
-}
-
-.cc-mobile-main {
-  display: grid;
-  gap: 16px;
-}
-
-.cc-logo-chip,
-.cc-logo-chip:visited,
-.cc-logo-chip:hover,
-.cc-logo-chip:active,
-.cc-logo-chip:focus {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.82);
-  color: #0f172a;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  text-decoration: none;
-  overflow: hidden;
-}
-
-.cc-logo-chip-img {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-  opacity: 0.9;
-}
-
-/* =====================
-   Bottom nav
-===================== */
-
-.cc-bottom-nav {
-  position: fixed;
-  left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  z-index: 50;
-
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-
-  padding: 8px;
-  border-radius: 20px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.cc-bottom-nav-item,
-.cc-bottom-nav-item:visited,
-.cc-bottom-nav-item:hover,
-.cc-bottom-nav-item:active,
-.cc-bottom-nav-item:focus {
-  min-height: 62px;
-  border-radius: 16px;
-  text-decoration: none;
-  color: #0f172a;
-
-  display: grid;
-  place-items: center;
-  gap: 4px;
-  padding: 8px 6px;
-
-  background: transparent;
-  border: 1px solid transparent;
-}
-
-.cc-bottom-nav-item-active,
-.cc-bottom-nav-item-active:visited,
-.cc-bottom-nav-item-active:hover,
-.cc-bottom-nav-item-active:active,
-.cc-bottom-nav-item-active:focus {
-  background: rgba(94, 127, 163, 0.14);
-  border-color: rgba(94, 127, 163, 0.18);
-  color: #0f172a;
-}
-
-.cc-bottom-nav-icon {
-  font-size: 18px;
-  line-height: 1;
-  font-weight: 900;
-}
-
-.cc-bottom-nav-label {
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 900;
-  opacity: 0.88;
-}
-
-@media (min-width: 901px) {
-  .cc-bottom-nav {
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    width: min(760px, calc(100vw - 24px));
-  }
-}
-
-@media (max-width: 520px) {
-  .cc-mobile-title {
-    font-size: 24px;
-  }
-
-  .cc-bottom-nav {
-    gap: 6px;
-    padding: 7px;
-  }
-
-  .cc-bottom-nav-item {
-    min-height: 58px;
-    padding: 7px 4px;
-  }
-
-  .cc-bottom-nav-label {
-    font-size: 10px;
-  }
-}
-
-/* =====================
-   Print
-===================== */
-
-@media print {
-  .print\:hidden {
-    display: none !important;
-  }
-
-  body {
-    background: white !important;
-  }
-
-  .cc-page {
-    padding: 0 !important;
-  }
-
-  .cc-page::before,
-  .cc-page::after {
-    display: none !important;
-  }
-
-  .cc-card {
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
 }
