@@ -82,9 +82,9 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_APP_URL ||
       new URL(req.url).origin;
 
-    const onboardingPath = `/app/onboarding?invite=${encodeURIComponent(invite.token)}`;
-    const inviteUrl = `${siteUrl}${onboardingPath}`;
-    const redirectTo = `${siteUrl}/auth/confirm?next=${encodeURIComponent(onboardingPath)}`;
+    const entryPath = `/?invite=${encodeURIComponent(invite.token)}`;
+    const inviteUrl = `${siteUrl}${entryPath}`;
+    const redirectTo = `${siteUrl}/auth/confirm?next=${encodeURIComponent(entryPath)}`;
 
     let emailSent = false;
     let emailError: string | null = null;
