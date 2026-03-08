@@ -13,14 +13,14 @@ function navClass(active: boolean) {
 }
 
 export default function BottomNav({ active, patientId }: BottomNavProps) {
-  const todayHref = patientId ? `/app/patients/${patientId}/today` : "/app/hub";
-  const journalHref = patientId ? `/app/patients/${patientId}/journals` : "/app/hub";
-  const messagesHref = patientId ? `/app/patients/${patientId}/dm` : "/app/hub";
-  const profileHref = patientId ? `/app/patients/${patientId}/profile` : "/app/account";
+  const todayHref = patientId ? `/app/patients/${patientId}/today` : "/app/today";
+  const journalHref = patientId ? `/app/patients/${patientId}/journals` : "/app/journal";
+  const messagesHref = patientId ? `/app/patients/${patientId}/dm` : "/app/messages";
+  const profileHref = patientId ? `/app/patients/${patientId}/profile` : "/app/profile";
 
   const accountHref = "/app/account";
-  const permissionsHref = patientId ? `/app/patients/${patientId}/permissions` : "/app/account";
-  const vaultHref = patientId ? `/app/patients/${patientId}/vault-init` : "/app/account";
+  const permissionsHref = "/app/account/permissions";
+  const vaultHref = patientId ? `/app/patients/${patientId}/vault-init` : "/app/vault";
 
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
