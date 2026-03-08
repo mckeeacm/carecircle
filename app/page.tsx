@@ -125,6 +125,7 @@ export default function Home() {
         if (password.length < 8) {
           throw new Error("Password must be at least 8 characters.");
         }
+
         if (password !== confirmPassword) {
           throw new Error("Passwords do not match.");
         }
@@ -133,6 +134,7 @@ export default function Home() {
           email: cleanEmail,
           password,
         });
+
         if (error) throw error;
 
         routeAfterAuth();
@@ -143,6 +145,7 @@ export default function Home() {
         email: cleanEmail,
         password,
       });
+
       if (error) throw error;
 
       routeAfterAuth();
@@ -169,29 +172,21 @@ export default function Home() {
         <div
           className="cc-container"
           style={{
-            minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+            minHeight: "calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)))",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          <div
-            className="cc-card cc-card-pad"
-            style={{
-              width: "100%",
-              maxWidth: 520,
-              borderRadius: 28,
-              padding: 28,
-            }}
-          >
-            <div className="cc-stack" style={{ gap: 12 }}>
-              <div className="cc-kicker" style={{ fontSize: 15 }}>
-                CareCircle
-              </div>
-              <h1 className="cc-h1" style={{ fontSize: 40, lineHeight: 1 }}>
+          <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 560 }}>
+            <div className="cc-stack">
+              <div className="cc-kicker">CareCircle</div>
+              <h1 className="cc-h1" style={{ fontSize: 38 }}>
                 CareCircle
               </h1>
-              <div style={{ fontSize: 20, lineHeight: 1.4 }}>Checking your sign-in…</div>
+              <div className="cc-subtle" style={{ fontSize: 18 }}>
+                Checking your sign-in…
+              </div>
             </div>
           </div>
         </div>
@@ -204,46 +199,20 @@ export default function Home() {
       <div
         className="cc-container"
         style={{
-          minHeight: "calc(100dvh - max(28px, env(safe-area-inset-top)) - max(28px, env(safe-area-inset-bottom)))",
+          minHeight: "calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)))",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <div
-          className="cc-card"
-          style={{
-            width: "100%",
-            maxWidth: 560,
-            borderRadius: 32,
-            padding: 28,
-            background: "rgba(255,255,255,0.94)",
-          }}
-        >
-          <div className="cc-stack" style={{ gap: 22 }}>
+        <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 560 }}>
+          <div className="cc-stack" style={{ gap: 20 }}>
             <div className="cc-stack" style={{ gap: 10 }}>
-              <div className="cc-kicker" style={{ fontSize: 15 }}>
-                CareCircle
-              </div>
-              <h1
-                className="cc-h1"
-                style={{
-                  fontSize: 48,
-                  lineHeight: 0.98,
-                  letterSpacing: "-0.03em",
-                }}
-              >
+              <div className="cc-kicker">CareCircle</div>
+              <h1 className="cc-h1" style={{ fontSize: 42 }}>
                 {title}
               </h1>
-              <div
-                style={{
-                  fontSize: 21,
-                  lineHeight: 1.4,
-                  maxWidth: 460,
-                }}
-              >
-                {subtitle}
-              </div>
+              <div style={{ fontSize: 20, lineHeight: 1.4 }}>{subtitle}</div>
             </div>
 
             {msg ? (
@@ -259,11 +228,9 @@ export default function Home() {
               </div>
             ) : null}
 
-            <form onSubmit={handleSubmit} className="cc-stack" style={{ gap: 16 }}>
+            <form onSubmit={handleSubmit} className="cc-stack">
               <div className="cc-field">
-                <div className="cc-label" style={{ fontSize: 15 }}>
-                  Email
-                </div>
+                <div className="cc-label">Email</div>
                 <input
                   className="cc-input"
                   type="email"
@@ -275,19 +242,13 @@ export default function Home() {
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={loading}
                   placeholder="name@example.com"
-                  style={{
-                    minHeight: 56,
-                    fontSize: 18,
-                    borderRadius: 18,
-                  }}
+                  style={{ minHeight: 54, fontSize: 17 }}
                 />
               </div>
 
               {mode !== "reset" ? (
                 <div className="cc-field">
-                  <div className="cc-label" style={{ fontSize: 15 }}>
-                    Password
-                  </div>
+                  <div className="cc-label">Password</div>
                   <input
                     className="cc-input"
                     type="password"
@@ -298,20 +259,14 @@ export default function Home() {
                     onChange={(e) => setPassword(e.target.value)}
                     disabled={loading}
                     placeholder={mode === "signup" ? "At least 8 characters" : "Your password"}
-                    style={{
-                      minHeight: 56,
-                      fontSize: 18,
-                      borderRadius: 18,
-                    }}
+                    style={{ minHeight: 54, fontSize: 17 }}
                   />
                 </div>
               ) : null}
 
               {mode === "signup" ? (
                 <div className="cc-field">
-                  <div className="cc-label" style={{ fontSize: 15 }}>
-                    Confirm password
-                  </div>
+                  <div className="cc-label">Confirm password</div>
                   <input
                     className="cc-input"
                     type="password"
@@ -322,26 +277,17 @@ export default function Home() {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     disabled={loading}
                     placeholder="Repeat your password"
-                    style={{
-                      minHeight: 56,
-                      fontSize: 18,
-                      borderRadius: 18,
-                    }}
+                    style={{ minHeight: 54, fontSize: 17 }}
                   />
                 </div>
               ) : null}
 
-              <div className="cc-row" style={{ marginTop: 4 }}>
+              <div className="cc-row">
                 <button
                   type="submit"
                   className="cc-btn cc-btn-primary"
                   disabled={loading}
-                  style={{
-                    minHeight: 54,
-                    paddingInline: 22,
-                    borderRadius: 18,
-                    fontSize: 17,
-                  }}
+                  style={{ minHeight: 52, fontSize: 16 }}
                 >
                   {mode === "signup"
                     ? loading
@@ -368,12 +314,7 @@ export default function Home() {
                     setMsg(null);
                     setError(null);
                   }}
-                  style={{
-                    justifyContent: "flex-start",
-                    minHeight: 50,
-                    borderRadius: 18,
-                    fontSize: 16,
-                  }}
+                  style={{ justifyContent: "flex-start", minHeight: 48 }}
                 >
                   Back to sign in
                 </button>
@@ -387,12 +328,7 @@ export default function Home() {
                       setMsg(null);
                       setError(null);
                     }}
-                    style={{
-                      justifyContent: "flex-start",
-                      minHeight: 50,
-                      borderRadius: 18,
-                      fontSize: 16,
-                    }}
+                    style={{ justifyContent: "flex-start", minHeight: 48 }}
                   >
                     Forgot password?
                   </button>
@@ -405,12 +341,7 @@ export default function Home() {
                       setMsg(null);
                       setError(null);
                     }}
-                    style={{
-                      justifyContent: "flex-start",
-                      minHeight: 50,
-                      borderRadius: 18,
-                      fontSize: 16,
-                    }}
+                    style={{ justifyContent: "flex-start", minHeight: 48 }}
                   >
                     Create a new account
                   </button>
