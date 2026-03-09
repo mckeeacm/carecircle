@@ -9,13 +9,17 @@ type VaultState = {
   loading: boolean;
   vaultKey: Uint8Array | null;
   error: string | null;
-
   isController: boolean;
   refresh: () => Promise<void>;
   initialiseIfController: () => Promise<void>;
-
-  // utilities
   forgetOnThisDevice: () => void;
+};
+
+type CacheRecord = {
+  v: 1;
+  createdAt: number;
+  expiresAt: number;
+  vaultKeyB64: string;
 };
 
 const PatientVaultContext = createContext<VaultState | null>(null);
@@ -25,10 +29,6 @@ export function usePatientVault() {
   if (!ctx) throw new Error("usePatientVault must be used inside <PatientVaultProvider />");
   return ctx;
 }
-
-/* -------------------------
-   Small helpers
-------------------------- */
 
 function isUuid(s: unknown): s is string {
   if (typeof s !== "string") return false;
@@ -48,15 +48,51 @@ function bytesFromB64(b64: string) {
   return out;
 }
 
-function keyStorageKey(pid: string, uid: string) {
-  return `cc:vault:${pid}:${uid}`;
-}
-function tsStorageKey(pid: string, uid: string) {
-  return `cc:vault_ts:${pid}:${uid}`;
+function cacheKey(pid: string, uid: string) {
+  return `carecircle:vaultkey:v1:${pid}:${uid}`;
 }
 
-// How long to keep a vault key remembered on a device
 const TTL_DAYS = 30;
+
+function readCachedVaultKey(pid: string, uid: string): Uint8Array | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(pid, uid));
+    if (!raw) return null;
+
+    const rec = JSON.parse(raw) as CacheRecord;
+    if (!rec || rec.v !== 1) return null;
+
+    if (!rec.expiresAt || Date.now() > rec.expiresAt) {
+      localStorage.removeItem(cacheKey(pid, uid));
+      return null;
+    }
+
+    return bytesFromB64(rec.vaultKeyB64);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedVaultKey(pid: string, uid: string, vaultKey: Uint8Array | null) {
+  try {
+    if (!vaultKey) {
+      localStorage.removeItem(cacheKey(pid, uid));
+      return;
+    }
+
+    const now = Date.now();
+    const rec: CacheRecord = {
+      v: 1,
+      createdAt: now,
+      expiresAt: now + TTL_DAYS * 24 * 60 * 60 * 1000,
+      vaultKeyB64: b64FromBytes(vaultKey),
+    };
+
+    localStorage.setItem(cacheKey(pid, uid), JSON.stringify(rec));
+  } catch {
+    // ignore
+  }
+}
 
 export function PatientVaultProvider({
   patientId,
@@ -70,13 +106,14 @@ export function PatientVaultProvider({
   const [vaultKey, setVaultKey] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isController, setIsController] = useState(false);
-
   const [uid, setUid] = useState<string | null>(null);
 
-  // Track auth user id; clear memory on sign out
   useEffect(() => {
+    let alive = true;
+
     (async () => {
       const { data } = await supabase.auth.getUser();
+      if (!alive) return;
       setUid(data.user?.id ?? null);
     })();
 
@@ -92,48 +129,14 @@ export function PatientVaultProvider({
     });
 
     return () => {
+      alive = false;
       sub.subscription.unsubscribe();
     };
   }, [supabase]);
 
-  function tryHydrateFromCache(pid: string, userId: string): Uint8Array | null {
-    try {
-      const k = localStorage.getItem(keyStorageKey(pid, userId));
-      const ts = localStorage.getItem(tsStorageKey(pid, userId));
-      if (!k || !ts) return null;
-
-      const ageMs = Date.now() - new Date(ts).getTime();
-      const ttlMs = TTL_DAYS * 24 * 60 * 60 * 1000;
-
-      if (Number.isFinite(ageMs) && ageMs > ttlMs) {
-        localStorage.removeItem(keyStorageKey(pid, userId));
-        localStorage.removeItem(tsStorageKey(pid, userId));
-        return null;
-      }
-
-      return bytesFromB64(k);
-    } catch {
-      return null;
-    }
-  }
-
-  function persistToCache(pid: string, userId: string, key: Uint8Array | null) {
-    try {
-      if (!key) {
-        localStorage.removeItem(keyStorageKey(pid, userId));
-        localStorage.removeItem(tsStorageKey(pid, userId));
-      } else {
-        localStorage.setItem(keyStorageKey(pid, userId), b64FromBytes(key));
-        localStorage.setItem(tsStorageKey(pid, userId), new Date().toISOString());
-      }
-    } catch {
-      // ignore (private mode etc)
-    }
-  }
-
   function forgetOnThisDevice() {
     if (!uid || !isUuid(patientId)) return;
-    persistToCache(patientId, uid, null);
+    writeCachedVaultKey(patientId, uid, null);
     setVaultKey(null);
   }
 
@@ -144,27 +147,35 @@ export function PatientVaultProvider({
     try {
       if (!isUuid(patientId)) throw new Error(`invalid_patientId:${String(patientId)}`);
 
-      // 0) fast path: hydrate immediately from local storage
-      if (uid) {
-        const cached = tryHydrateFromCache(patientId, uid);
-        if (cached) setVaultKey(cached);
+      if (!uid) {
+        setVaultKey(null);
+        setIsController(false);
+        setLoading(false);
+        return;
       }
 
-      // 1) controller check — RPC signature is (pid uuid)
+      const cached = readCachedVaultKey(patientId, uid);
+      if (cached) {
+        setVaultKey(cached);
+      } else {
+        setVaultKey(null);
+      }
+
       const { data: ctl, error: ctlErr } = await supabase.rpc("is_patient_controller", {
         pid: patientId,
       });
       if (ctlErr) throw ctlErr;
       setIsController(Boolean(ctl));
 
-      // 2) authoritative unwrap from shares (this may call PostgREST + libsodium)
       const vk = await loadMyPatientVaultKey(patientId);
       setVaultKey(vk);
-
-      if (uid) persistToCache(patientId, uid, vk);
+      writeCachedVaultKey(patientId, uid, vk);
     } catch (e: any) {
       setVaultKey(null);
-      const msg = e?.message || e?.error_description || (typeof e === "string" ? e : "vault_unavailable");
+      const msg =
+        e?.message ||
+        e?.error_description ||
+        (typeof e === "string" ? e : "vault_unavailable");
       setError(msg);
     } finally {
       setLoading(false);
@@ -174,9 +185,9 @@ export function PatientVaultProvider({
   async function initialiseIfController() {
     setLoading(true);
     setError(null);
+
     try {
       if (!isUuid(patientId)) throw new Error(`invalid_patientId:${String(patientId)}`);
-
       await initialiseVaultForPatient(patientId);
       await refresh();
     } catch (e: any) {
@@ -227,7 +238,7 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
               <ul style={{ margin: "6px 0 0 18px" }}>
                 <li>Vault not initialised for this patient yet</li>
                 <li>You don’t have a vault share</li>
-                <li>You haven’t enabled E2EE on this device (no local keypair)</li>
+                <li>You haven’t enabled E2EE on this device</li>
               </ul>
             </div>
           </>
@@ -251,7 +262,7 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
           </button>
         ) : (
           <div style={{ fontSize: 13, opacity: 0.85, paddingTop: 6 }}>
-            Ask the patient controller to initialise the vault (or share access).
+            Ask the patient controller to initialise the vault or share access.
           </div>
         )}
       </div>
