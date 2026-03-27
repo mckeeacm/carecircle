@@ -1,3 +1,5 @@
+import { normaliseLanguageCode } from "@/lib/languages";
+
 export type TranslationKey =
   | "nav.today"
   | "nav.journal"
@@ -589,5 +591,6 @@ const DICTS: Record<string, Partial<Dict>> = {
 };
 
 export function t(languageCode: string, key: TranslationKey) {
-  return DICTS[languageCode]?.[key] ?? EN[key];
+  const normalised = normaliseLanguageCode(languageCode);
+  return DICTS[normalised]?.[key] ?? EN[key];
 }

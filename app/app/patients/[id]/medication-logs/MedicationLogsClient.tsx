@@ -11,6 +11,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { normaliseLanguageCode } from "@/lib/languages";
 
 type MedicationRow = {
   id: string;
@@ -183,6 +184,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
   const { languageCode } = useUserLanguage();
+  const uiLanguage = normaliseLanguageCode(languageCode);
 
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [logs, setLogs] = useState<MedicationLogRow[]>([]);
@@ -259,17 +261,17 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
           const body =
             groupMedicationLabels.length > 0
-              ? languageCode === "it"
+              ? uiLanguage === "it"
                 ? `Ãˆ il momento di: ${groupMedicationLabels.join(", ")}`
                 : `Time for: ${groupMedicationLabels.join(", ")}`
-              : languageCode === "it"
+              : uiLanguage === "it"
               ? "Ãˆ il momento di prendere i tuoi farmaci."
               : "Time to take your medication.";
 
           return [
             {
               id: reminderNotificationId(group.id),
-              title: group.name?.trim() || (languageCode === "it" ? "Promemoria farmaci" : "Medication reminder"),
+              title: group.name?.trim() || (uiLanguage === "it" ? "Promemoria farmaci" : "Medication reminder"),
               body,
               channelId: REMINDER_CHANNEL_ID,
               smallIcon: "ic_launcher",
@@ -610,7 +612,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   }
 
   function whoLabel(createdBy: string, plainNote?: string) {
-    if (isSystemNotesPlaintext(plainNote)) return languageCode === "it" ? "Note di sistema" : "System notes";
+    if (isSystemNotesPlaintext(plainNote)) return uiLanguage === "it" ? "Note di sistema" : "System notes";
     const m = membersById[createdBy];
     if (!m) return createdBy;
     return m.nickname?.trim() || createdBy;
@@ -628,7 +630,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   }
 
   function statusLabel(value: string | null) {
-    return value ? statusOptionLabel(value, languageCode) : "-";
+    return value ? statusOptionLabel(value, uiLanguage) : "-";
   }
 
   function statusClass(value: string | null) {
@@ -762,7 +764,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       : `${selectedMedicationNames.length} medications selected`;
 
   const ui =
-    languageCode === "it"
+    uiLanguage === "it"
       ? {
           title: "Registri farmaci",
           subtitle: "Monitora l'attivita dei farmaci",
@@ -977,7 +979,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       justifyContent: "center",
                     }}
                   >
-                    {statusOptionLabel(opt.value, languageCode)}
+                    {statusOptionLabel(opt.value, uiLanguage)}
                   </button>
                 ))}
               </div>
