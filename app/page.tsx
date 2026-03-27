@@ -11,7 +11,6 @@ import {
   detectPreferredLanguageCode,
   getLanguageLabel,
   normaliseLanguageCode,
-  storeLanguageCode,
 } from "@/lib/languages";
 import { t } from "@/lib/i18n";
 
@@ -46,7 +45,7 @@ function readInviteFromLocation(): string {
 export default function Home() {
   const router = useRouter();
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const { languageCode } = useUserLanguage();
+  const { languageCode, setLanguageCode } = useUserLanguage();
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -83,7 +82,7 @@ export default function Home() {
     if (typeof window === "undefined") return;
     const next = detectPreferredLanguageCode(window.navigator.language);
     setPreferredLanguageCode(next);
-    storeLanguageCode(next);
+    setLanguageCode(next);
   }, []);
 
   useEffect(() => {
@@ -163,7 +162,7 @@ export default function Home() {
 
         if (error) throw error;
 
-        storeLanguageCode(preferredLanguageCode);
+        setLanguageCode(preferredLanguageCode);
 
         routeAfterAuth();
         return;
@@ -186,7 +185,7 @@ export default function Home() {
 
       if (preferenceError) throw preferenceError;
 
-      storeLanguageCode(languageCode);
+      setLanguageCode(languageCode);
 
       routeAfterAuth();
     } catch (e: any) {
@@ -639,7 +638,7 @@ export default function Home() {
                         onChange={(e) => {
                           const next = normaliseLanguageCode(e.target.value);
                           setPreferredLanguageCode(next);
-                          storeLanguageCode(next);
+                          setLanguageCode(next);
                         }}
                         disabled={loading}
                         style={{ minHeight: 54, fontSize: 17 }}

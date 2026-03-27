@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { t } from "@/lib/i18n";
 
 type PatientRow = { id: string; display_name: string };
 
@@ -86,7 +88,7 @@ function SummaryBlock({
           fontSize: emergency ? 15 : 14,
         }}
       >
-        {value || "—"}
+        {value || "-"}
       </div>
     </div>
   );
@@ -94,6 +96,7 @@ function SummaryBlock({
 
 export default function SummaryClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const { languageCode } = useUserLanguage();
 
   const [msg, setMsg] = useState<string | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
@@ -217,55 +220,56 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
   return (
     <MobileShell
-      title="Clinician summary"
+      title={t(languageCode, "summary.title")}
       subtitle={patient?.display_name ?? patientId}
       patientId={patientId}
       hideBottomNav
       rightSlot={
         <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <span className="cc-pill cc-pill-primary">{patient?.display_name ?? "Patient"}</span>
+          <span className="cc-pill cc-pill-primary">{patient?.display_name ?? t(languageCode, "summary.patient")}</span>
           <span className="cc-pill">
-            Updated: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "—"}
+            {t(languageCode, "summary.updated")}: {profileUpdatedAt ? new Date(profileUpdatedAt).toLocaleString() : "-"}
           </span>
           <Link className="cc-btn" href="/app/hub">
-            Hub
+            {t(languageCode, "screen.hub")}
           </Link>
         </div>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{t(languageCode, "common.error")}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad cc-stack">
-          <h2 className="cc-h2">Immediate clinical priorities</h2>
-          <div className="cc-subtle">Most important items first.</div>
+          <h2 className="cc-h2">{t(languageCode, "summary.immediate_priorities")}</h2>
+          <div className="cc-subtle">{t(languageCode, "summary.immediate_priorities_subtitle")}</div>
 
-          <SummaryBlock title="Safety notes" value={safetyNotes} emergency />
-          <SummaryBlock title="Allergies" value={allergies} emergency />
-          <SummaryBlock title="Diagnoses" value={diagnoses} emergency />
+          <SummaryBlock title={t(languageCode, "summary.safety_notes")} value={safetyNotes} emergency />
+          <SummaryBlock title={t(languageCode, "summary.allergies")} value={allergies} emergency />
+          <SummaryBlock title={t(languageCode, "summary.diagnoses")} value={diagnoses} emergency />
         </div>
 
         <div className="cc-card cc-card-pad cc-stack">
-          <h2 className="cc-h2">Communication essentials</h2>
-          <div className="cc-subtle">Helpful for direct interaction and handover.</div>
+          <h2 className="cc-h2">{t(languageCode, "summary.communication_essentials")}</h2>
+          <div className="cc-subtle">{t(languageCode, "summary.communication_essentials_subtitle")}</div>
 
-          <SummaryBlock title="Communication notes" value={commNotes} />
-          <SummaryBlock title="Languages spoken" value={languagesSpoken} />
+          <SummaryBlock title={t(languageCode, "summary.communication_notes")} value={commNotes} />
+          <SummaryBlock title={t(languageCode, "summary.languages_spoken")} value={languagesSpoken} />
         </div>
       </div>
 
       <div className="cc-card cc-card-pad cc-stack">
         <div>
-          <h2 className="cc-h2">Advance planning</h2>
-          <div className="cc-subtle">Important representation and decision-making details.</div>
+          <h2 className="cc-h2">{t(languageCode, "summary.advance_planning")}</h2>
+          <div className="cc-subtle">{t(languageCode, "summary.advance_planning_subtitle")}</div>
         </div>
 
         <AdvancePlanningSummaryCard
+          languageCode={languageCode}
           hasHealthWellbeingLpa={hasHealthWellbeingLpa}
           healthWellbeingLpaHolderName={healthWellbeingLpaHolderName}
           hasRespectForm={hasRespectForm}
@@ -278,16 +282,16 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Upcoming appointments</h2>
+            <h2 className="cc-h2">{t(languageCode, "summary.upcoming_appointments")}</h2>
             <Link className="cc-btn" href={`/app/patients/${patientId}/appointments`}>
-              Open
+              {t(languageCode, "summary.open")}
             </Link>
           </div>
 
           <div className="cc-spacer-12" />
 
           {appointments.length === 0 ? (
-            <div className="cc-small">No upcoming appointments.</div>
+            <div className="cc-small">{t(languageCode, "summary.no_upcoming_appointments")}</div>
           ) : (
             <div className="cc-stack">
               {appointments.map((a) => (
@@ -299,10 +303,10 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
                     borderRadius: 18,
                   }}
                 >
-                  <div className="cc-strong">{a.title ?? "Appointment"}</div>
+                  <div className="cc-strong">{a.title ?? t(languageCode, "summary.appointment")}</div>
                   <div className="cc-small" style={{ marginTop: 4 }}>
-                    {(a.starts_at ? new Date(a.starts_at).toLocaleString() : "—") +
-                      (a.location ? ` • ${a.location}` : "")}
+                    {(a.starts_at ? new Date(a.starts_at).toLocaleString() : "-") +
+                      (a.location ? ` - ${a.location}` : "")}
                   </div>
                 </div>
               ))}
@@ -312,16 +316,16 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Active medications</h2>
+            <h2 className="cc-h2">{t(languageCode, "summary.active_medications")}</h2>
             <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-              Open
+              {t(languageCode, "summary.open")}
             </Link>
           </div>
 
           <div className="cc-spacer-12" />
 
           {meds.length === 0 ? (
-            <div className="cc-small">No active medications.</div>
+            <div className="cc-small">{t(languageCode, "summary.no_active_medications")}</div>
           ) : (
             <div className="cc-stack">
               {meds.map((m) => (
@@ -337,7 +341,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
                     {m.name} {m.dosage ? <span className="cc-subtle">({m.dosage})</span> : null}
                   </div>
                   <div className="cc-small" style={{ marginTop: 4 }}>
-                    {m.schedule_text || "—"}
+                    {m.schedule_text || "-"}
                   </div>
                 </div>
               ))}
@@ -349,19 +353,19 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
       <div className="cc-card cc-card-pad">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Medication logs — last 4 days</h2>
-            <div className="cc-subtle">Recent medication activity for quick review.</div>
+            <h2 className="cc-h2">{t(languageCode, "summary.medication_logs_last_4_days")}</h2>
+            <div className="cc-subtle">{t(languageCode, "summary.medication_logs_subtitle")}</div>
           </div>
 
           <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-            Open logs
+            {t(languageCode, "summary.open_logs")}
           </Link>
         </div>
 
         <div className="cc-spacer-12" />
 
         {medLogs.length === 0 ? (
-          <div className="cc-small">No medication logs in the last 4 days.</div>
+          <div className="cc-small">{t(languageCode, "summary.no_medication_logs")}</div>
         ) : (
           <div className="cc-stack">
             {medLogs.map((log) => (
@@ -383,7 +387,7 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
 
                   <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                     <span className={`cc-pill ${log.status === "taken" ? "cc-pill-primary" : ""}`}>
-                      {log.status ?? "—"}
+                      {log.status ?? "-"}
                     </span>
                   </div>
                 </div>
@@ -393,15 +397,14 @@ export default function SummaryClient({ patientId }: { patientId: string }) {
         )}
 
         <div className="cc-spacer-12" />
-        <div className="cc-small cc-subtle">
-          This summary is designed for fast reading by permitted members without vault unlock.
-        </div>
+        <div className="cc-small cc-subtle">{t(languageCode, "summary.fast_reading_note")}</div>
       </div>
     </MobileShell>
   );
 }
 
 function AdvancePlanningSummaryCard({
+  languageCode,
   hasHealthWellbeingLpa,
   healthWellbeingLpaHolderName,
   hasRespectForm,
@@ -409,6 +412,7 @@ function AdvancePlanningSummaryCard({
   hasUnofficialRepresentative,
   unofficialRepresentativeName,
 }: {
+  languageCode: string;
   hasHealthWellbeingLpa: boolean;
   healthWellbeingLpaHolderName: string | null;
   hasRespectForm: boolean;
@@ -419,17 +423,20 @@ function AdvancePlanningSummaryCard({
   return (
     <div className="cc-stack">
       <AdvancePlanningSummaryRow
-        label="Health and Wellbeing Power of Attorney"
+        languageCode={languageCode}
+        label={t(languageCode, "summary.health_lpa")}
         enabled={hasHealthWellbeingLpa}
         name={healthWellbeingLpaHolderName}
       />
       <AdvancePlanningSummaryRow
-        label="RESPECT form or Emergency Care Plan"
+        languageCode={languageCode}
+        label={t(languageCode, "summary.respect_form")}
         enabled={hasRespectForm}
         name={respectFormHolderName}
       />
       <AdvancePlanningSummaryRow
-        label="Nominated Advocate"
+        languageCode={languageCode}
+        label={t(languageCode, "summary.nominated_advocate")}
         enabled={hasUnofficialRepresentative}
         name={unofficialRepresentativeName}
       />
@@ -438,10 +445,12 @@ function AdvancePlanningSummaryCard({
 }
 
 function AdvancePlanningSummaryRow({
+  languageCode,
   label,
   enabled,
   name,
 }: {
+  languageCode: string;
   label: string;
   enabled: boolean;
   name: string | null | undefined;
@@ -450,11 +459,13 @@ function AdvancePlanningSummaryRow({
     <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
       <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
         <div className="cc-strong">{label}</div>
-        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>{enabled ? "Yes" : "No"}</span>
+        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>
+          {enabled ? t(languageCode, "summary.yes") : t(languageCode, "summary.no")}
+        </span>
       </div>
       {enabled ? (
         <div className="cc-small cc-subtle" style={{ marginTop: 8 }}>
-          Holder: <b>{name?.trim() || "Not recorded"}</b>
+          {t(languageCode, "summary.holder")}: <b>{name?.trim() || t(languageCode, "summary.not_recorded")}</b>
         </div>
       ) : null}
     </div>

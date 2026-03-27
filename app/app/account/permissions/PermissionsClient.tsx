@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { t } from "@/lib/i18n";
 
 type PatientRow = {
   id: string;
@@ -68,6 +70,7 @@ function uniq<T>(xs: T[]): T[] {
 export default function PermissionsClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const sp = useSearchParams();
+  const { languageCode } = useUserLanguage();
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -363,18 +366,18 @@ export default function PermissionsClient() {
 
   return (
     <MobileShell
-      title="Permissions"
-      subtitle="Roles, member overrides, and access control"
+      title={t(languageCode, "permissions.title")}
+      subtitle={t(languageCode, "permissions.subtitle")}
       patientId={patientId || undefined}
       rightSlot={
         <Link className="cc-btn" href="/app/account">
-          Account
+          {t(languageCode, "nav.account")}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{t(languageCode, "common.error")}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
@@ -382,13 +385,13 @@ export default function PermissionsClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Circle access</h2>
-            <div className="cc-subtle">Select a circle and manage who can do what.</div>
+            <h2 className="cc-h2">{t(languageCode, "permissions.circle_access")}</h2>
+            <div className="cc-subtle">{t(languageCode, "permissions.circle_access_subtitle")}</div>
           </div>
         </div>
 
         <div className="cc-field" style={{ maxWidth: 420 }}>
-          <div className="cc-label">Circle</div>
+          <div className="cc-label">{t(languageCode, "permissions.circle")}</div>
           <select className="cc-select" value={patientId} onChange={(e) => setPatientId(e.target.value)}>
             {patients.map((p) => (
               <option key={p.id} value={p.id}>
@@ -400,21 +403,21 @@ export default function PermissionsClient() {
 
         <div className="cc-row" style={{ flexWrap: "wrap" }}>
           <button className="cc-btn cc-btn-secondary" onClick={seedDefaults} disabled={!patientId || savingKey === "seed"}>
-            {savingKey === "seed" ? "Seeding…" : "Seed defaults"}
+            {savingKey === "seed" ? t(languageCode, "permissions.seeding") : t(languageCode, "permissions.seed_defaults")}
           </button>
 
           <button className="cc-btn" onClick={refresh} disabled={!patientId || loading}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? t(languageCode, "common.loading") : t(languageCode, "common.refresh")}
           </button>
         </div>
 
         {mePerm ? (
-          <div className="cc-row" style={{ flexWrap: "wrap" }}>
+        <div className="cc-row" style={{ flexWrap: "wrap" }}>
             <span className={`cc-pill ${canManage ? "cc-pill-primary" : ""}`}>
               permissions_manage: {canManage ? "true" : "false"}
             </span>
-            <span className="cc-pill">role: {mePerm.role}</span>
-            <span className="cc-pill">controller: {mePerm.is_controller ? "true" : "false"}</span>
+            <span className="cc-pill">{t(languageCode, "permissions.role_label")}: {mePerm.role}</span>
+            <span className="cc-pill">{t(languageCode, "permissions.controller_label").toLowerCase()}: {mePerm.is_controller ? "true" : "false"}</span>
           </div>
         ) : null}
       </div>
@@ -422,13 +425,13 @@ export default function PermissionsClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Circle members</h2>
-            <div className="cc-subtle">Review members and revoke access where needed.</div>
+            <h2 className="cc-h2">{t(languageCode, "permissions.circle_members")}</h2>
+            <div className="cc-subtle">{t(languageCode, "permissions.circle_members_subtitle")}</div>
           </div>
         </div>
 
         {members.length === 0 ? (
-          <div className="cc-small">No members found.</div>
+          <div className="cc-small">{t(languageCode, "permissions.no_members_found")}</div>
         ) : (
           <div className="cc-stack">
             {members.map((m) => {
@@ -439,11 +442,11 @@ export default function PermissionsClient() {
                 <div key={m.user_id} className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
                   <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
                     <div className="cc-wrap">
-                      <div className="cc-strong">{m.nickname ?? "Unnamed member"}</div>
+                      <div className="cc-strong">{m.nickname ?? t(languageCode, "permissions.unnamed_member")}</div>
                       <div className="cc-small cc-subtle">
-                        Role: {m.role ?? "—"}
-                        {m.is_controller ? " • Controller" : ""}
-                        {m.user_id === myUid ? " • You" : ""}
+                        {t(languageCode, "permissions.role_label")}: {m.role ?? "-"}
+                        {m.is_controller ? ` - ${t(languageCode, "permissions.controller_label")}` : ""}
+                        {m.user_id === myUid ? ` - ${t(languageCode, "permissions.you_label")}` : ""}
                       </div>
                       <div className="cc-small cc-wrap" style={{ marginTop: 4 }}>
                         {m.user_id}
@@ -451,16 +454,16 @@ export default function PermissionsClient() {
                     </div>
 
                     {m.is_controller ? (
-                      <span className="cc-small">Controller cannot be revoked</span>
+                      <span className="cc-small">{t(languageCode, "permissions.controller_cannot_be_revoked")}</span>
                     ) : m.user_id === myUid ? (
-                      <span className="cc-small">You cannot revoke yourself</span>
+                      <span className="cc-small">{t(languageCode, "permissions.cannot_revoke_yourself")}</span>
                     ) : (
                       <button
                         className="cc-btn cc-btn-danger"
                         onClick={() => revokeMember(m.user_id)}
                         disabled={!canRevoke || revokeBusy}
                       >
-                        {revokeBusy ? "Revoking…" : "Revoke access"}
+                        {revokeBusy ? t(languageCode, "permissions.revoking") : t(languageCode, "permissions.revoke_access")}
                       </button>
                     )}
                   </div>
@@ -473,14 +476,14 @@ export default function PermissionsClient() {
 
       <div className="cc-card cc-card-pad cc-stack">
         <div>
-          <h2 className="cc-h2">Role permissions</h2>
-          <div className="cc-subtle">Default access for each role in this circle.</div>
+          <h2 className="cc-h2">{t(languageCode, "permissions.role_permissions")}</h2>
+          <div className="cc-subtle">{t(languageCode, "permissions.role_permissions_subtitle")}</div>
         </div>
 
         {features.length === 0 ? (
-          <div className="cc-small">No features found.</div>
+          <div className="cc-small">{t(languageCode, "permissions.no_features_found")}</div>
         ) : roles.length === 0 ? (
-          <div className="cc-small">No roles found.</div>
+          <div className="cc-small">{t(languageCode, "permissions.no_roles_found")}</div>
         ) : (
           <div className="cc-stack">
             {features.map((f) => (
@@ -514,7 +517,7 @@ export default function PermissionsClient() {
                           onClick={() => upsertRolePerm(role, f.key, !allowed)}
                           disabled={!canManage || busy}
                         >
-                          {busy ? "Saving…" : allowed ? "Allowed" : "Denied"}
+                          {busy ? t(languageCode, "common.loading") : allowed ? t(languageCode, "permissions.allowed") : t(languageCode, "permissions.denied")}
                         </button>
                       </div>
                     );
@@ -528,12 +531,12 @@ export default function PermissionsClient() {
 
       <div className="cc-card cc-card-pad cc-stack">
         <div>
-          <h2 className="cc-h2">Member overrides</h2>
-          <div className="cc-subtle">Adjust one member without changing the whole role.</div>
+          <h2 className="cc-h2">{t(languageCode, "permissions.member_overrides")}</h2>
+          <div className="cc-subtle">{t(languageCode, "permissions.member_overrides_subtitle")}</div>
         </div>
 
         {features.length === 0 || members.length === 0 ? (
-          <div className="cc-small">Nothing to show yet.</div>
+          <div className="cc-small">{t(languageCode, "permissions.nothing_to_show")}</div>
         ) : (
           <div className="cc-stack">
             {features.map((f) => (
@@ -565,11 +568,11 @@ export default function PermissionsClient() {
                               {m.nickname ?? m.user_id}
                               {m.is_controller ? " (controller)" : ""}
                             </div>
-                            <div className="cc-small cc-subtle">role: {m.role ?? "—"}</div>
+                            <div className="cc-small cc-subtle">{t(languageCode, "permissions.role_label").toLowerCase()}: {m.role ?? "-"}</div>
                           </div>
 
                           {m.is_controller ? (
-                            <span className="cc-small">—</span>
+                            <span className="cc-small">-</span>
                           ) : (
                             <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                               <button
@@ -577,7 +580,7 @@ export default function PermissionsClient() {
                                 onClick={() => upsertMemberOverride(m.user_id, f.key, true)}
                                 disabled={!canManage || busyAllow}
                               >
-                                {busyAllow ? "…" : "Allow"}
+                                {busyAllow ? t(languageCode, "common.loading") : t(languageCode, "permissions.allow")}
                               </button>
 
                               <button
@@ -585,7 +588,7 @@ export default function PermissionsClient() {
                                 onClick={() => upsertMemberOverride(m.user_id, f.key, false)}
                                 disabled={!canManage || busyDeny}
                               >
-                                {busyDeny ? "…" : "Deny"}
+                                {busyDeny ? t(languageCode, "common.loading") : t(languageCode, "permissions.deny")}
                               </button>
 
                               <button
@@ -594,7 +597,7 @@ export default function PermissionsClient() {
                                 disabled={!canManage || ov === null || busyClear}
                                 style={{ opacity: ov === null ? 0.55 : 1 }}
                               >
-                                {busyClear ? "…" : "Clear"}
+                                {busyClear ? t(languageCode, "common.loading") : t(languageCode, "permissions.clear")}
                               </button>
                             </div>
                           )}

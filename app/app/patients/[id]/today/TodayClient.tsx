@@ -8,6 +8,8 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { t } from "@/lib/i18n";
 
 type PatientRow = { id: string; display_name: string | null };
 
@@ -200,9 +202,18 @@ function medicationStatusLabel(value: string | null) {
   return value ?? "—";
 }
 
+function medicationStatusLabelForUi(value: string | null, languageCode: string) {
+  if (value === "taken") return t(languageCode, "today.taken");
+  if (value === "missed") return t(languageCode, "today.missed");
+  if (value === "refused") return "Refused";
+  if (value === "delayed") return "Delayed";
+  return value ?? "-";
+}
+
 export default function TodayClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -453,8 +464,8 @@ export default function TodayClient({ patientId }: { patientId: string }) {
   }
 
   function whoLabel(userId: string | null, notePlain?: string) {
-    if (isSystemNotesPlaintext(notePlain)) return "System notes";
-    if (!userId) return "Unknown";
+    if (isSystemNotesPlaintext(notePlain)) return t(languageCode, "today.system_notes");
+    if (!userId) return t(languageCode, "today.unknown");
     const member = membersById[userId];
     return member?.nickname?.trim() || userId;
   }
@@ -598,8 +609,8 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       id: `journal-${j.id}`,
       at: j.created_at,
       actorLabel: whoLabel(j.created_by),
-      title: `Added a ${j.journal_type} journal entry`,
-      detail: j.shared_to_circle ? "Shared to circle" : "Private entry",
+      title: `${t(languageCode, "today.added_journal_entry")}: ${j.journal_type}`,
+      detail: j.shared_to_circle ? t(languageCode, "today.shared") : t(languageCode, "today.private"),
       tone: "normal" as const,
     })),
     ...medLogs.map((log) => {
@@ -609,7 +620,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
         id: `medlog-${log.id}`,
         at: log.created_at,
         actorLabel: whoLabel(log.created_by, plain),
-        title: `Logged ${medLabel(log.medication_id)} as ${medicationStatusLabel(log.status).toLowerCase()}`,
+        title: `${t(languageCode, "today.logged_medication_as")} ${medLabel(log.medication_id)}: ${medicationStatusLabelForUi(log.status, languageCode).toLowerCase()}`,
         detail: cleanNote || undefined,
         tone:
           log.status === "missed"
@@ -625,10 +636,10 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       actorLabel: whoLabel(log.changed_by),
       title:
         log.action === "insert"
-          ? `Created ${fieldLabel(log.field_name)}`
+          ? `${t(languageCode, "today.created")} ${fieldLabel(log.field_name)}`
           : log.action === "delete"
-          ? "Deleted appointment"
-          : `Updated ${fieldLabel(log.field_name)}`,
+          ? t(languageCode, "today.deleted_appointment")
+          : `${t(languageCode, "today.updated")} ${fieldLabel(log.field_name)}`,
       detail:
         log.action === "update"
           ? `${log.old_value ?? "—"} → ${log.new_value ?? "—"}`
@@ -643,71 +654,69 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
   return (
     <MobileShell
-      title="Today"
+      title={t(languageCode, "today.title")}
       subtitle={patient?.display_name ?? patientId}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href="/app/hub">
-          Hub
+          {t(languageCode, "screen.hub")}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{t(languageCode, "common.error")}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">
-            You can still browse basic information, but protected details will appear once this device finishes secure setup.
-          </div>
+          <div className="cc-strong">{t(languageCode, "today.secure_access_not_ready")}</div>
+          <div className="cc-subtle">{t(languageCode, "today.secure_access_not_ready_subtitle")}</div>
         </div>
       ) : null}
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Messages</h2>
+            <h2 className="cc-h2">{t(languageCode, "today.messages")}</h2>
             <Link className="cc-btn" href={`/app/patients/${patientId}/dm`}>
-              Open
+              {t(languageCode, "today.open")}
             </Link>
           </div>
           <div className="cc-spacer-12" />
           {dmStatus === "loading" ? (
-            <div className="cc-small">Checking…</div>
+            <div className="cc-small">{t(languageCode, "today.checking")}</div>
           ) : dmStatus === "unavailable" ? (
-            <div className="cc-small">Messages currently unavailable.</div>
+            <div className="cc-small">{t(languageCode, "today.messages_unavailable")}</div>
           ) : dmThreadCount > 0 ? (
             <div className="cc-panel-blue">
               <div className="cc-strong">
-                {dmThreadCount} direct message thread{dmThreadCount === 1 ? "" : "s"}
+                {dmThreadCount} {t(languageCode, "today.direct_message_threads")}
               </div>
-              <div className="cc-small">Tap to view recent messages.</div>
+              <div className="cc-small">{t(languageCode, "today.tap_to_view_messages")}</div>
             </div>
           ) : (
-            <div className="cc-small">No message threads yet.</div>
+            <div className="cc-small">{t(languageCode, "today.no_message_threads")}</div>
           )}
         </div>
 
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Next 24h appointments</h2>
+            <h2 className="cc-h2">{t(languageCode, "today.next_24h_appointments")}</h2>
             <Link className="cc-btn" href={`/app/patients/${patientId}/appointments`}>
-              View
+              {t(languageCode, "today.view")}
             </Link>
           </div>
           <div className="cc-spacer-12" />
           {appointments.length === 0 ? (
-            <div className="cc-small">None in the next 24 hours.</div>
+            <div className="cc-small">{t(languageCode, "today.none_next_24h")}</div>
           ) : (
             <div className="cc-stack">
               {appointments.slice(0, 3).map((a) => (
                 <div key={a.id} className="cc-panel-soft">
-                  <div className="cc-strong">{a.title ?? "Appointment"}</div>
+                  <div className="cc-strong">{a.title ?? t(languageCode, "today.appointment")}</div>
                   <div className="cc-small">
                     {(a.starts_at ? new Date(a.starts_at).toLocaleString() : "—") +
                       (a.location ? ` • ${a.location}` : "")}
@@ -722,14 +731,14 @@ export default function TodayClient({ patientId }: { patientId: string }) {
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Today’s journal</h2>
+            <h2 className="cc-h2">{t(languageCode, "today.journal_today")}</h2>
             <Link className="cc-btn cc-btn-primary" href={`/app/patients/${patientId}/journals`}>
-              Open
+              {t(languageCode, "today.open")}
             </Link>
           </div>
           <div className="cc-spacer-12" />
           {journals.length === 0 ? (
-            <div className="cc-small">No journal entries yet today.</div>
+            <div className="cc-small">{t(languageCode, "today.no_journal_entries")}</div>
           ) : (
             <div className="cc-stack">
               {journals.map((j) => (
@@ -740,7 +749,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                       <div className="cc-small">{new Date(j.created_at).toLocaleString()}</div>
                     </div>
                     <span className={`cc-pill ${j.shared_to_circle ? "cc-pill-primary" : ""}`}>
-                      {j.shared_to_circle ? "shared" : "private"}
+                      {j.shared_to_circle ? t(languageCode, "today.shared") : t(languageCode, "today.private")}
                     </span>
                   </div>
                 </div>
@@ -759,12 +768,12 @@ export default function TodayClient({ patientId }: { patientId: string }) {
           <div className="cc-spacer-12" />
 
           {reminderGroups.length === 0 ? (
-            <div className="cc-small">No medication reminders set.</div>
+            <div className="cc-small">{t(languageCode, "today.no_medication_reminders")}</div>
           ) : (
             <div className="cc-stack">
               {dueNowGroups.length > 0 ? (
                 <div className="cc-panel-soft" style={{ padding: 14, borderRadius: 18 }}>
-                  <div className="cc-strong">Due now / overdue</div>
+                  <div className="cc-strong">{t(languageCode, "today.due_now")}</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
                     {dueNowGroups.map((state) => {
@@ -787,32 +796,32 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                               <div className="cc-small cc-subtle">
                                 {formatReminderDisplayTime(state.dueAt)} →{" "}
                                 {state.closesAt.getHours() === 23 && state.closesAt.getMinutes() === 59
-                                  ? "Midnight"
+                                  ? t(languageCode, "today.midnight")
                                   : formatReminderDisplayTime(state.closesAt)}
                               </div>
                               <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
-                                {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                                {state.medicationIds.map((id) => medLabel(id)).join(" - ") || t(languageCode, "today.no_medications")}
                               </div>
                               {state.state === "missed" && state.missingMedicationIds.length > 0 ? (
                                 <div
                                   className="cc-small"
                                   style={{ marginTop: 8, color: "crimson", fontWeight: 800 }}
                                 >
-                                  Missed: {state.missingMedicationIds.map((id) => medLabel(id)).join(" • ")}
+                                  {t(languageCode, "today.missed_prefix")}: {state.missingMedicationIds.map((id) => medLabel(id)).join(" - ")}
                                 </div>
                               ) : null}
                             </div>
 
                             <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                               <span className={`cc-pill ${pillClass}`}>
-                                {state.state === "missed" ? "Missed" : "Due"}
+                                {state.state === "missed" ? t(languageCode, "today.missed") : t(languageCode, "today.due")}
                               </span>
                               <button
                                 className="cc-btn cc-btn-primary"
                                 onClick={() => markReminderTaken(state)}
                                 disabled={busy || state.state === "missed" || state.state === "taken"}
                               >
-                                {busy ? "Saving…" : "Taken"}
+                                {busy ? t(languageCode, "today.saving") : t(languageCode, "today.taken")}
                               </button>
                             </div>
                           </div>
@@ -825,7 +834,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
               {laterTodayGroups.length > 0 ? (
                 <div className="cc-panel-soft" style={{ padding: 14, borderRadius: 18 }}>
-                  <div className="cc-strong">Later today</div>
+                  <div className="cc-strong">{t(languageCode, "today.later_today")}</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
                     {laterTodayGroups.slice(0, 4).map((state) => (
@@ -835,7 +844,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                             <div className="cc-strong">{state.group.name}</div>
                             <div className="cc-small cc-subtle">{formatReminderDisplayTime(state.dueAt)}</div>
                             <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
-                              {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                              {state.medicationIds.map((id) => medLabel(id)).join(" - ") || t(languageCode, "today.no_medications")}
                             </div>
                           </div>
                           <span className="cc-pill">{formatReminderDisplayTime(state.dueAt)}</span>
@@ -848,7 +857,7 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
               {completedGroups.length > 0 ? (
                 <div className="cc-panel-soft" style={{ padding: 14, borderRadius: 18 }}>
-                  <div className="cc-strong">Completed today</div>
+                  <div className="cc-strong">{t(languageCode, "today.completed_today")}</div>
                   <div className="cc-spacer-12" />
                   <div className="cc-stack">
                     {completedGroups.slice(0, 4).map((state) => (
@@ -858,10 +867,10 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                             <div className="cc-strong">{state.group.name}</div>
                             <div className="cc-small cc-subtle">{formatReminderDisplayTime(state.dueAt)}</div>
                             <div className="cc-small cc-wrap" style={{ marginTop: 6 }}>
-                              {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                              {state.medicationIds.map((id) => medLabel(id)).join(" - ") || t(languageCode, "today.no_medications")}
                             </div>
                           </div>
-                          <span className="cc-pill cc-pill-primary">Taken</span>
+                          <span className="cc-pill cc-pill-primary">{t(languageCode, "today.taken")}</span>
                         </div>
                       </div>
                     ))}
@@ -875,15 +884,15 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
       <div className="cc-card cc-card-pad">
         <div className="cc-row-between">
-          <h2 className="cc-h2">Activity trail — last 24 hours</h2>
+          <h2 className="cc-h2">{t(languageCode, "today.activity_last_24h")}</h2>
           <button className="cc-btn" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? t(languageCode, "common.loading") : t(languageCode, "common.refresh")}
           </button>
         </div>
         <div className="cc-spacer-12" />
 
         {activityItems.length === 0 ? (
-          <div className="cc-small">No recorded activity in the last 24 hours.</div>
+          <div className="cc-small">{t(languageCode, "today.no_activity")}</div>
         ) : (
           <div className="cc-stack">
             {activityItems.map((item) => (
@@ -907,9 +916,9 @@ export default function TodayClient({ patientId }: { patientId: string }) {
                     </div>
                   </div>
                   {item.tone === "positive" ? (
-                    <span className="cc-pill cc-pill-primary">Done</span>
+                    <span className="cc-pill cc-pill-primary">{t(languageCode, "today.done")}</span>
                   ) : item.tone === "danger" ? (
-                    <span className="cc-pill cc-pill-danger">Attention</span>
+                    <span className="cc-pill cc-pill-danger">{t(languageCode, "today.attention")}</span>
                   ) : null}
                 </div>
               </div>

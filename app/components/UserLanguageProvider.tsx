@@ -27,8 +27,14 @@ export default function UserLanguageProvider({ children }: { children: React.Rea
   const supabase = useMemo(() => supabaseBrowser(), []);
   const [languageCode, setLanguageCodeState] = useState(DEFAULT_ACCOUNT_LANGUAGE_CODE);
 
+  function applyLanguageCode(code: string | null | undefined) {
+    const next = normaliseLanguageCode(code);
+    setLanguageCodeState(next);
+    storeLanguageCode(next);
+  }
+
   useEffect(() => {
-    setLanguageCodeState(readStoredLanguageCode());
+    applyLanguageCode(readStoredLanguageCode());
 
     let active = true;
 
@@ -39,24 +45,30 @@ export default function UserLanguageProvider({ children }: { children: React.Rea
         } = await supabase.auth.getUser();
 
         if (!active || !user) return;
-        const next = normaliseLanguageCode(user.user_metadata?.preferred_language_code);
-        setLanguageCodeState(next);
-        storeLanguageCode(next);
+        applyLanguageCode(user.user_metadata?.preferred_language_code);
       } catch {}
     }
 
     loadFromUser();
 
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!active) return;
+      applyLanguageCode(session?.user?.user_metadata?.preferred_language_code);
+    });
+
     function onChanged(event: Event) {
       const detail = (event as CustomEvent<{ code?: string }>).detail;
       if (!active) return;
-      setLanguageCodeState(normaliseLanguageCode(detail?.code));
+      applyLanguageCode(detail?.code);
     }
 
     window.addEventListener("carecircle:language-changed", onChanged as EventListener);
 
     return () => {
       active = false;
+      subscription.unsubscribe();
       window.removeEventListener("carecircle:language-changed", onChanged as EventListener);
     };
   }, [supabase]);
@@ -69,11 +81,7 @@ export default function UserLanguageProvider({ children }: { children: React.Rea
   const value = useMemo<UserLanguageContextValue>(
     () => ({
       languageCode,
-      setLanguageCode: (code: string) => {
-        const next = normaliseLanguageCode(code);
-        setLanguageCodeState(next);
-        storeLanguageCode(next);
-      },
+      setLanguageCode: applyLanguageCode,
     }),
     [languageCode]
   );

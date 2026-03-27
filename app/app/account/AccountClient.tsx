@@ -11,7 +11,6 @@ import {
   SUPPORTED_ACCOUNT_LANGUAGES,
   getLanguageLabel,
   normaliseLanguageCode,
-  storeLanguageCode,
 } from "@/lib/languages";
 import { t } from "@/lib/i18n";
 
@@ -31,7 +30,7 @@ function isUuid(s: unknown): s is string {
 
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const { languageCode } = useUserLanguage();
+  const { languageCode, setLanguageCode } = useUserLanguage();
 
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -225,7 +224,7 @@ export default function AccountClient() {
       if (error) throw error;
 
       setPreferredLanguageCode(languageCode);
-      storeLanguageCode(languageCode);
+      setLanguageCode(languageCode);
       setMsg(`Your language is now set to ${getLanguageLabel(languageCode)}. Translated labels may take a moment to update.`);
       await loadAccount();
     } catch (e: any) {
@@ -325,7 +324,7 @@ export default function AccountClient() {
   return (
     <MobileShell
       title={t(languageCode, "screen.account")}
-      subtitle={email || "Your CareCircle account"}
+      subtitle={email || t(languageCode, "account.subtitle")}
       rightSlot={
         <Link className="cc-btn" href="/app/hub">
           {t(languageCode, "screen.hub")}
@@ -358,7 +357,7 @@ export default function AccountClient() {
               onChange={(e) => {
                 const next = normaliseLanguageCode(e.target.value);
                 setPreferredLanguageCode(next);
-                storeLanguageCode(next);
+                setLanguageCode(next);
               }}
               disabled={languageBusy}
             >
@@ -384,25 +383,21 @@ export default function AccountClient() {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Secure access on this device</h2>
-              <div className="cc-subtle">
-                This device needs secure access before protected circle content can open here.
-              </div>
+              <h2 className="cc-h2">{t(languageCode, "account.secure_access_title")}</h2>
+              <div className="cc-subtle">{t(languageCode, "account.secure_access_subtitle")}</div>
             </div>
 
             <span className="cc-pill cc-pill-primary">
               {hasPublicKey === true
-                ? "Secure access: ready"
+                ? t(languageCode, "account.secure_access_ready")
                 : hasPublicKey === false
-                ? "Secure access: not ready"
-                : "Secure access: checking"}
+                ? t(languageCode, "account.secure_access_not_ready")
+                : t(languageCode, "account.secure_access_checking")}
             </span>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
-            <div className="cc-small cc-subtle">
-              Set this device up once, then reopen Secure access for any circle that still is not opening here.
-            </div>
+            <div className="cc-small cc-subtle">{t(languageCode, "account.secure_access_help")}</div>
           </div>
 
           <div className="cc-row">
@@ -411,11 +406,15 @@ export default function AccountClient() {
               onClick={enableE2EEOnThisDevice}
               disabled={e2eeBusy || hasPublicKey === true}
             >
-              {hasPublicKey === true ? "Ready" : e2eeBusy ? "Setting up..." : "Set up secure access on this device"}
+              {hasPublicKey === true
+                ? t(languageCode, "account.secure_access_ready_short")
+                : e2eeBusy
+                ? t(languageCode, "account.secure_access_setting_up")
+                : t(languageCode, "account.secure_access_set_up")}
             </button>
 
             <button className="cc-btn" onClick={loadAccount}>
-              Refresh
+              {t(languageCode, "common.refresh")}
             </button>
           </div>
 
@@ -430,21 +429,18 @@ export default function AccountClient() {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Permissions</h2>
-              <div className="cc-subtle">Manage feature access for a circle from one place.</div>
+              <h2 className="cc-h2">{t(languageCode, "account.permissions_title")}</h2>
+              <div className="cc-subtle">{t(languageCode, "account.permissions_subtitle")}</div>
             </div>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
-            <div className="cc-small cc-subtle">
-              Use permissions to manage who can view or manage journals, appointments, profile, medication logs, messaging,
-              and more. Controllers should always have full management access.
-            </div>
+            <div className="cc-small cc-subtle">{t(languageCode, "account.permissions_help")}</div>
           </div>
 
           <div className="cc-row">
             <Link className="cc-btn cc-btn-primary" href="/app/account/permissions">
-              Open permissions
+              {t(languageCode, "account.open_permissions")}
             </Link>
           </div>
         </div>
@@ -453,13 +449,13 @@ export default function AccountClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Your circles</h2>
-            <div className="cc-subtle">Manage your display name, secure access, and circle tools.</div>
+            <h2 className="cc-h2">{t(languageCode, "account.circles_title")}</h2>
+            <div className="cc-subtle">{t(languageCode, "account.circles_subtitle")}</div>
           </div>
         </div>
 
         {memberships.length === 0 ? (
-          <div className="cc-small">No circles yet.</div>
+          <div className="cc-small">{t(languageCode, "account.no_circles")}</div>
         ) : (
           <div className="cc-stack">
             {memberships.map((m) => {
@@ -475,21 +471,21 @@ export default function AccountClient() {
                 >
                   <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
                     <div className="cc-wrap">
-                      <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
+                      <div className="cc-strong">{p?.display_name ?? t(languageCode, "account.circle")}</div>
                       <div className="cc-small cc-subtle">
-                        Role: <b>{m.role}</b>
-                        {m.is_controller ? " - Controller" : ""}
+                        {t(languageCode, "account.role")}: <b>{m.role}</b>
+                        {m.is_controller ? ` - ${t(languageCode, "account.controller")}` : ""}
                       </div>
                     </div>
 
                     <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                       {pidOk ? (
                         <>
-                          <Link className="cc-btn" href={`/app/patients/${m.patient_id}/vault-init`}>
-                            Secure access
+                        <Link className="cc-btn" href={`/app/patients/${m.patient_id}/vault-init`}>
+                            {t(languageCode, "account.open_secure_access")}
                           </Link>
                           <Link className="cc-btn" href={`/app/account/permissions?pid=${m.patient_id}`}>
-                            Permissions
+                            {t(languageCode, "account.permissions_title")}
                           </Link>
                         </>
                       ) : null}
@@ -497,7 +493,7 @@ export default function AccountClient() {
                   </div>
 
                   <div className="cc-field">
-                    <div className="cc-label">Your display name in this circle</div>
+                    <div className="cc-label">{t(languageCode, "account.display_name_label")}</div>
                     <div className="cc-row">
                       <input
                         className="cc-input"
@@ -508,22 +504,19 @@ export default function AccountClient() {
                             [m.patient_id]: e.target.value,
                           }))
                         }
-                        placeholder="Enter the name others should see"
+                        placeholder={t(languageCode, "account.display_name_placeholder")}
                       />
                       <button
                         className="cc-btn cc-btn-primary"
                         onClick={() => saveNickname(m.patient_id)}
                         disabled={nicknameBusy}
                       >
-                        {nicknameBusy ? "Saving..." : "Save"}
+                        {nicknameBusy ? t(languageCode, "common.loading") : t(languageCode, "common.save")}
                       </button>
                     </div>
                   </div>
 
-                  <div className="cc-small cc-subtle">
-                    Open Secure access for a circle if its protected content is not visible yet. Your nickname is reflected in
-                    member and permissions lists.
-                  </div>
+                  <div className="cc-small cc-subtle">{t(languageCode, "account.display_name_help")}</div>
                 </div>
               );
             })}
@@ -534,15 +527,13 @@ export default function AccountClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Invite a circle member</h2>
-            <div className="cc-subtle">
-              Controllers can create an email invite and a backup individual invite link.
-            </div>
+            <h2 className="cc-h2">{t(languageCode, "account.invite_title")}</h2>
+            <div className="cc-subtle">{t(languageCode, "account.invite_subtitle")}</div>
           </div>
         </div>
 
         {controllerMemberships.length === 0 ? (
-          <div className="cc-small">You’re not a controller for any circles, so you can’t create invite links.</div>
+          <div className="cc-small">{t(languageCode, "account.invite_not_controller")}</div>
         ) : (
           <div className="cc-stack">
             {controllerMemberships.map((m) => {
@@ -565,30 +556,30 @@ export default function AccountClient() {
                 >
                   <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
                     <div className="cc-wrap">
-                      <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
+                      <div className="cc-strong">{p?.display_name ?? t(languageCode, "account.circle")}</div>
                       <div className="cc-small cc-subtle">
-                        Controller invite tools
-                          {!pidOk ? " - invalid patient id" : ""}
+                        {t(languageCode, "account.invite_tools")}
+                        {!pidOk ? ` - ${t(languageCode, "account.invalid_patient_id")}` : ""}
                       </div>
                     </div>
 
                     <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                       <Link className="cc-btn" href={`/app/account/permissions?pid=${m.patient_id}`}>
-                        Permissions
+                        {t(languageCode, "account.permissions_title")}
                       </Link>
                       <button
                         className="cc-btn cc-btn-primary"
                         onClick={() => createInvite(m.patient_id)}
                         disabled={busy || !pidOk}
                       >
-                        {busy ? "Creating…" : "Invite member"}
+                        {busy ? t(languageCode, "common.loading") : t(languageCode, "account.invite_member")}
                       </button>
                     </div>
                   </div>
 
                   <div className="cc-grid-2">
                     <div className="cc-field">
-                      <div className="cc-label">Invitee email</div>
+                      <div className="cc-label">{t(languageCode, "account.invitee_email")}</div>
                       <input
                         className="cc-input"
                         type="email"
@@ -602,7 +593,7 @@ export default function AccountClient() {
                     </div>
 
                     <div className="cc-field">
-                      <div className="cc-label">Invitee nickname</div>
+                      <div className="cc-label">{t(languageCode, "account.invitee_nickname")}</div>
                       <input
                         className="cc-input"
                         value={inviteeNickname}
@@ -610,14 +601,14 @@ export default function AccountClient() {
                         onChange={(e) =>
                           setInviteNicknameByPid((prev) => ({ ...prev, [m.patient_id]: e.target.value }))
                         }
-                        placeholder="How they should appear in the circle"
+                        placeholder={t(languageCode, "account.invitee_nickname_placeholder")}
                       />
                     </div>
                   </div>
 
                   <div className="cc-grid-3">
                     <div className="cc-field">
-                      <div className="cc-label">Role</div>
+                      <div className="cc-label">{t(languageCode, "account.role")}</div>
                       <select
                         className="cc-select"
                         value={role}
@@ -634,7 +625,7 @@ export default function AccountClient() {
                     </div>
 
                     <div className="cc-field">
-                      <div className="cc-label">Expires (days)</div>
+                      <div className="cc-label">{t(languageCode, "account.expires_days")}</div>
                       <input
                         className="cc-input"
                         type="number"
@@ -651,7 +642,7 @@ export default function AccountClient() {
                     </div>
 
                     <div className="cc-field">
-                      <div className="cc-label">Max uses</div>
+                      <div className="cc-label">{t(languageCode, "account.max_uses")}</div>
                       <input
                         className="cc-input"
                         type="number"
@@ -670,32 +661,26 @@ export default function AccountClient() {
 
                   {url ? (
                     <div className="cc-panel" style={{ padding: 14 }}>
-                      <div className="cc-small cc-subtle">Invitee email</div>
-                      <div className="cc-strong">{sentEmail || inviteeEmail || "—"}</div>
+                      <div className="cc-small cc-subtle">{t(languageCode, "account.invitee_email")}</div>
+                      <div className="cc-strong">{sentEmail || inviteeEmail || "-"}</div>
 
                       <div className="cc-spacer-12" />
 
-                      <div className="cc-small cc-subtle">Individual backup invite link</div>
+                      <div className="cc-small cc-subtle">{t(languageCode, "account.backup_link")}</div>
                       <div className="cc-row-between" style={{ gap: 12, alignItems: "flex-start" }}>
                         <div className="cc-wrap" style={{ fontSize: 13, flex: 1 }}>
                           {url}
                         </div>
                         <button className="cc-btn" onClick={() => copy(url)}>
-                          Copy link
+                          {t(languageCode, "account.copy_link")}
                         </button>
                       </div>
 
                       <div className="cc-spacer-12" />
-                      <div className="cc-small cc-subtle">
-                        This link is unique to this invite. The email invite is attempted automatically as part of the same
-                        action.
-                      </div>
+                      <div className="cc-small cc-subtle">{t(languageCode, "account.backup_link_help")}</div>
                     </div>
                   ) : (
-                    <div className="cc-small cc-subtle">
-                      Enter email and nickname, then invite the member. This creates a unique invite link and attempts to send
-                      the email automatically.
-                    </div>
+                    <div className="cc-small cc-subtle">{t(languageCode, "account.invite_entry_help")}</div>
                   )}
                 </div>
               );
@@ -707,20 +692,18 @@ export default function AccountClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Sign out</h2>
-            <div className="cc-subtle">Sign out of this device when you’re finished.</div>
+            <h2 className="cc-h2">{t(languageCode, "account.sign_out_title")}</h2>
+            <div className="cc-subtle">{t(languageCode, "account.sign_out_subtitle")}</div>
           </div>
         </div>
 
         <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-small cc-subtle">
-            This signs you out of your CareCircle session on this device.
-          </div>
+          <div className="cc-small cc-subtle">{t(languageCode, "account.sign_out_help")}</div>
         </div>
 
         <div className="cc-row">
           <button className="cc-btn cc-btn-danger" onClick={signOut}>
-            Sign out
+            {t(languageCode, "account.sign_out_button")}
           </button>
         </div>
       </div>

@@ -150,7 +150,7 @@ export default function HubClient() {
       hideBottomNav
       rightSlot={
         <Link className="cc-btn" href="/app/account">
-          Account
+          {t(languageCode, "nav.account")}
         </Link>
       }
     >
@@ -258,13 +258,17 @@ export default function HubClient() {
                         </div>
 
                         <div className="cc-small cc-subtle" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          <span>{m.nickname ? `You: ${m.nickname}` : `Role: ${role}`}</span>
+                          <span>
+                            {m.nickname
+                              ? `${t(languageCode, "hub.you_label")}: ${m.nickname}`
+                              : `${t(languageCode, "permissions.role_label")}: ${role}`}
+                          </span>
                           {isController ? (
                             <span
                               className="cc-pill cc-pill-primary"
                               style={{ padding: "2px 8px", fontSize: "0.72rem" }}
                             >
-                              Controller
+                              {t(languageCode, "hub.controller")}
                             </span>
                           ) : null}
                         </div>
@@ -310,7 +314,7 @@ export default function HubClient() {
                         paddingBottom: 12,
                       }}
                     >
-                      Open this circle
+                      {t(languageCode, "hub.open_circle")}
                     </div>
 
                     <div
@@ -326,7 +330,7 @@ export default function HubClient() {
                         href={`/app/patients/${m.patient_id}/today`}
                         style={{ width: "100%", minHeight: 0 }}
                       >
-                        Today
+                        {t(languageCode, "hub.today_button")}
                       </Link>
 
                       <Link
@@ -334,7 +338,7 @@ export default function HubClient() {
                         href={`/app/patients/${m.patient_id}/summary`}
                         style={{ width: "100%", minHeight: 0 }}
                       >
-                        Summary
+                        {t(languageCode, "hub.summary_button")}
                       </Link>
                     </div>
                   </div>
