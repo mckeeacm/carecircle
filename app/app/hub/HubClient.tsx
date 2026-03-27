@@ -293,7 +293,7 @@ export default function HubClient() {
                         transition: "transform 0.18s ease",
                       }}
                     >
-                      â€º
+                      >
                     </div>
                   </div>
                 </button>
