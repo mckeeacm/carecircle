@@ -4,6 +4,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import {
+  DEFAULT_ACCOUNT_LANGUAGE_CODE,
+  SUPPORTED_ACCOUNT_LANGUAGES,
+  detectPreferredLanguageCode,
+  getLanguageLabel,
+  normaliseLanguageCode,
+} from "@/lib/languages";
 
 type Mode = "login" | "signup" | "reset";
 
@@ -41,6 +48,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [preferredLanguageCode, setPreferredLanguageCode] = useState(DEFAULT_ACCOUNT_LANGUAGE_CODE);
 
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -65,6 +73,11 @@ export default function Home() {
       writePendingInviteToken(token);
       setInviteToken(token);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPreferredLanguageCode(detectPreferredLanguageCode(window.navigator.language));
   }, []);
 
   useEffect(() => {
@@ -134,6 +147,12 @@ export default function Home() {
         const { error } = await supabase.auth.signUp({
           email: cleanEmail,
           password,
+          options: {
+            data: {
+              preferred_language_code: normaliseLanguageCode(preferredLanguageCode),
+              preferred_language_label: getLanguageLabel(preferredLanguageCode),
+            },
+          },
         });
 
         if (error) throw error;
@@ -148,6 +167,16 @@ export default function Home() {
       });
 
       if (error) throw error;
+
+      const languageCode = normaliseLanguageCode(preferredLanguageCode);
+      const { error: preferenceError } = await supabase.auth.updateUser({
+        data: {
+          preferred_language_code: languageCode,
+          preferred_language_label: getLanguageLabel(languageCode),
+        },
+      });
+
+      if (preferenceError) throw preferenceError;
 
       routeAfterAuth();
     } catch (e: any) {
@@ -164,8 +193,8 @@ export default function Home() {
     mode === "signup"
       ? "Set up your CareCircle account to continue."
       : mode === "reset"
-      ? "We’ll send you a password reset email."
-      : "Shared meds, appointments, and care notes — without confusion.";
+      ? "We'll send you a password reset email."
+      : "Shared meds, appointments, and care notes - without confusion.";
 
   return (
     <>
@@ -531,7 +560,7 @@ export default function Home() {
                   CareCircle
                 </h1>
                 <div className="cc-subtle" style={{ fontSize: 18 }}>
-                  Checking your sign-in…
+                  Checking your sign-in...
                 </div>
               </div>
             </div>
@@ -587,6 +616,25 @@ export default function Home() {
                 ) : null}
 
                 <form onSubmit={handleSubmit} className="cc-stack">
+                  {mode !== "reset" ? (
+                    <div className="cc-field">
+                      <div className="cc-label">Your language</div>
+                      <select
+                        className="cc-select"
+                        value={preferredLanguageCode}
+                        onChange={(e) => setPreferredLanguageCode(normaliseLanguageCode(e.target.value))}
+                        disabled={loading}
+                        style={{ minHeight: 54, fontSize: 17 }}
+                      >
+                        {SUPPORTED_ACCOUNT_LANGUAGES.map((language) => (
+                          <option key={language.code} value={language.code}>
+                            {language.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
                   <div className="cc-field">
                     <div className="cc-label">Email</div>
                     <input
@@ -649,14 +697,14 @@ export default function Home() {
                     >
                       {mode === "signup"
                         ? loading
-                          ? "Creating account…"
+                          ? "Creating account..."
                           : "Create account"
                         : mode === "reset"
                         ? loading
-                          ? "Sending…"
+                          ? "Sending..."
                           : "Send reset email"
                         : loading
-                        ? "Signing in…"
+                        ? "Signing in..."
                         : "Sign in"}
                     </button>
                   </div>

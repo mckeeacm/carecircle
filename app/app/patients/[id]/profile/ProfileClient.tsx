@@ -8,6 +8,7 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { DEFAULT_ACCOUNT_LANGUAGE_CODE, normaliseLanguageCode } from "@/lib/languages";
 
 type PatientRow = { id: string; display_name: string };
 
@@ -43,6 +44,8 @@ type MedicationRow = {
   created_by: string;
   created_at: string;
 };
+
+type SummaryFieldKind = "communication" | "allergies" | "safety" | "diagnoses" | "languages";
 
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
@@ -81,6 +84,8 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
   const [safetySummary, setSafetySummary] = useState("");
   const [diagnosesSummary, setDiagnosesSummary] = useState("");
   const [languagesSummary, setLanguagesSummary] = useState("");
+  const [preferredLanguageCode, setPreferredLanguageCode] = useState(DEFAULT_ACCOUNT_LANGUAGE_CODE);
+  const [summaryCopyBusy, setSummaryCopyBusy] = useState<SummaryFieldKind | "all" | null>(null);
 
   const [hasHealthWellbeingLpa, setHasHealthWellbeingLpa] = useState(false);
   const [healthWellbeingLpaHolderName, setHealthWellbeingLpaHolderName] = useState("");
@@ -138,6 +143,10 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         .single();
       if (pErr) throw pErr;
       setPatient(p as PatientRow);
+
+      const { data: auth, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      setPreferredLanguageCode(normaliseLanguageCode(auth.user?.user_metadata?.preferred_language_code));
 
       const { data: pr, error: prErr } = await supabase
         .from("patient_profiles")
@@ -297,20 +306,100 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId, !!vaultKey]);
 
-  function copyOneToSummary(kind: "communication" | "allergies" | "safety" | "diagnoses" | "languages") {
-    if (kind === "communication") setCommSummary(communicationNotes);
-    if (kind === "allergies") setAllergiesSummary(allergies);
-    if (kind === "safety") setSafetySummary(safetyNotes);
-    if (kind === "diagnoses") setDiagnosesSummary(diagnoses);
-    if (kind === "languages") setLanguagesSummary(languagesSpoken);
+  function getDetailedValue(kind: SummaryFieldKind) {
+    if (kind === "communication") return communicationNotes;
+    if (kind === "allergies") return allergies;
+    if (kind === "safety") return safetyNotes;
+    if (kind === "diagnoses") return diagnoses;
+    return languagesSpoken;
   }
 
-  function copyAllToSummary() {
-    setCommSummary(communicationNotes);
-    setAllergiesSummary(allergies);
-    setSafetySummary(safetyNotes);
-    setDiagnosesSummary(diagnoses);
-    setLanguagesSummary(languagesSpoken);
+  function setSummaryValue(kind: SummaryFieldKind, value: string) {
+    if (kind === "communication") setCommSummary(value);
+    if (kind === "allergies") setAllergiesSummary(value);
+    if (kind === "safety") setSafetySummary(value);
+    if (kind === "diagnoses") setDiagnosesSummary(value);
+    if (kind === "languages") setLanguagesSummary(value);
+  }
+
+  function getSummaryFieldLabel(kind: SummaryFieldKind) {
+    if (kind === "communication") return "Communication notes";
+    if (kind === "allergies") return "Allergies";
+    if (kind === "safety") return "Safety notes";
+    if (kind === "diagnoses") return "Diagnoses";
+    return "Languages spoken";
+  }
+
+  async function translateToEnglishForSummary(text: string, fieldLabel: string) {
+    const cleanText = text.trim();
+    if (!cleanText) return "";
+
+    if (normaliseLanguageCode(preferredLanguageCode) === "en") {
+      return cleanText;
+    }
+
+    const { data: auth, error: authErr } = await supabase.auth.getSession();
+    if (authErr) throw authErr;
+
+    const accessToken = auth.session?.access_token;
+    if (!accessToken) throw new Error("missing_auth_session");
+
+    const res = await fetch("/api/translate/english", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        text: cleanText,
+        fieldLabel,
+        sourceLanguageCode: preferredLanguageCode,
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.error ?? "failed_to_translate_summary");
+    return String(json?.text ?? "").trim();
+  }
+
+  async function copyOneToSummary(kind: SummaryFieldKind) {
+    setMsg(null);
+    setSummaryCopyBusy(kind);
+
+    try {
+      const englishText = await translateToEnglishForSummary(getDetailedValue(kind), getSummaryFieldLabel(kind));
+      setSummaryValue(kind, englishText);
+      setMsg("Clinician summary updated in English.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_copy_summary");
+    } finally {
+      setSummaryCopyBusy(null);
+    }
+  }
+
+  async function copyAllToSummary() {
+    setMsg(null);
+    setSummaryCopyBusy("all");
+
+    try {
+      const kinds: SummaryFieldKind[] = ["communication", "allergies", "safety", "diagnoses", "languages"];
+      const results = await Promise.all(
+        kinds.map(async (kind) => ({
+          kind,
+          englishText: await translateToEnglishForSummary(getDetailedValue(kind), getSummaryFieldLabel(kind)),
+        }))
+      );
+
+      for (const result of results) {
+        setSummaryValue(result.kind, result.englishText);
+      }
+
+      setMsg("Clinician summary updated in English.");
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_copy_summary");
+    } finally {
+      setSummaryCopyBusy(null);
+    }
   }
 
   async function createMedication() {
@@ -393,16 +482,16 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
-          <div>
-            <h2 className="cc-h2">Profile details</h2>
-            <div className="cc-subtle">
-              Keep detailed notes and the clinician summary aligned without double entry.
+            <div>
+              <h2 className="cc-h2">Profile details</h2>
+              <div className="cc-subtle">
+              Keep detailed notes and the clinician summary aligned without double entry. The summary always stays in English.
+              </div>
             </div>
-          </div>
 
           <div className="cc-row" style={{ flexWrap: "wrap" }}>
-            <button className="cc-btn" onClick={copyAllToSummary} disabled={!vaultKey}>
-              Copy all to summary
+            <button className="cc-btn" onClick={copyAllToSummary} disabled={!vaultKey || summaryCopyBusy != null}>
+              {summaryCopyBusy === "all" ? "Copying..." : "Copy all to English summary"}
             </button>
             <button className="cc-btn" onClick={loadProfile} disabled={loading}>
               {loading ? "Loading..." : "Refresh"}
@@ -460,6 +549,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             encryptedValue={communicationNotes}
             summaryValue={commSummary}
             disabled={!vaultKey}
+            copyBusy={summaryCopyBusy === "communication" || summaryCopyBusy === "all"}
             onEncryptedChange={setCommunicationNotes}
             onSummaryChange={setCommSummary}
             onCopyToSummary={() => copyOneToSummary("communication")}
@@ -472,6 +562,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             encryptedValue={allergies}
             summaryValue={allergiesSummary}
             disabled={!vaultKey}
+            copyBusy={summaryCopyBusy === "allergies" || summaryCopyBusy === "all"}
             onEncryptedChange={setAllergies}
             onSummaryChange={setAllergiesSummary}
             onCopyToSummary={() => copyOneToSummary("allergies")}
@@ -484,6 +575,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             encryptedValue={safetyNotes}
             summaryValue={safetySummary}
             disabled={!vaultKey}
+            copyBusy={summaryCopyBusy === "safety" || summaryCopyBusy === "all"}
             onEncryptedChange={setSafetyNotes}
             onSummaryChange={setSafetySummary}
             onCopyToSummary={() => copyOneToSummary("safety")}
@@ -497,6 +589,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             encryptedValue={diagnoses}
             summaryValue={diagnosesSummary}
             disabled={!vaultKey}
+            copyBusy={summaryCopyBusy === "diagnoses" || summaryCopyBusy === "all"}
             onEncryptedChange={setDiagnoses}
             onSummaryChange={setDiagnosesSummary}
             onCopyToSummary={() => copyOneToSummary("diagnoses")}
@@ -509,6 +602,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             encryptedValue={languagesSpoken}
             summaryValue={languagesSummary}
             disabled={!vaultKey}
+            copyBusy={summaryCopyBusy === "languages" || summaryCopyBusy === "all"}
             onEncryptedChange={setLanguagesSpoken}
             onSummaryChange={setLanguagesSummary}
             onCopyToSummary={() => copyOneToSummary("languages")}
@@ -520,7 +614,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             <div>
               <h2 className="cc-h2">Clinician summary preview</h2>
               <div className="cc-subtle">
-                These summary fields are readable to permitted members even if detailed notes are not open here yet.
+                These summary fields stay in English for permitted members, even if detailed notes are not open here yet.
               </div>
             </div>
             <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
@@ -842,6 +936,7 @@ function ProfileFieldCard({
   encryptedValue,
   summaryValue,
   disabled,
+  copyBusy,
   emphasise,
   onEncryptedChange,
   onSummaryChange,
@@ -853,6 +948,7 @@ function ProfileFieldCard({
   encryptedValue: string;
   summaryValue: string;
   disabled: boolean;
+  copyBusy?: boolean;
   emphasise?: boolean;
   onEncryptedChange: (value: string) => void;
   onSummaryChange: (value: string) => void;
@@ -869,8 +965,8 @@ function ProfileFieldCard({
     >
       <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
         <div className="cc-strong">{title}</div>
-        <button className="cc-btn" type="button" onClick={onCopyToSummary} disabled={disabled}>
-          Copy to summary
+        <button className="cc-btn" type="button" onClick={onCopyToSummary} disabled={disabled || copyBusy}>
+          {copyBusy ? "Copying..." : "Copy to English summary"}
         </button>
       </div>
 

@@ -5,6 +5,12 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { registerMyPublicKey } from "@/lib/e2ee/registerPublicKey";
 import MobileShell from "@/app/components/MobileShell";
+import {
+  DEFAULT_ACCOUNT_LANGUAGE_CODE,
+  SUPPORTED_ACCOUNT_LANGUAGES,
+  getLanguageLabel,
+  normaliseLanguageCode,
+} from "@/lib/languages";
 
 type Membership = {
   patient_id: string;
@@ -25,6 +31,8 @@ export default function AccountClient() {
 
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [preferredLanguageCode, setPreferredLanguageCode] = useState(DEFAULT_ACCOUNT_LANGUAGE_CODE);
+  const [languageBusy, setLanguageBusy] = useState(false);
 
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [patientsById, setPatientsById] = useState<Record<string, PatientRow>>({});
@@ -70,6 +78,7 @@ export default function AccountClient() {
 
     const uid = data.user?.id;
     setEmail(data.user?.email ?? "");
+    setPreferredLanguageCode(normaliseLanguageCode(data.user?.user_metadata?.preferred_language_code));
 
     if (!uid) {
       setMsg("not_authenticated");
@@ -196,6 +205,31 @@ export default function AccountClient() {
     }
   }
 
+  async function savePreferredLanguage() {
+    setMsg(null);
+    setLanguageBusy(true);
+
+    try {
+      const languageCode = normaliseLanguageCode(preferredLanguageCode);
+      const { error } = await supabase.auth.updateUser({
+        data: {
+          preferred_language_code: languageCode,
+          preferred_language_label: getLanguageLabel(languageCode),
+        },
+      });
+
+      if (error) throw error;
+
+      setPreferredLanguageCode(languageCode);
+      setMsg(`Your language is now set to ${getLanguageLabel(languageCode)}.`);
+      await loadAccount();
+    } catch (e: any) {
+      setMsg(e?.message ?? "failed_to_save_language");
+    } finally {
+      setLanguageBusy(false);
+    }
+  }
+
   async function createInvite(patientId: unknown) {
     setMsg(null);
 
@@ -299,6 +333,44 @@ export default function AccountClient() {
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
+
+      <div className="cc-card cc-card-pad cc-stack">
+        <div className="cc-row-between">
+          <div>
+            <h2 className="cc-h2">Your language</h2>
+            <div className="cc-subtle">
+              This is saved only to your account. It changes your own experience and does not change the language chosen by
+              other carers, family members, or professionals.
+            </div>
+          </div>
+        </div>
+
+        <div className="cc-row" style={{ alignItems: "flex-end" }}>
+          <div className="cc-field" style={{ minWidth: 260, flex: "1 1 260px" }}>
+            <div className="cc-label">Preferred language</div>
+            <select
+              className="cc-select"
+              value={preferredLanguageCode}
+              onChange={(e) => setPreferredLanguageCode(normaliseLanguageCode(e.target.value))}
+              disabled={languageBusy}
+            >
+              {SUPPORTED_ACCOUNT_LANGUAGES.map((language) => (
+                <option key={language.code} value={language.code}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button className="cc-btn cc-btn-primary" onClick={savePreferredLanguage} disabled={languageBusy}>
+            {languageBusy ? "Saving..." : "Save language"}
+          </button>
+        </div>
+
+        <div className="cc-small cc-subtle">
+          Each person keeps their own language setting. Clinician summaries still stay in English for everyone.
+        </div>
+      </div>
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad cc-stack">
