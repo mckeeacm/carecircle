@@ -37,7 +37,18 @@ export function getLanguageLabel(code: string | null | undefined) {
 
 export function normaliseLanguageCode(code: string | null | undefined) {
   const value = (code ?? "").trim().toLowerCase();
-  return getSupportedLanguage(value)?.code ?? DEFAULT_ACCOUNT_LANGUAGE_CODE;
+  if (!value) return DEFAULT_ACCOUNT_LANGUAGE_CODE;
+
+  const direct = getSupportedLanguage(value);
+  if (direct) return direct.code;
+
+  const base = value.split("-")[0]?.trim();
+  if (base) {
+    const fromBase = getSupportedLanguage(base);
+    if (fromBase) return fromBase.code;
+  }
+
+  return DEFAULT_ACCOUNT_LANGUAGE_CODE;
 }
 
 export function detectPreferredLanguageCode(locale: string | null | undefined) {
