@@ -6,7 +6,7 @@ export default function Page() {
     <Suspense
       fallback={
         <div className="cc-page">
-          <div className="cc-container cc-card cc-card-pad">Loading vault setup…</div>
+          <div className="cc-container cc-card cc-card-pad">Loading secure access...</div>
         </div>
       }
     >

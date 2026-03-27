@@ -12,6 +12,7 @@ import {
   type WrappedKeyV1,
 } from "@/lib/e2ee/vaultShares";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type CacheRecord = {
   v: 1;
@@ -127,6 +128,7 @@ export default function VaultInitClient() {
   const params = useParams();
   const supabase = useMemo(() => supabaseBrowser(), []);
   const pid = normaliseId((params as any)?.id);
+  const { languageCode } = useUserLanguage();
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -146,6 +148,87 @@ export default function VaultInitClient() {
   const [hasShareRow, setHasShareRow] = useState<boolean | null>(null);
   const [hasCached, setHasCached] = useState(false);
   const [isController, setIsController] = useState<boolean | null>(null);
+
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Accesso sicuro",
+          loadingTitle: "Caricamento accesso sicuro",
+          account: "Account",
+          hub: "Hub",
+          message: "Messaggio",
+          loadingCard: "Controllo accesso sicuro...",
+          signedInAs: "Accesso effettuato come",
+          secureAccess: "Accesso sicuro del cerchio",
+          fixAction: "Correggi accesso sicuro",
+          fixingAction: "Correzione accesso sicuro...",
+          continueToday: "Continua a Oggi",
+          whatThisDoes: "Cosa fa questa pagina",
+          whatThisDoesText:
+            "Questa pagina controlla automaticamente la chiave del dispositivo, la condivisione sicura e l'accesso protetto per questo cerchio, poi completa la configurazione quando possibile.",
+          advanced: "Risoluzione avanzata dei problemi",
+          hide: "Nascondi",
+          show: "Mostra",
+          deviceKey: "Chiave dispositivo",
+          shareRow: "Condivisione",
+          cachedVault: "Vault salvato",
+          controller: "Responsabile",
+          ok: "OK",
+          unknown: "sconosciuto",
+          missing: "mancante",
+          present: "presente",
+          trueLabel: "vero",
+          falseLabel: "falso",
+          refreshStatus: "Aggiorna stato",
+          resetDevice: "Reimposta questo dispositivo",
+          resetting: "Reimpostazione...",
+          shareReady: "Condividi con i membri pronti",
+          sharing: "Condivisione...",
+          dangerZone: "Zona di rischio",
+          dangerText:
+            "Creare una NUOVA chiave del cerchio può lasciare i contenuti più vecchi collegati alla chiave precedente.",
+          newKey: "Inizializza NUOVA chiave sicura",
+          rekeying: "Rigenerazione chiave...",
+        }
+      : {
+          title: "Secure access",
+          loadingTitle: "Loading secure circle access",
+          account: "Account",
+          hub: "Hub",
+          message: "Message",
+          loadingCard: "Checking secure access...",
+          signedInAs: "Signed in as",
+          secureAccess: "Circle secure access",
+          fixAction: "Fix secure access",
+          fixingAction: "Fixing secure access...",
+          continueToday: "Continue to Today",
+          whatThisDoes: "What this does",
+          whatThisDoesText:
+            "This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.",
+          advanced: "Advanced troubleshooting",
+          hide: "Hide",
+          show: "Show",
+          deviceKey: "Device key",
+          shareRow: "Share row",
+          cachedVault: "Cached vault",
+          controller: "Controller",
+          ok: "OK",
+          unknown: "unknown",
+          missing: "missing",
+          present: "present",
+          trueLabel: "true",
+          falseLabel: "false",
+          refreshStatus: "Refresh status",
+          resetDevice: "Reset this device",
+          resetting: "Resetting...",
+          shareReady: "Share to ready members",
+          sharing: "Sharing...",
+          dangerZone: "Danger zone",
+          dangerText:
+            "Creating a NEW circle key can leave older encrypted content tied to the previous key.",
+          newKey: "Initialise NEW secure key",
+          rekeying: "Rekeying...",
+        };
 
   async function getSessionUser() {
     const { data, error } = await supabase.auth.getSession();
@@ -629,39 +712,39 @@ export default function VaultInitClient() {
   if (loading) {
     return (
       <MobileShell
-        title="Secure access"
-        subtitle="Loading secure circle access"
+        title={ui.title}
+        subtitle={ui.loadingTitle}
         patientId={isUuid(pid) ? pid : undefined}
         rightSlot={
           <Link className="cc-btn" href="/app/account">
-            Account
+            {ui.account}
           </Link>
         }
       >
-        <div className="cc-card cc-card-pad">Checking secure access…</div>
+        <div className="cc-card cc-card-pad">{ui.loadingCard}</div>
       </MobileShell>
     );
   }
 
   return (
     <MobileShell
-      title="Secure access"
-      subtitle={email ? `Signed in as ${email}` : pid || "Circle secure access"}
+      title={ui.title}
+      subtitle={email ? `${ui.signedInAs} ${email}` : pid || ui.secureAccess}
       patientId={isUuid(pid) ? pid : undefined}
       rightSlot={
         <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Link className="cc-btn" href="/app/hub">
-            Hub
+            {ui.hub}
           </Link>
           <Link className="cc-btn" href="/app/account">
-            Account
+            {ui.account}
           </Link>
         </div>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Message</div>
+          <div className="cc-status-error-title">{ui.message}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
@@ -688,29 +771,29 @@ export default function VaultInitClient() {
             onClick={fixSecureAccess}
             disabled={busy === "fix"}
           >
-            {busy === "fix" ? "Fixing secure access…" : "Fix secure access"}
+            {busy === "fix" ? ui.fixingAction : ui.fixAction}
           </button>
 
           {hasCached && isUuid(pid) ? (
             <Link className="cc-btn" href={`/app/patients/${pid}/today`}>
-              Continue to Today
+              {ui.continueToday}
             </Link>
           ) : null}
         </div>
       </div>
 
       <div className="cc-card cc-card-pad cc-stack">
-        <div className="cc-strong">What this does</div>
+        <div className="cc-strong">{ui.whatThisDoes}</div>
         <div className="cc-small cc-subtle">
-          This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.
+          {ui.whatThisDoesText}
         </div>
       </div>
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
-          <div className="cc-strong">Advanced troubleshooting</div>
+          <div className="cc-strong">{ui.advanced}</div>
           <button className="cc-btn" onClick={() => setDebugOpen((v) => !v)}>
-            {debugOpen ? "Hide" : "Show"}
+            {debugOpen ? ui.hide : ui.show}
           </button>
         </div>
 
@@ -718,23 +801,23 @@ export default function VaultInitClient() {
           <>
             <div className="cc-row" style={{ flexWrap: "wrap" }}>
               <span className={`cc-pill ${hasPublicKey ? "cc-pill-primary" : ""}`}>
-                Device key: {hasPublicKey ? "OK" : hasPublicKey === null ? "unknown" : "missing"}
+                {ui.deviceKey}: {hasPublicKey ? ui.ok : hasPublicKey === null ? ui.unknown : ui.missing}
               </span>
               <span className={`cc-pill ${hasShareRow ? "cc-pill-primary" : ""}`}>
-                Share row: {hasShareRow === null ? "unknown" : hasShareRow ? "present" : "missing"}
+                {ui.shareRow}: {hasShareRow === null ? ui.unknown : hasShareRow ? ui.present : ui.missing}
               </span>
               <span className={`cc-pill ${hasCached ? "cc-pill-primary" : ""}`}>
-                Cached vault: {hasCached ? "present" : "missing"}
+                {ui.cachedVault}: {hasCached ? ui.present : ui.missing}
               </span>
               <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
-                Controller: {isController === null ? "unknown" : isController ? "true" : "false"}
+                {ui.controller}: {isController === null ? ui.unknown : isController ? ui.trueLabel : ui.falseLabel}
               </span>
-              <span className="cc-pill">{myAlg || "—"}</span>
+              <span className="cc-pill">{myAlg || "-"}</span>
             </div>
 
             <div className="cc-row">
               <button className="cc-btn" onClick={() => refreshState()} disabled={!!busy}>
-                Refresh status
+                {ui.refreshStatus}
               </button>
 
               <button
@@ -742,7 +825,7 @@ export default function VaultInitClient() {
                 onClick={resetThisDeviceAndForgetVault}
                 disabled={busy === "reset" || !uid}
               >
-                {busy === "reset" ? "Resetting…" : "Reset this device"}
+                {busy === "reset" ? ui.resetting : ui.resetDevice}
               </button>
 
               {isController ? (
@@ -751,16 +834,16 @@ export default function VaultInitClient() {
                   onClick={shareKeyToNewMembers}
                   disabled={busy === "share"}
                 >
-                  {busy === "share" ? "Sharing…" : "Share to ready members"}
+                  {busy === "share" ? ui.sharing : ui.shareReady}
                 </button>
               ) : null}
             </div>
 
             {isController ? (
               <div className="cc-panel">
-                <div className="cc-strong">Danger zone</div>
+                <div className="cc-strong">{ui.dangerZone}</div>
                 <div className="cc-small cc-subtle">
-                  Creating a NEW circle key can leave older encrypted content tied to the previous key.
+                  {ui.dangerText}
                 </div>
                 <div className="cc-spacer-12" />
                 <button
@@ -768,7 +851,7 @@ export default function VaultInitClient() {
                   onClick={initialiseNewVaultKey}
                   disabled={busy === "rekey"}
                 >
-                  {busy === "rekey" ? "Rekeying…" : "Initialise NEW secure key"}
+                  {busy === "rekey" ? ui.rekeying : ui.newKey}
                 </button>
               </div>
             ) : null}

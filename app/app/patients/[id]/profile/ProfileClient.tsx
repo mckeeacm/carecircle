@@ -479,6 +479,22 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           advanceSubtitle: "Registra i dettagli chiave su rappresentanza e decisioni per passaggi di consegne e cura.",
           detailedNotes: "Note dettagliate del profilo",
           detailedNotesSubtitle: "Informazioni sensibili del cerchio disponibili quando l'accesso sicuro e pronto.",
+          clinicianPreview: "Anteprima riepilogo clinico",
+          clinicianPreviewText:
+            "Questi campi di riepilogo restano in inglese per i membri autorizzati, anche se qui le note dettagliate non sono ancora aperte.",
+          openSummary: "Apri riepilogo",
+          medications: "Farmaci",
+          medicationsSubtitle: "Usato da Registri farmaci.",
+          openLogs: "Apri registri",
+          addMedication: "Aggiungi farmaco",
+          name: "Nome",
+          dosage: "Dosaggio",
+          scheduleText: "Testo programma",
+          addMedicationAction: "Aggiungi farmaco",
+          adding: "Aggiunta...",
+          optional: "Facoltativo",
+          noMedications: "Ancora nessun farmaco.",
+          dash: "-",
         }
       : {
           title: "Profile",
@@ -500,6 +516,22 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           advanceSubtitle: "Record key decision-making and representation details for handover and care.",
           detailedNotes: "Detailed profile notes",
           detailedNotesSubtitle: "Sensitive circle information that opens when secure access is ready.",
+          clinicianPreview: "Clinician summary preview",
+          clinicianPreviewText:
+            "These summary fields stay in English for permitted members, even if detailed notes are not open here yet.",
+          openSummary: "Open summary",
+          medications: "Medications",
+          medicationsSubtitle: "Used by Medication logs.",
+          openLogs: "Open logs",
+          addMedication: "Add medication",
+          name: "Name",
+          dosage: "Dosage",
+          scheduleText: "Schedule text",
+          addMedicationAction: "Add medication",
+          adding: "Adding...",
+          optional: "Optional",
+          noMedications: "No medications yet.",
+          dash: "-",
         };
 
   return (
@@ -586,9 +618,9 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           </div>
 
           <ProfileFieldCard
-            title="Communication notes"
-            encryptedLabel="Communication notes (protected)"
-            summaryLabel="Communication notes summary"
+            title={languageCode === "it" ? "Note di comunicazione" : "Communication notes"}
+            encryptedLabel={languageCode === "it" ? "Note di comunicazione (protette)" : "Communication notes (protected)"}
+            summaryLabel={languageCode === "it" ? "Riepilogo note di comunicazione" : "Communication notes summary"}
             encryptedValue={communicationNotes}
             summaryValue={commSummary}
             disabled={!vaultKey}
@@ -599,9 +631,9 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           />
 
           <ProfileFieldCard
-            title="Allergies"
-            encryptedLabel="Allergies (protected)"
-            summaryLabel="Allergies summary"
+            title={languageCode === "it" ? "Allergie" : "Allergies"}
+            encryptedLabel={languageCode === "it" ? "Allergie (protette)" : "Allergies (protected)"}
+            summaryLabel={languageCode === "it" ? "Riepilogo allergie" : "Allergies summary"}
             encryptedValue={allergies}
             summaryValue={allergiesSummary}
             disabled={!vaultKey}
@@ -612,9 +644,9 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           />
 
           <ProfileFieldCard
-            title="Safety notes"
-            encryptedLabel="Safety notes (protected)"
-            summaryLabel="Safety notes summary"
+            title={languageCode === "it" ? "Note di sicurezza" : "Safety notes"}
+            encryptedLabel={languageCode === "it" ? "Note di sicurezza (protette)" : "Safety notes (protected)"}
+            summaryLabel={languageCode === "it" ? "Riepilogo note di sicurezza" : "Safety notes summary"}
             encryptedValue={safetyNotes}
             summaryValue={safetySummary}
             disabled={!vaultKey}
@@ -626,9 +658,9 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           />
 
           <ProfileFieldCard
-            title="Diagnoses"
-            encryptedLabel="Diagnoses (protected)"
-            summaryLabel="Diagnoses summary"
+            title={languageCode === "it" ? "Diagnosi" : "Diagnoses"}
+            encryptedLabel={languageCode === "it" ? "Diagnosi (protette)" : "Diagnoses (protected)"}
+            summaryLabel={languageCode === "it" ? "Riepilogo diagnosi" : "Diagnoses summary"}
             encryptedValue={diagnoses}
             summaryValue={diagnosesSummary}
             disabled={!vaultKey}
@@ -639,9 +671,9 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           />
 
           <ProfileFieldCard
-            title="Languages spoken"
-            encryptedLabel="Languages spoken (protected)"
-            summaryLabel="Languages spoken summary"
+            title={languageCode === "it" ? "Lingue parlate" : "Languages spoken"}
+            encryptedLabel={languageCode === "it" ? "Lingue parlate (protette)" : "Languages spoken (protected)"}
+            summaryLabel={languageCode === "it" ? "Riepilogo lingue parlate" : "Languages spoken summary"}
             encryptedValue={languagesSpoken}
             summaryValue={languagesSummary}
             disabled={!vaultKey}
@@ -655,13 +687,13 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Clinician summary preview</h2>
+              <h2 className="cc-h2">{ui.clinicianPreview}</h2>
               <div className="cc-subtle">
-                These summary fields stay in English for permitted members, even if detailed notes are not open here yet.
+                {ui.clinicianPreviewText}
               </div>
             </div>
             <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
-              Open summary
+              {ui.openSummary}
             </Link>
           </div>
 
@@ -676,46 +708,46 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
-              Safety notes
+              {languageCode === "it" ? "Note di sicurezza" : "Safety notes"}
             </div>
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {safetySummary || "—"}
+              {safetySummary || ui.dash}
             </div>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
-              Allergies
+              {languageCode === "it" ? "Allergie" : "Allergies"}
             </div>
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {allergiesSummary || "—"}
+              {allergiesSummary || ui.dash}
             </div>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
-              Diagnoses
+              {languageCode === "it" ? "Diagnosi" : "Diagnoses"}
             </div>
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {diagnosesSummary || "—"}
+              {diagnosesSummary || ui.dash}
             </div>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
-              Communication notes
+              {languageCode === "it" ? "Note di comunicazione" : "Communication notes"}
             </div>
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {commSummary || "—"}
+              {commSummary || ui.dash}
             </div>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-strong" style={{ marginBottom: 8 }}>
-              Languages spoken
+              {languageCode === "it" ? "Lingue parlate" : "Languages spoken"}
             </div>
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-              {languagesSummary || "—"}
+              {languagesSummary || ui.dash}
             </div>
           </div>
         </div>
@@ -724,32 +756,32 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Medications</h2>
+            <h2 className="cc-h2">{ui.medications}</h2>
             <div className="cc-subtle">
-              Used by <b>Medication logs</b>.
+              {ui.medicationsSubtitle}
             </div>
           </div>
           <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-            Open logs
+            {ui.openLogs}
           </Link>
         </div>
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-strong">Add medication</div>
+          <div className="cc-strong">{ui.addMedication}</div>
 
           <div className="cc-grid-2">
             <div className="cc-field">
-              <div className="cc-label">Name</div>
+              <div className="cc-label">{ui.name}</div>
               <input
                 className="cc-input"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Sertraline"
+                placeholder={languageCode === "it" ? "ad es. Sertralina" : "e.g. Sertraline"}
               />
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Dosage</div>
+              <div className="cc-label">{ui.dosage}</div>
               <input
                 className="cc-input"
                 value={newDosage}
@@ -760,27 +792,27 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           </div>
 
           <div className="cc-field">
-            <div className="cc-label">Schedule text</div>
+            <div className="cc-label">{ui.scheduleText}</div>
             <input
               className="cc-input"
               value={newScheduleText}
               onChange={(e) => setNewScheduleText(e.target.value)}
-              placeholder="e.g. once daily in the morning"
+              placeholder={languageCode === "it" ? "ad es. una volta al giorno al mattino" : "e.g. once daily in the morning"}
             />
           </div>
 
           <div className="cc-row">
             <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
-              {medsSaving === "create" ? "Adding..." : "Add medication"}
+              {medsSaving === "create" ? ui.adding : ui.addMedicationAction}
             </button>
             <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
-              {medsLoading ? "Loading..." : "Refresh"}
+              {medsLoading ? ui.loading : ui.refresh}
             </button>
           </div>
         </div>
 
         {meds.length === 0 ? (
-          <div className="cc-small">No medications yet.</div>
+          <div className="cc-small">{ui.noMedications}</div>
         ) : (
           <div className="cc-stack">
             {meds.map((m) => (
@@ -800,6 +832,7 @@ function YesNoButtons({
   value: boolean;
   onChange: (value: boolean) => void;
 }) {
+  const { languageCode } = useUserLanguage();
   return (
     <div
       style={{
@@ -814,7 +847,7 @@ function YesNoButtons({
         onClick={() => onChange(true)}
         style={{ minHeight: 46 }}
       >
-        Yes
+        {languageCode === "it" ? "Sì" : "Yes"}
       </button>
       <button
         type="button"
@@ -822,7 +855,7 @@ function YesNoButtons({
         onClick={() => onChange(false)}
         style={{ minHeight: 46 }}
       >
-        No
+        {languageCode === "it" ? "No" : "No"}
       </button>
     </div>
   );
@@ -855,51 +888,52 @@ function AdvancePlanningEditor({
   onHasUnofficialRepresentativeChange: (value: boolean) => void;
   onUnofficialRepresentativeNameChange: (value: string) => void;
 }) {
+  const { languageCode } = useUserLanguage();
   return (
     <div className="cc-stack">
       <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-        <div className="cc-strong">Health and Wellbeing Power of Attorney</div>
+        <div className="cc-strong">{languageCode === "it" ? "Procura per salute e benessere" : "Health and Wellbeing Power of Attorney"}</div>
         <YesNoButtons value={hasHealthWellbeingLpa} onChange={onHasHealthWellbeingLpaChange} />
         {hasHealthWellbeingLpa ? (
           <div className="cc-field">
-            <div className="cc-label">Name of person who holds it</div>
+            <div className="cc-label">{languageCode === "it" ? "Nome della persona che la possiede" : "Name of person who holds it"}</div>
             <input
               className="cc-input"
               value={healthWellbeingLpaHolderName}
               onChange={(e) => onHealthWellbeingLpaHolderNameChange(e.target.value)}
-              placeholder="Enter full name"
+              placeholder={languageCode === "it" ? "Inserisci il nome completo" : "Enter full name"}
             />
           </div>
         ) : null}
       </div>
 
       <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-        <div className="cc-strong">RESPECT form or Emergency Care Plan</div>
+        <div className="cc-strong">{languageCode === "it" ? "Modulo RESPECT o piano di cura d'emergenza" : "RESPECT form or Emergency Care Plan"}</div>
         <YesNoButtons value={hasRespectForm} onChange={onHasRespectFormChange} />
         {hasRespectForm ? (
           <div className="cc-field">
-            <div className="cc-label">Name of person who holds it</div>
+            <div className="cc-label">{languageCode === "it" ? "Nome della persona che lo possiede" : "Name of person who holds it"}</div>
             <input
               className="cc-input"
               value={respectFormHolderName}
               onChange={(e) => onRespectFormHolderNameChange(e.target.value)}
-              placeholder="Enter full name"
+              placeholder={languageCode === "it" ? "Inserisci il nome completo" : "Enter full name"}
             />
           </div>
         ) : null}
       </div>
 
       <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-        <div className="cc-strong">Nominated Advocate</div>
+        <div className="cc-strong">{languageCode === "it" ? "Rappresentante nominato" : "Nominated Advocate"}</div>
         <YesNoButtons value={hasUnofficialRepresentative} onChange={onHasUnofficialRepresentativeChange} />
         {hasUnofficialRepresentative ? (
           <div className="cc-field">
-            <div className="cc-label">Name of nominated advocate</div>
+            <div className="cc-label">{languageCode === "it" ? "Nome del rappresentante nominato" : "Name of nominated advocate"}</div>
             <input
               className="cc-input"
               value={unofficialRepresentativeName}
               onChange={(e) => onUnofficialRepresentativeNameChange(e.target.value)}
-              placeholder="Enter full name"
+              placeholder={languageCode === "it" ? "Inserisci il nome completo" : "Enter full name"}
             />
           </div>
         ) : null}
@@ -923,9 +957,10 @@ function AdvancePlanningSummaryCard({
   hasUnofficialRepresentative: boolean;
   unofficialRepresentativeName: string | null;
 }) {
+  const { languageCode } = useUserLanguage();
   return (
     <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-      <div className="cc-small cc-strong">Advance planning</div>
+      <div className="cc-small cc-strong">{languageCode === "it" ? "Pianificazione anticipata" : "Advance planning"}</div>
 
       <AdvancePlanningSummaryRow
         label="Health and Wellbeing Power of Attorney"
@@ -957,15 +992,16 @@ function AdvancePlanningSummaryRow({
   enabled: boolean;
   name: string | null | undefined;
 }) {
+  const { languageCode } = useUserLanguage();
   return (
     <div className="cc-wrap">
       <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
         <div className="cc-small cc-strong">{label}</div>
-        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>{enabled ? "Yes" : "No"}</span>
+        <span className={`cc-pill ${enabled ? "cc-pill-primary" : ""}`}>{enabled ? (languageCode === "it" ? "Sì" : "Yes") : "No"}</span>
       </div>
       {enabled ? (
         <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
-          Holder: <b>{name?.trim() || "Not recorded"}</b>
+          {languageCode === "it" ? "Titolare" : "Holder"}: <b>{name?.trim() || (languageCode === "it" ? "Non registrato" : "Not recorded")}</b>
         </div>
       ) : null}
     </div>
@@ -997,6 +1033,7 @@ function ProfileFieldCard({
   onSummaryChange: (value: string) => void;
   onCopyToSummary: () => void;
 }) {
+  const { languageCode } = useUserLanguage();
   return (
     <div
       className="cc-panel-soft cc-stack"
@@ -1009,7 +1046,7 @@ function ProfileFieldCard({
       <div className="cc-row-between" style={{ alignItems: "center", gap: 12 }}>
         <div className="cc-strong">{title}</div>
         <button className="cc-btn" type="button" onClick={onCopyToSummary} disabled={disabled || copyBusy}>
-          {copyBusy ? "Copying..." : "Copy to English summary"}
+          {copyBusy ? (languageCode === "it" ? "Copia in corso..." : "Copying...") : languageCode === "it" ? "Copia nel riepilogo inglese" : "Copy to English summary"}
         </button>
       </div>
 
@@ -1042,6 +1079,7 @@ function MedicationEditor({
   busy: boolean;
   onSave: (patch: Partial<Pick<MedicationRow, "name" | "dosage" | "schedule_text" | "active">>) => void;
 }) {
+  const { languageCode } = useUserLanguage();
   const [name, setName] = useState(medication.name);
   const [dosage, setDosage] = useState(medication.dosage ?? "");
   const [scheduleText, setScheduleText] = useState(medication.schedule_text ?? "");
@@ -1062,10 +1100,10 @@ function MedicationEditor({
       <div className="cc-row-between" style={{ alignItems: "flex-start", gap: 12 }}>
         <div className="cc-wrap">
           <div className="cc-strong">{medication.name}</div>
-          <div className="cc-small cc-subtle">Created: {new Date(medication.created_at).toLocaleString()}</div>
+          <div className="cc-small cc-subtle">{languageCode === "it" ? "Creato" : "Created"}: {new Date(medication.created_at).toLocaleString()}</div>
         </div>
         <span className={`cc-pill ${medication.active ? "cc-pill-primary" : "cc-pill-danger"}`}>
-          {medication.active ? "Active" : "Inactive"}
+          {medication.active ? (languageCode === "it" ? "Attivo" : "Active") : languageCode === "it" ? "Inattivo" : "Inactive"}
         </span>
       </div>
 
@@ -1073,28 +1111,28 @@ function MedicationEditor({
 
       <div className="cc-grid-2">
         <div className="cc-field">
-          <div className="cc-label">Name</div>
+          <div className="cc-label">{languageCode === "it" ? "Nome" : "Name"}</div>
           <input className="cc-input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
 
         <div className="cc-field">
-          <div className="cc-label">Dosage</div>
+          <div className="cc-label">{languageCode === "it" ? "Dosaggio" : "Dosage"}</div>
           <input
             className="cc-input"
             value={dosage}
             onChange={(e) => setDosage(e.target.value)}
-            placeholder="Optional"
+            placeholder={languageCode === "it" ? "Facoltativo" : "Optional"}
           />
         </div>
       </div>
 
       <div className="cc-field">
-        <div className="cc-label">Schedule text</div>
+        <div className="cc-label">{languageCode === "it" ? "Testo programma" : "Schedule text"}</div>
         <input
           className="cc-input"
           value={scheduleText}
           onChange={(e) => setScheduleText(e.target.value)}
-          placeholder="Optional"
+          placeholder={languageCode === "it" ? "Facoltativo" : "Optional"}
         />
       </div>
 
@@ -1110,11 +1148,11 @@ function MedicationEditor({
             })
           }
         >
-              {busy ? "Saving..." : "Save changes"}
+              {busy ? (languageCode === "it" ? "Salvataggio..." : "Saving...") : languageCode === "it" ? "Salva modifiche" : "Save changes"}
         </button>
 
         <button className="cc-btn" disabled={busy} onClick={() => onSave({ active: !medication.active })}>
-          {busy ? "…" : medication.active ? "Deactivate" : "Reactivate"}
+          {busy ? "..." : medication.active ? (languageCode === "it" ? "Disattiva" : "Deactivate") : languageCode === "it" ? "Riattiva" : "Reactivate"}
         </button>
       </div>
     </div>
