@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import MobileShell from "@/app/components/MobileShell";
-import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 import { t } from "@/lib/i18n";
 
 type PatientRow = { id: string; display_name: string };
@@ -96,7 +95,7 @@ function SummaryBlock({
 
 export default function SummaryClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
-  const { languageCode } = useUserLanguage();
+  const languageCode = "en";
 
   const [msg, setMsg] = useState<string | null>(null);
   const [patient, setPatient] = useState<PatientRow | null>(null);
