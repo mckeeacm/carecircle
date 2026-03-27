@@ -315,11 +315,13 @@ export default function HubClient() {
                         display: "grid",
                         gridTemplateColumns: "1fr 1fr",
                         gap: 10,
+                        alignItems: "start",
                       }}
                     >
                       <Link
                         className={`cc-btn ${canToday ? "cc-btn-primary" : "cc-btn-disabled"}`}
                         href={`/app/patients/${m.patient_id}/today`}
+                        style={{ width: "100%", minHeight: 0 }}
                       >
                         Today
                       </Link>
@@ -327,6 +329,7 @@ export default function HubClient() {
                       <Link
                         className={`cc-btn ${canSummary ? "" : "cc-btn-disabled"}`}
                         href={`/app/patients/${m.patient_id}/summary`}
+                        style={{ width: "100%", minHeight: 0 }}
                       >
                         Summary
                       </Link>

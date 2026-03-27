@@ -267,6 +267,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                 type: "medication_reminder_group",
                 patientId,
                 groupId: group.id,
+                url: `/app/patients/${patientId}/today`,
               },
             },
           ];
@@ -712,49 +713,6 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       };
     });
   }, [logs, nowTick, reminderGroups, reminderMembers]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function autoMarkMissedOverdue() {
-      if (!vaultKey) return;
-      if (reminderStates.length === 0) return;
-
-      const overdue = reminderStates.filter(
-        (state) => state.state === "missed" && state.missingMedicationIds.length > 0
-      );
-
-      if (overdue.length === 0) return;
-
-      try {
-        for (const state of overdue) {
-          if (cancelled) return;
-
-          await createLogsForMedicationIds({
-            medicationIds: state.missingMedicationIds,
-            status: "missed",
-            noteText: `Auto-marked missed after the reminder window closed for ${state.group.name}.`,
-            systemNote: true,
-          });
-        }
-
-        if (!cancelled) {
-          await refresh();
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          setMsg(e?.message ?? "failed_to_auto_mark_missed");
-        }
-      }
-    }
-
-    autoMarkMissedOverdue();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reminderStates, vaultKey]);
 
   async function markReminderTaken(state: ReminderGroupState) {
     if (state.medicationIds.length === 0) return;

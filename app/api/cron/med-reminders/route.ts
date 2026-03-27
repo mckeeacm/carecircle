@@ -104,7 +104,7 @@ export async function GET(req: Request) {
       const payload = JSON.stringify({
         title: "CareCircle",
         body: `Medication reminder (${slot}): ${r.med_names}`,
-        url: `/app/today`,
+        url: `/app/patients/${r.patient_id}/today`,
         kind: "med_reminder",
         slot,
         patient_id: r.patient_id,

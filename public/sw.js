@@ -10,7 +10,7 @@ self.addEventListener("push", (event) => {
 
   const title = payload.title || "CareCircle";
   const body = payload.body || "You have an update.";
-  const url = payload.url || "/app/today";
+  const url = payload.url || "/app/hub";
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -24,7 +24,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = event.notification?.data?.url || "/app/today";
+  const url = event.notification?.data?.url || "/app/hub";
 
   event.waitUntil(
     (async () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
@@ -511,7 +512,21 @@ export default function Home() {
           >
             <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 560 }}>
               <div className="cc-stack">
-                <div className="cc-kicker">CareCircle</div>
+                <div className="cc-brand-lockup">
+                  <span className="cc-brand-mark" aria-hidden="true">
+                    <Image
+                      src="/images/carecircle-watermark.png"
+                      alt=""
+                      className="cc-brand-mark-img"
+                      width={34}
+                      height={34}
+                    />
+                  </span>
+                  <span className="cc-brand-copy">
+                    <span className="cc-kicker">CareBridge Studios</span>
+                    <span className="cc-brand-name">CareCircle</span>
+                  </span>
+                </div>
                 <h1 className="cc-h1" style={{ fontSize: 38 }}>
                   CareCircle
                 </h1>
@@ -537,7 +552,21 @@ export default function Home() {
             <div className="cc-card cc-card-pad" style={{ width: "100%", maxWidth: 560 }}>
               <div className="cc-stack" style={{ gap: 20 }}>
                 <div className="cc-stack" style={{ gap: 10 }}>
-                  <div className="cc-kicker">CareCircle</div>
+                  <div className="cc-brand-lockup">
+                    <span className="cc-brand-mark" aria-hidden="true">
+                      <Image
+                        src="/images/carecircle-watermark.png"
+                        alt=""
+                        className="cc-brand-mark-img"
+                        width={34}
+                        height={34}
+                      />
+                    </span>
+                    <span className="cc-brand-copy">
+                      <span className="cc-kicker">CareBridge Studios</span>
+                      <span className="cc-brand-name">CareCircle</span>
+                    </span>
+                  </div>
                   <h1 className="cc-h1" style={{ fontSize: 42 }}>
                     {title}
                   </h1>

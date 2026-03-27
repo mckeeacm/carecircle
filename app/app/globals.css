@@ -364,31 +364,60 @@ img {
   min-width: 0;
 }
 
-.cc-logo-chip,
-.cc-logo-chip:visited,
-.cc-logo-chip:hover,
-.cc-logo-chip:active,
-.cc-logo-chip:focus {
-  width: 48px;
-  height: 48px;
-  min-width: 48px;
-  border-radius: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.1) !important;
-  background: rgba(255, 255, 255, 0.82) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+.cc-mobile-title-wrap {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cc-brand-lockup,
+.cc-brand-lockup:visited,
+.cc-brand-lockup:hover,
+.cc-brand-lockup:active,
+.cc-brand-lockup:focus {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  max-width: 100%;
+  text-decoration: none;
+}
+
+.cc-brand-mark {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  background: rgba(255, 255, 255, 0.74) !important;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
-.cc-logo-chip-img {
-  width: 28px;
-  height: 28px;
+.cc-brand-mark-img {
+  width: 34px;
+  height: 34px;
   object-fit: contain;
   display: block;
+}
+
+.cc-brand-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cc-brand-name {
+  display: block;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.02em;
 }
 
 /* Bottom nav */
@@ -512,19 +541,28 @@ img {
     font-size: 10px;
   }
 
-  .cc-logo-chip,
-  .cc-logo-chip:visited,
-  .cc-logo-chip:hover,
-  .cc-logo-chip:active,
-  .cc-logo-chip:focus {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
+  .cc-brand-lockup,
+  .cc-brand-lockup:visited,
+  .cc-brand-lockup:hover,
+  .cc-brand-lockup:active,
+  .cc-brand-lockup:focus {
+    gap: 10px;
   }
 
-  .cc-logo-chip-img {
-    width: 26px;
-    height: 26px;
+  .cc-brand-mark {
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+    border-radius: 14px;
+  }
+
+  .cc-brand-mark-img {
+    width: 30px;
+    height: 30px;
+  }
+
+  .cc-brand-name {
+    font-size: 17px;
   }
 }
 
