@@ -220,30 +220,30 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
   const { loading, vaultKey, error, isController, initialiseIfController, refresh, forgetOnThisDevice } =
     usePatientVault();
 
-  if (loading) return <div style={{ padding: 16 }}>Loading encrypted vault…</div>;
+  if (loading) return <div style={{ padding: 16 }}>Checking secure access...</div>;
   if (vaultKey) return <>{children}</>;
 
   return (
     <div style={{ padding: 16, border: "1px solid #eee", borderRadius: 12 }}>
-      <h3 style={{ marginTop: 0 }}>Encrypted vault not available</h3>
+      <h3 style={{ marginTop: 0 }}>Secure access is not ready</h3>
 
       <div style={{ fontSize: 13, opacity: 0.85 }}>
         {error ? (
           <>
             <div>
-              <b>Reason:</b> {error}
+              <b>Status:</b> {error}
             </div>
             <div style={{ marginTop: 6 }}>
-              Most common causes:
+              Most common reasons:
               <ul style={{ margin: "6px 0 0 18px" }}>
-                <li>Vault not initialised for this patient yet</li>
-                <li>You don’t have a vault share</li>
-                <li>You haven’t enabled E2EE on this device</li>
+                <li>Secure access has not been set up for this person yet</li>
+                <li>This device has not been given access yet</li>
+                <li>This device still needs secure access setup</li>
               </ul>
             </div>
           </>
         ) : (
-          <div>No vault share found.</div>
+          <div>Secure access has not been connected to this device yet.</div>
         )}
       </div>
 
@@ -253,16 +253,16 @@ export function PatientVaultGate({ children }: { children: React.ReactNode }) {
         </button>
 
         <button onClick={forgetOnThisDevice} style={{ padding: "8px 10px", borderRadius: 10 }}>
-          Forget vault on this device
+          Reset secure access on this device
         </button>
 
         {isController ? (
           <button onClick={initialiseIfController} style={{ padding: "8px 10px", borderRadius: 10 }}>
-            Initialise vault (controller)
+            Set up secure access
           </button>
         ) : (
           <div style={{ fontSize: 13, opacity: 0.85, paddingTop: 6 }}>
-            Ask the patient controller to initialise the vault or share access.
+            Ask the circle owner to finish secure setup or share access to this device.
           </div>
         )}
       </div>

@@ -198,7 +198,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setThreadDecryptErrorById((prev) => ({
           ...prev,
-          [t.thread_id]: "Encrypted content on this thread could not be opened on this device.",
+          [t.thread_id]: "This conversation could not be opened on this device.",
         }));
       } else {
         setMsg(text || "failed_to_decrypt_thread");
@@ -232,7 +232,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setMessageDecryptErrorById((prev) => ({
           ...prev,
-          [m.id]: "This message could not be decrypted on this device.",
+          [m.id]: "This message could not be opened on this device.",
         }));
       } else {
         setMsg(text || "failed_to_decrypt_message");
@@ -305,7 +305,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (!activeThreadId) throw new Error("no_thread_selected");
       if (!draft.trim()) throw new Error("message_empty");
 
-      const bodyEnv = await vaultEncryptString({
+        const bodyEnv = await vaultEncryptString({
         vaultKey,
         plaintext: draft,
         aad: { table: "dm_messages", column: "body_encrypted", patient_id: patientId },
@@ -341,13 +341,13 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   function threadTitle(t: ThreadRow) {
     if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
-    if (t.title_encrypted) return "Encrypted thread";
+    if (t.title_encrypted) return "Protected conversation";
     return "Direct message";
   }
 
   function threadPreview(t: ThreadRow) {
     if (threadPreviewPlain[t.thread_id]) return threadPreviewPlain[t.thread_id];
-    if (t.last_message_preview_encrypted) return "Encrypted preview";
+    if (t.last_message_preview_encrypted) return "Protected preview";
     return "";
   }
 
@@ -371,9 +371,9 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
           <div className="cc-subtle">
-            Messages are encrypted and can’t be read or sent until secure access is available for this patient.
+            Private messages are not available yet for this person on this device.
           </div>
         </div>
       ) : null}
@@ -381,7 +381,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       <div className="cc-panel-blue">
         <div className="cc-strong">Private 1-to-1 direct messages</div>
         <div className="cc-subtle">
-          This page is for private messages between two circle members. Message bodies stay encrypted.
+          This page is for private messages between two circle members. Messages stay protected automatically.
         </div>
       </div>
 
@@ -390,7 +390,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
           <div className="cc-row-between">
             <h2 className="cc-h2">Threads</h2>
             <button className="cc-btn" onClick={refreshThreads} disabled={loading}>
-              {loading ? "Loading…" : "Refresh"}
+              {loading ? "Loading..." : "Refresh"}
             </button>
           </div>
 
@@ -405,7 +405,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
                 onChange={(e) => setSelectedRecipientId(e.target.value)}
                 disabled={!vaultKey}
               >
-                <option value="">Select a circle member…</option>
+                <option value="">Select a circle member...</option>
                 {members
                   .filter((m) => m.user_id !== currentUserId)
                   .map((m) => (
@@ -417,7 +417,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Thread title (encrypted)</div>
+              <div className="cc-label">Conversation title</div>
               <input
                 className="cc-input"
                 value={newThreadTitle}
@@ -494,7 +494,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
           ) : (
             <>
               {openingThread ? (
-                <div className="cc-panel">Loading messages…</div>
+                <div className="cc-panel">Loading messages...</div>
               ) : null}
 
               <div className="cc-stack">
@@ -519,21 +519,21 @@ export default function DMClient({ patientId }: { patientId: string }) {
                       >
                         <div className="cc-row-between">
                           <div className="cc-small cc-wrap">
-                            <b>{senderName}</b> • {new Date(m.sent_at).toLocaleString()}
+                            <b>{senderName}</b> - {new Date(m.sent_at).toLocaleString()}
                           </div>
                           <button
                             className="cc-btn"
                             onClick={() => decryptMessageIfNeeded(m)}
                             disabled={!vaultKey || !!plain}
                           >
-                            {plain ? "Decrypted" : "Decrypt"}
+                            {plain ? "Open" : "View"}
                           </button>
                         </div>
 
                         <div className="cc-spacer-12" />
 
                         <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-                          {plain ?? (decryptError ? decryptError : "Encrypted message")}
+                          {plain ?? (decryptError ? decryptError : "Protected message")}
                         </div>
                       </div>
                     );
@@ -543,7 +543,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
               <div className="cc-panel-green cc-stack">
                 <div className="cc-field">
-                  <div className="cc-label">New message (encrypted)</div>
+                  <div className="cc-label">New message</div>
                   <textarea
                     className="cc-textarea"
                     value={draft}
@@ -552,7 +552,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
                   />
                 </div>
                 <button className="cc-btn cc-btn-primary" onClick={sendMessage} disabled={!vaultKey || sending}>
-                  {sending ? "Sending…" : "Send"}
+                  {sending ? "Sending..." : "Send"}
                 </button>
               </div>
             </>

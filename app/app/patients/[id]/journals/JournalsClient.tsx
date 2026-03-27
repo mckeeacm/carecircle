@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -565,7 +565,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           Circle feed
         </button>
         <button className="cc-btn" onClick={refresh} disabled={loading}>
-          {loading ? "LoadingÂ" : "Refresh"}
+          {loading ? "Loading..." : "Refresh"}
         </button>
       </div>
 
@@ -573,7 +573,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">TodayÂ's trackers</h2>
+              <h2 className="cc-h2">Today's trackers</h2>
               <div className="cc-subtle">Mood, pain and sobriety are saved together as one tracker log.</div>
             </div>
           </div>
@@ -811,7 +811,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
         <div className="cc-row">
           <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || savingEntry}>
-            {savingEntry ? "SavingÂ" : entryActionLabel}
+            {savingEntry ? "Saving..." : entryActionLabel}
           </button>
         </div>
       </div>
@@ -912,10 +912,7 @@ function JournalCard({
           <div className="cc-strong">
             {parsedPayload?.title ?? typeLabel}
             <span className="cc-small">
-              {" "}
-              Â {new Date(row.created_at).toLocaleString()} Â {row.shared_to_circle ? "shared" : "private"}
-              {row.pain_level != null ? ` Â pain:${row.pain_level}` : ""}
-              {row.created_by === currentUserId ? " Â you" : ""}
+              {" "}\r\n              - {new Date(row.created_at).toLocaleString()} - {row.shared_to_circle ? "shared" : "private"}\r\n              {row.pain_level != null ? ` - pain:${row.pain_level}` : ""}\r\n              {row.created_by === currentUserId ? " - you" : ""}
             </span>
           </div>
         </div>
@@ -954,7 +951,7 @@ function JournalCard({
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
                 <b>Witnesses:</b>
                 {"\n"}
-                {parsedPayload.witnesses || "Â-"}
+                {parsedPayload.witnesses || "-"}
               </div>
               {parsedPayload.photoUploads.length > 0 ? (
                 <div className="cc-stack" style={{ gap: 8 }}>
@@ -967,7 +964,7 @@ function JournalCard({
                         onClick={() => openIncidentPhoto(photo)}
                         disabled={openingPhotoPath === photo.path}
                       >
-                        {openingPhotoPath === photo.path ? "OpeningÂ" : photo.name}
+                        {openingPhotoPath === photo.path ? "Opening..." : photo.name}
                       </button>
                     ))}
                   </div>
@@ -975,7 +972,7 @@ function JournalCard({
               ) : null}
             </div>
           ) : parsedPayload?.kind === "general_report" ? (
-            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "Â-"}</div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "-"}</div>
           ) : parsedPayload?.kind === "activity" ? (
             <div className="cc-stack" style={{ gap: 8 }}>
               <div className="cc-small"><b>Activity:</b> {parsedPayload.activityType}</div>
@@ -987,11 +984,13 @@ function JournalCard({
               </div>
             </div>
           ) : (
-            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{ptContent || "Â-"}</div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{ptContent || "-"}</div>
           )}
         </div>
       ) : null}
     </div>
   );
 }
+
+
 

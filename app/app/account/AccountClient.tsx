@@ -157,7 +157,7 @@ export default function AccountClient() {
       await registerMyPublicKey();
       setHasPublicKey(true);
       setMsg(
-        "E2EE enabled on this device. If you still can’t decrypt for a circle, ask the controller to open Vault setup again so you receive a vault share."
+        "Secure access is now set up on this device. If a circle still does not open here, ask the controller to reopen Secure access for that circle."
       );
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_register_public_key");
@@ -304,25 +304,24 @@ export default function AccountClient() {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">E2EE device setup</h2>
+              <h2 className="cc-h2">Secure access on this device</h2>
               <div className="cc-subtle">
-                Your account needs a public key before a controller can give this device vault access.
+                This device needs secure access before protected circle content can open here.
               </div>
             </div>
 
             <span className="cc-pill cc-pill-primary">
               {hasPublicKey === true
-                ? "Public key: OK"
+                ? "Secure access: ready"
                 : hasPublicKey === false
-                ? "Public key: missing"
-                : "Public key: unknown"}
+                ? "Secure access: not ready"
+                : "Secure access: checking"}
             </span>
           </div>
 
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
             <div className="cc-small cc-subtle">
-              If encrypted pages say the vault key is unavailable, enable E2EE here first, then reopen Vault setup for the
-              relevant circle.
+              Set this device up once, then reopen Secure access for any circle that still is not opening here.
             </div>
           </div>
 
@@ -332,7 +331,7 @@ export default function AccountClient() {
               onClick={enableE2EEOnThisDevice}
               disabled={e2eeBusy || hasPublicKey === true}
             >
-              {hasPublicKey === true ? "Enabled" : e2eeBusy ? "Enabling…" : "Enable E2EE on this device"}
+              {hasPublicKey === true ? "Ready" : e2eeBusy ? "Setting up..." : "Set up secure access on this device"}
             </button>
 
             <button className="cc-btn" onClick={loadAccount}>
@@ -342,8 +341,8 @@ export default function AccountClient() {
 
           {hasPublicKey === false ? (
             <div className="cc-small cc-subtle">
-              After enabling E2EE, ask the circle controller to reopen <b>Vault setup</b> so you receive a row in{" "}
-              <code>patient_vault_shares</code>.
+              If circle content still stays locked after setup, ask the circle controller to reopen <b>Secure access</b> for
+              you.
             </div>
           ) : null}
         </div>
@@ -375,7 +374,7 @@ export default function AccountClient() {
         <div className="cc-row-between">
           <div>
             <h2 className="cc-h2">Your circles</h2>
-            <div className="cc-subtle">Manage your display name, vault access, and circle tools.</div>
+            <div className="cc-subtle">Manage your display name, secure access, and circle tools.</div>
           </div>
         </div>
 
@@ -399,7 +398,7 @@ export default function AccountClient() {
                       <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
                       <div className="cc-small cc-subtle">
                         Role: <b>{m.role}</b>
-                        {m.is_controller ? " • Controller" : ""}
+                        {m.is_controller ? " - Controller" : ""}
                       </div>
                     </div>
 
@@ -407,7 +406,7 @@ export default function AccountClient() {
                       {pidOk ? (
                         <>
                           <Link className="cc-btn" href={`/app/patients/${m.patient_id}/vault-init`}>
-                            Vault setup
+                            Secure access
                           </Link>
                           <Link className="cc-btn" href={`/app/account/permissions?pid=${m.patient_id}`}>
                             Permissions
@@ -436,14 +435,14 @@ export default function AccountClient() {
                         onClick={() => saveNickname(m.patient_id)}
                         disabled={nicknameBusy}
                       >
-                        {nicknameBusy ? "Saving…" : "Save"}
+                        {nicknameBusy ? "Saving..." : "Save"}
                       </button>
                     </div>
                   </div>
 
                   <div className="cc-small cc-subtle">
-                    Open Vault setup to load your wrapped key locally on this device. Your nickname is reflected in member and
-                    permissions lists.
+                    Open Secure access for a circle if its protected content is not visible yet. Your nickname is reflected in
+                    member and permissions lists.
                   </div>
                 </div>
               );
@@ -489,7 +488,7 @@ export default function AccountClient() {
                       <div className="cc-strong">{p?.display_name ?? "Circle"}</div>
                       <div className="cc-small cc-subtle">
                         Controller invite tools
-                        {!pidOk ? " • invalid patient id" : ""}
+                          {!pidOk ? " - invalid patient id" : ""}
                       </div>
                     </div>
 

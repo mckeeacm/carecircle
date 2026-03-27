@@ -386,8 +386,8 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
-          <div className="cc-subtle">You can’t decrypt or save encrypted profile fields (E2EE).</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
+          <div className="cc-subtle">Detailed profile fields are not available on this device yet.</div>
         </div>
       ) : null}
 
@@ -396,7 +396,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
           <div>
             <h2 className="cc-h2">Profile details</h2>
             <div className="cc-subtle">
-              Keep the encrypted profile and clinician summary aligned without double entry.
+              Keep detailed notes and the clinician summary aligned without double entry.
             </div>
           </div>
 
@@ -405,10 +405,10 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
               Copy all to summary
             </button>
             <button className="cc-btn" onClick={loadProfile} disabled={loading}>
-              {loading ? "Loading…" : "Refresh"}
+              {loading ? "Loading..." : "Refresh"}
             </button>
             <button className="cc-btn cc-btn-primary" onClick={saveProfile} disabled={!vaultKey || savingProfile}>
-              {savingProfile ? "Saving…" : "Save profile"}
+              {savingProfile ? "Saving..." : "Save profile"}
             </button>
           </div>
         </div>
@@ -448,14 +448,14 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Encrypted profile notes</h2>
-              <div className="cc-subtle">Detailed circle data stored using E2EE.</div>
+              <h2 className="cc-h2">Detailed profile notes</h2>
+              <div className="cc-subtle">Sensitive circle information that opens when secure access is ready.</div>
             </div>
           </div>
 
           <ProfileFieldCard
             title="Communication notes"
-            encryptedLabel="Communication notes (E2EE)"
+            encryptedLabel="Communication notes (protected)"
             summaryLabel="Communication notes summary"
             encryptedValue={communicationNotes}
             summaryValue={commSummary}
@@ -467,7 +467,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <ProfileFieldCard
             title="Allergies"
-            encryptedLabel="Allergies (E2EE)"
+            encryptedLabel="Allergies (protected)"
             summaryLabel="Allergies summary"
             encryptedValue={allergies}
             summaryValue={allergiesSummary}
@@ -479,7 +479,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <ProfileFieldCard
             title="Safety notes"
-            encryptedLabel="Safety notes (E2EE)"
+            encryptedLabel="Safety notes (protected)"
             summaryLabel="Safety notes summary"
             encryptedValue={safetyNotes}
             summaryValue={safetySummary}
@@ -492,7 +492,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <ProfileFieldCard
             title="Diagnoses"
-            encryptedLabel="Diagnoses (E2EE)"
+            encryptedLabel="Diagnoses (protected)"
             summaryLabel="Diagnoses summary"
             encryptedValue={diagnoses}
             summaryValue={diagnosesSummary}
@@ -504,7 +504,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <ProfileFieldCard
             title="Languages spoken"
-            encryptedLabel="Languages spoken (E2EE)"
+            encryptedLabel="Languages spoken (protected)"
             summaryLabel="Languages spoken summary"
             encryptedValue={languagesSpoken}
             summaryValue={languagesSummary}
@@ -520,7 +520,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
             <div>
               <h2 className="cc-h2">Clinician summary preview</h2>
               <div className="cc-subtle">
-                These summary fields are readable to permitted members without vault unlock.
+                These summary fields are readable to permitted members even if detailed notes are not open here yet.
               </div>
             </div>
             <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
@@ -634,10 +634,10 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
 
           <div className="cc-row">
             <button className="cc-btn cc-btn-secondary" onClick={createMedication} disabled={medsSaving === "create"}>
-              {medsSaving === "create" ? "Adding…" : "Add medication"}
+              {medsSaving === "create" ? "Adding..." : "Add medication"}
             </button>
             <button className="cc-btn" onClick={loadMedications} disabled={medsLoading}>
-              {medsLoading ? "Loading…" : "Refresh"}
+              {medsLoading ? "Loading..." : "Refresh"}
             </button>
           </div>
         </div>
@@ -971,7 +971,7 @@ function MedicationEditor({
             })
           }
         >
-          {busy ? "Saving…" : "Save changes"}
+              {busy ? "Saving..." : "Save changes"}
         </button>
 
         <button className="cc-btn" disabled={busy} onClick={() => onSave({ active: !medication.active })}>
