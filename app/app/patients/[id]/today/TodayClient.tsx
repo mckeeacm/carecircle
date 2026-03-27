@@ -760,9 +760,9 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
         <div className="cc-card cc-card-pad">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Medication reminders</h2>
+            <h2 className="cc-h2">{t(languageCode, "today.medication_reminders")}</h2>
             <Link className="cc-btn" href={`/app/patients/${patientId}/medication-logs`}>
-              Open
+              {t(languageCode, "today.open")}
             </Link>
           </div>
           <div className="cc-spacer-12" />

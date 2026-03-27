@@ -1099,7 +1099,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                           state.state === "taken"
                         }
                       >
-                        {busy ? "Savingâ€¦" : state.state === "taken" ? ui.takenAction : "Taken"}
+                        {busy ? ui.reminderSaving : ui.takenAction}
                       </button>
                     </div>
                   </div>
