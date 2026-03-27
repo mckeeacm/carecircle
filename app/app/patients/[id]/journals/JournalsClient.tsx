@@ -547,7 +547,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
           <div className="cc-strong">Vault key not available on this device</div>
-          <div className="cc-subtle">You can’t decrypt or save encrypted content.</div>
+          <div className="cc-subtle">You canÃ‚'t decrypt or save encrypted content.</div>
         </div>
       ) : null}
 
@@ -565,7 +565,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           Circle feed
         </button>
         <button className="cc-btn" onClick={refresh} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
+          {loading ? "LoadingÃ‚Â…" : "Refresh"}
         </button>
       </div>
 
@@ -573,7 +573,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Today’s trackers</h2>
+              <h2 className="cc-h2">TodayÃ‚'s trackers</h2>
               <div className="cc-subtle">Mood, pain and sobriety are saved together as one tracker log.</div>
             </div>
           </div>
@@ -811,7 +811,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
         <div className="cc-row">
           <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || savingEntry}>
-            {savingEntry ? "Saving…" : entryActionLabel}
+            {savingEntry ? "SavingÃ‚Â…" : entryActionLabel}
           </button>
         </div>
       </div>
@@ -913,9 +913,9 @@ function JournalCard({
             {parsedPayload?.title ?? typeLabel}
             <span className="cc-small">
               {" "}
-              • {new Date(row.created_at).toLocaleString()} • {row.shared_to_circle ? "shared" : "private"}
-              {row.pain_level != null ? ` • pain:${row.pain_level}` : ""}
-              {row.created_by === currentUserId ? " • you" : ""}
+              Ã‚Â• {new Date(row.created_at).toLocaleString()} Ã‚Â• {row.shared_to_circle ? "shared" : "private"}
+              {row.pain_level != null ? ` Ã‚Â• pain:${row.pain_level}` : ""}
+              {row.created_by === currentUserId ? " Ã‚Â• you" : ""}
             </span>
           </div>
         </div>
@@ -954,7 +954,7 @@ function JournalCard({
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
                 <b>Witnesses:</b>
                 {"\n"}
-                {parsedPayload.witnesses || "—"}
+                {parsedPayload.witnesses || "Ã‚-"}
               </div>
               {parsedPayload.photoUploads.length > 0 ? (
                 <div className="cc-stack" style={{ gap: 8 }}>
@@ -967,7 +967,7 @@ function JournalCard({
                         onClick={() => openIncidentPhoto(photo)}
                         disabled={openingPhotoPath === photo.path}
                       >
-                        {openingPhotoPath === photo.path ? "Opening…" : photo.name}
+                        {openingPhotoPath === photo.path ? "OpeningÃ‚Â…" : photo.name}
                       </button>
                     ))}
                   </div>
@@ -975,7 +975,7 @@ function JournalCard({
               ) : null}
             </div>
           ) : parsedPayload?.kind === "general_report" ? (
-            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "—"}</div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "Ã‚-"}</div>
           ) : parsedPayload?.kind === "activity" ? (
             <div className="cc-stack" style={{ gap: 8 }}>
               <div className="cc-small"><b>Activity:</b> {parsedPayload.activityType}</div>
@@ -987,7 +987,7 @@ function JournalCard({
               </div>
             </div>
           ) : (
-            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{ptContent || "—"}</div>
+            <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{ptContent || "Ã‚-"}</div>
           )}
         </div>
       ) : null}
