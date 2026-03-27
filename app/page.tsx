@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 import {
   DEFAULT_ACCOUNT_LANGUAGE_CODE,
   SUPPORTED_ACCOUNT_LANGUAGES,
@@ -12,6 +13,7 @@ import {
   normaliseLanguageCode,
   storeLanguageCode,
 } from "@/lib/languages";
+import { t } from "@/lib/i18n";
 
 type Mode = "login" | "signup" | "reset";
 
@@ -44,6 +46,7 @@ function readInviteFromLocation(): string {
 export default function Home() {
   const router = useRouter();
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const { languageCode } = useUserLanguage();
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -194,14 +197,18 @@ export default function Home() {
   }
 
   const title =
-    mode === "signup" ? "Create your account" : mode === "reset" ? "Reset password" : "Sign in";
+    mode === "signup"
+      ? t(languageCode, "screen.create_account")
+      : mode === "reset"
+      ? t(languageCode, "screen.reset_password")
+      : t(languageCode, "screen.sign_in");
 
   const subtitle =
     mode === "signup"
-      ? "Set up your CareCircle account to continue."
+      ? t(languageCode, "login.signup_subtitle")
       : mode === "reset"
-      ? "We'll send you a password reset email."
-      : "Shared meds, appointments, and care notes - without confusion.";
+      ? t(languageCode, "login.reset_subtitle")
+      : t(languageCode, "login.signin_subtitle");
 
   return (
     <>
@@ -567,7 +574,7 @@ export default function Home() {
                   CareCircle
                 </h1>
                 <div className="cc-subtle" style={{ fontSize: 18 }}>
-                  Checking your sign-in...
+                  {t(languageCode, "login.checking_sign_in")}
                 </div>
               </div>
             </div>
@@ -625,7 +632,7 @@ export default function Home() {
                 <form onSubmit={handleSubmit} className="cc-stack">
                   {mode !== "reset" ? (
                     <div className="cc-field">
-                      <div className="cc-label">Your language</div>
+                      <div className="cc-label">{t(languageCode, "common.your_language")}</div>
                       <select
                         className="cc-select"
                         value={preferredLanguageCode}
@@ -643,7 +650,7 @@ export default function Home() {
                   ) : null}
 
                   <div className="cc-field">
-                    <div className="cc-label">Email</div>
+                    <div className="cc-label">{t(languageCode, "common.email")}</div>
                     <input
                       className="cc-input"
                       type="email"
@@ -661,7 +668,7 @@ export default function Home() {
 
                   {mode !== "reset" ? (
                     <div className="cc-field">
-                      <div className="cc-label">Password</div>
+                      <div className="cc-label">{t(languageCode, "common.password")}</div>
                       <input
                         className="cc-input"
                         type="password"
@@ -679,7 +686,7 @@ export default function Home() {
 
                   {mode === "signup" ? (
                     <div className="cc-field">
-                      <div className="cc-label">Confirm password</div>
+                      <div className="cc-label">{t(languageCode, "common.confirm_password")}</div>
                       <input
                         className="cc-input"
                         type="password"
@@ -705,14 +712,14 @@ export default function Home() {
                       {mode === "signup"
                         ? loading
                           ? "Creating account..."
-                          : "Create account"
+                          : t(languageCode, "common.create_account")
                         : mode === "reset"
                         ? loading
                           ? "Sending..."
-                          : "Send reset email"
+                          : t(languageCode, "common.send_reset_email")
                         : loading
                         ? "Signing in..."
-                        : "Sign in"}
+                        : t(languageCode, "common.sign_in")}
                     </button>
                   </div>
                 </form>
@@ -729,7 +736,7 @@ export default function Home() {
                       }}
                       style={{ justifyContent: "flex-start", minHeight: 48 }}
                     >
-                      Back to sign in
+                      {t(languageCode, "common.back_to_sign_in")}
                     </button>
                   ) : (
                     <>
@@ -743,7 +750,7 @@ export default function Home() {
                         }}
                         style={{ justifyContent: "flex-start", minHeight: 48 }}
                       >
-                        Forgot password?
+                        {t(languageCode, "common.forgot_password")}
                       </button>
 
                       <button
@@ -756,7 +763,7 @@ export default function Home() {
                         }}
                         style={{ justifyContent: "flex-start", minHeight: 48 }}
                       >
-                        Create a new account
+                        {t(languageCode, "common.create_new_account")}
                       </button>
                     </>
                   )}

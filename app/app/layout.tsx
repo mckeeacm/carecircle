@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import NotificationRouteHandler from "@/app/components/NotificationRouteHandler";
 import UserLanguageProvider from "@/app/components/UserLanguageProvider";
-import AutoTranslateApp from "@/app/components/AutoTranslateApp";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -10,7 +9,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <UserLanguageProvider>
           <NotificationRouteHandler />
-          <AutoTranslateApp />
           {children}
         </UserLanguageProvider>
       </body>

@@ -1,9 +1,11 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { t } from "@/lib/i18n";
 
 type Membership = {
   patient_id: string;
@@ -59,6 +61,7 @@ function effectiveAllowed(
 
 export default function HubClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const { languageCode } = useUserLanguage();
 
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
@@ -142,8 +145,8 @@ export default function HubClient() {
 
   return (
     <MobileShell
-      title="Hub"
-      subtitle="All circles you’re a member of"
+      title={t(languageCode, "screen.hub")}
+      subtitle={t(languageCode, "hub.subtitle")}
       hideBottomNav
       rightSlot={
         <Link className="cc-btn" href="/app/account">
@@ -153,19 +156,19 @@ export default function HubClient() {
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{t(languageCode, "common.error")}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {loading ? (
         <div className="cc-card cc-card-pad">
-          <div className="cc-subtle">Loading circles…</div>
+          <div className="cc-subtle">{t(languageCode, "hub.loading_circles")}</div>
         </div>
       ) : memberships.length === 0 ? (
         <div className="cc-card cc-card-pad">
-          <div className="cc-strong">No circles yet</div>
-          <div className="cc-subtle">You aren’t a member of any patient circles.</div>
+          <div className="cc-strong">{t(languageCode, "hub.no_circles_title")}</div>
+          <div className="cc-subtle">{t(languageCode, "hub.no_circles_subtitle")}</div>
         </div>
       ) : (
         <div className="cc-stack">
@@ -251,7 +254,7 @@ export default function HubClient() {
                             marginBottom: 4,
                           }}
                         >
-                          {p?.display_name ?? "My Circle"}
+                          {p?.display_name ?? t(languageCode, "hub.my_circle")}
                         </div>
 
                         <div className="cc-small cc-subtle" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -286,7 +289,7 @@ export default function HubClient() {
                         transition: "transform 0.18s ease",
                       }}
                     >
-                      ›
+                      â€º
                     </div>
                   </div>
                 </button>
@@ -344,3 +347,4 @@ export default function HubClient() {
     </MobileShell>
   );
 }
+

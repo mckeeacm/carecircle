@@ -61,6 +61,11 @@ export default function UserLanguageProvider({ children }: { children: React.Rea
     };
   }, [supabase]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.lang = languageCode;
+  }, [languageCode]);
+
   const value = useMemo<UserLanguageContextValue>(
     () => ({
       languageCode,

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { t } from "@/lib/i18n";
 
 type BottomNavProps = {
   active: "today" | "journal" | "messages" | "profile" | "more";
@@ -51,6 +53,7 @@ function NavItem({
 }
 
 export default function BottomNav({ active, patientId }: BottomNavProps) {
+  const { languageCode } = useUserLanguage();
   const todayHref = patientId ? `/app/patients/${patientId}/today` : undefined;
   const journalHref = patientId ? `/app/patients/${patientId}/journals` : undefined;
   const messagesHref = patientId ? `/app/patients/${patientId}/dm` : undefined;
@@ -90,14 +93,14 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
 
   return (
     <nav className="cc-bottom-nav" aria-label="Primary navigation">
-      <NavItem href={todayHref} active={active === "today"} disabled={!patientId} icon="T" label="Today" />
+      <NavItem href={todayHref} active={active === "today"} disabled={!patientId} icon="T" label={t(languageCode, "nav.today")} />
 
       <NavItem
         href={journalHref}
         active={active === "journal"}
         disabled={!patientId}
         icon="J"
-        label="Journal"
+        label={t(languageCode, "nav.journal")}
       />
 
       <NavItem
@@ -105,7 +108,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
         active={active === "messages"}
         disabled={!patientId}
         icon="M"
-        label="Messages"
+        label={t(languageCode, "nav.messages")}
       />
 
       <NavItem
@@ -113,7 +116,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
         active={active === "profile"}
         disabled={!patientId}
         icon="P"
-        label="Profile"
+        label={t(languageCode, "nav.profile")}
       />
 
       <div
@@ -135,7 +138,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
           }}
         >
           <span className="cc-bottom-nav-icon">+</span>
-          <span className="cc-bottom-nav-label">More</span>
+          <span className="cc-bottom-nav-label">{t(languageCode, "nav.more")}</span>
         </button>
 
         {moreOpen ? (
@@ -162,7 +165,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
               onClick={() => setMoreOpen(false)}
               style={{ justifyContent: "flex-start", minHeight: 46 }}
             >
-              Account
+              {t(languageCode, "nav.account")}
             </Link>
 
             <Link
@@ -172,7 +175,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
               onClick={() => setMoreOpen(false)}
               style={{ justifyContent: "flex-start", minHeight: 46 }}
             >
-              Permissions
+              {t(languageCode, "nav.permissions")}
             </Link>
 
             {vaultHref ? (
@@ -183,7 +186,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
                 onClick={() => setMoreOpen(false)}
                 style={{ justifyContent: "flex-start", minHeight: 46 }}
               >
-                Vault
+                {t(languageCode, "nav.secure_access")}
               </Link>
             ) : (
               <button
@@ -193,7 +196,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
                 aria-disabled="true"
                 style={{ justifyContent: "flex-start", minHeight: 46, cursor: "not-allowed" }}
               >
-                Vault
+                {t(languageCode, "nav.secure_access")}
               </button>
             )}
           </div>

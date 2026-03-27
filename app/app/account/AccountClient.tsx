@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { registerMyPublicKey } from "@/lib/e2ee/registerPublicKey";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 import {
   DEFAULT_ACCOUNT_LANGUAGE_CODE,
   SUPPORTED_ACCOUNT_LANGUAGES,
@@ -12,6 +13,7 @@ import {
   normaliseLanguageCode,
   storeLanguageCode,
 } from "@/lib/languages";
+import { t } from "@/lib/i18n";
 
 type Membership = {
   patient_id: string;
@@ -29,6 +31,7 @@ function isUuid(s: unknown): s is string {
 
 export default function AccountClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const { languageCode } = useUserLanguage();
 
   const [email, setEmail] = useState<string>("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -321,17 +324,17 @@ export default function AccountClient() {
 
   return (
     <MobileShell
-      title="Account"
+      title={t(languageCode, "screen.account")}
       subtitle={email || "Your CareCircle account"}
       rightSlot={
         <Link className="cc-btn" href="/app/hub">
-          Hub
+          {t(languageCode, "screen.hub")}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Message</div>
+          <div className="cc-status-error-title">{t(languageCode, "common.message")}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
@@ -339,17 +342,16 @@ export default function AccountClient() {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Your language</h2>
+            <h2 className="cc-h2">{t(languageCode, "account.language_title")}</h2>
             <div className="cc-subtle">
-              This is saved only to your account. It changes your own experience and does not change the language chosen by
-              other carers, family members, or professionals.
+              {t(languageCode, "account.language_subtitle")}
             </div>
           </div>
         </div>
 
         <div className="cc-row" style={{ alignItems: "flex-end" }}>
           <div className="cc-field" style={{ minWidth: 260, flex: "1 1 260px" }}>
-            <div className="cc-label">Preferred language</div>
+            <div className="cc-label">{t(languageCode, "common.your_language")}</div>
             <select
               className="cc-select"
               value={preferredLanguageCode}
@@ -365,12 +367,12 @@ export default function AccountClient() {
           </div>
 
           <button className="cc-btn cc-btn-primary" onClick={savePreferredLanguage} disabled={languageBusy}>
-            {languageBusy ? "Saving..." : "Save language"}
+            {languageBusy ? t(languageCode, "common.loading") : t(languageCode, "account.save_language")}
           </button>
         </div>
 
         <div className="cc-small cc-subtle">
-          Each person keeps their own language setting. Clinician summaries still stay in English for everyone.
+          {t(languageCode, "account.language_note")}
         </div>
       </div>
 
