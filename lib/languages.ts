@@ -25,6 +25,7 @@ export const SUPPORTED_ACCOUNT_LANGUAGES: SupportedLanguage[] = [
 ];
 
 export const DEFAULT_ACCOUNT_LANGUAGE_CODE = "en";
+export const LOCAL_LANGUAGE_KEY = "carecircle:preferred-language-code:v1";
 
 export function getSupportedLanguage(code: string | null | undefined) {
   return SUPPORTED_ACCOUNT_LANGUAGES.find((language) => language.code === code) ?? null;
@@ -48,4 +49,22 @@ export function detectPreferredLanguageCode(locale: string | null | undefined) {
 
   const base = clean.split("-")[0] ?? "";
   return normaliseLanguageCode(base);
+}
+
+export function readStoredLanguageCode() {
+  if (typeof window === "undefined") return DEFAULT_ACCOUNT_LANGUAGE_CODE;
+  try {
+    return normaliseLanguageCode(window.localStorage.getItem(LOCAL_LANGUAGE_KEY));
+  } catch {
+    return DEFAULT_ACCOUNT_LANGUAGE_CODE;
+  }
+}
+
+export function storeLanguageCode(code: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const next = normaliseLanguageCode(code);
+    window.localStorage.setItem(LOCAL_LANGUAGE_KEY, next);
+    window.dispatchEvent(new CustomEvent("carecircle:language-changed", { detail: { code: next } }));
+  } catch {}
 }

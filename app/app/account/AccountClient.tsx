@@ -10,6 +10,7 @@ import {
   SUPPORTED_ACCOUNT_LANGUAGES,
   getLanguageLabel,
   normaliseLanguageCode,
+  storeLanguageCode,
 } from "@/lib/languages";
 
 type Membership = {
@@ -221,6 +222,7 @@ export default function AccountClient() {
       if (error) throw error;
 
       setPreferredLanguageCode(languageCode);
+      storeLanguageCode(languageCode);
       setMsg(`Your language is now set to ${getLanguageLabel(languageCode)}.`);
       await loadAccount();
     } catch (e: any) {

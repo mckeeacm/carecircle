@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -90,13 +90,13 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
 
   return (
     <nav className="cc-bottom-nav" aria-label="Primary navigation">
-      <NavItem href={todayHref} active={active === "today"} disabled={!patientId} icon="◷" label="Today" />
+      <NavItem href={todayHref} active={active === "today"} disabled={!patientId} icon="T" label="Today" />
 
       <NavItem
         href={journalHref}
         active={active === "journal"}
         disabled={!patientId}
-        icon="✎"
+        icon="J"
         label="Journal"
       />
 
@@ -104,7 +104,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
         href={messagesHref}
         active={active === "messages"}
         disabled={!patientId}
-        icon="✉"
+        icon="M"
         label="Messages"
       />
 
@@ -112,7 +112,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
         href={profileHref}
         active={active === "profile"}
         disabled={!patientId}
-        icon="☰"
+        icon="P"
         label="Profile"
       />
 
@@ -134,7 +134,7 @@ export default function BottomNav({ active, patientId }: BottomNavProps) {
             width: "100%",
           }}
         >
-          <span className="cc-bottom-nav-icon">⋯</span>
+          <span className="cc-bottom-nav-icon">+</span>
           <span className="cc-bottom-nav-label">More</span>
         </button>
 

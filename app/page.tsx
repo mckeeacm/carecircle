@@ -10,6 +10,7 @@ import {
   detectPreferredLanguageCode,
   getLanguageLabel,
   normaliseLanguageCode,
+  storeLanguageCode,
 } from "@/lib/languages";
 
 type Mode = "login" | "signup" | "reset";
@@ -77,7 +78,9 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setPreferredLanguageCode(detectPreferredLanguageCode(window.navigator.language));
+    const next = detectPreferredLanguageCode(window.navigator.language);
+    setPreferredLanguageCode(next);
+    storeLanguageCode(next);
   }, []);
 
   useEffect(() => {
@@ -157,6 +160,8 @@ export default function Home() {
 
         if (error) throw error;
 
+        storeLanguageCode(preferredLanguageCode);
+
         routeAfterAuth();
         return;
       }
@@ -177,6 +182,8 @@ export default function Home() {
       });
 
       if (preferenceError) throw preferenceError;
+
+      storeLanguageCode(languageCode);
 
       routeAfterAuth();
     } catch (e: any) {
