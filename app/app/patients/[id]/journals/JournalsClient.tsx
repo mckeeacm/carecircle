@@ -113,6 +113,69 @@ const ACTIVITY_OPTIONS = [
   "Wound Care",
 ] as const;
 
+function moodLabel(mood: string, languageCode: string) {
+  if (languageCode !== "it") return mood;
+  if (mood === "Sad") return "Triste";
+  if (mood === "Low") return "Giù";
+  if (mood === "Okay") return "Così così";
+  if (mood === "Good") return "Bene";
+  if (mood === "Great") return "Ottimo";
+  return mood;
+}
+
+function journalTypeOptionLabel(kind: JournalEntryKind, languageCode: string) {
+  if (languageCode !== "it") {
+    return JOURNAL_TITLE_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
+  }
+  if (kind === "incident_report") return "Rapporto di incidente";
+  if (kind === "general_report") return "Rapporto generale";
+  return "Attività";
+}
+
+function incidentTypeLabel(type: string, languageCode: string) {
+  if (languageCode !== "it") return type;
+  if (type === "Behaviour incident") return "Incidente comportamentale";
+  if (type === "Fall") return "Caduta";
+  if (type === "Medication issue") return "Problema con i farmaci";
+  if (type === "Injury") return "Lesione";
+  if (type === "Safeguarding concern") return "Problema di tutela";
+  if (type === "Health deterioration") return "Peggioramento della salute";
+  if (type === "Missing person / absconding") return "Persona scomparsa / allontanamento";
+  if (type === "Property damage") return "Danni alla proprietà";
+  if (type === "Visitor issue") return "Problema con un visitatore";
+  if (type === "Other") return "Altro";
+  return type;
+}
+
+function activityLabel(activity: string, languageCode: string) {
+  if (languageCode !== "it") return activity;
+  if (activity === "Bathing") return "Bagno";
+  if (activity === "Bed Rail Check") return "Controllo sponde del letto";
+  if (activity === "Behaviour") return "Comportamento";
+  if (activity === "Blood Glucose") return "Glicemia";
+  if (activity === "Bowel Movement") return "Evacuazione";
+  if (activity === "Enteral Feeding") return "Alimentazione enterale";
+  if (activity === "Falls") return "Cadute";
+  if (activity === "Fluid Output") return "Output dei liquidi";
+  if (activity === "Fluids Drink") return "Liquidi bevuti";
+  if (activity === "Infection") return "Infezione";
+  if (activity === "Night Checks") return "Controlli notturni";
+  if (activity === "Nurse Notes") return "Note infermieristiche";
+  if (activity === "Nutrition (Meal)") return "Nutrizione (pasto)";
+  if (activity === "Sanitary Change") return "Cambio igienico";
+  if (activity === "Medication Given") return "Farmaco somministrato";
+  if (activity === "Medication Refused") return "Farmaco rifiutato";
+  if (activity === "Mobility") return "Mobilità";
+  if (activity === "Observation") return "Osservazione";
+  if (activity === "Personal Care") return "Cura personale";
+  if (activity === "Pressure Area Care") return "Cura delle zone da pressione";
+  if (activity === "Sleep Check") return "Controllo del sonno";
+  if (activity === "Toileting") return "Uso dei servizi";
+  if (activity === "Vitals") return "Parametri vitali";
+  if (activity === "Wound Care") return "Cura della ferita";
+  return activity;
+}
+
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 }
@@ -153,6 +216,16 @@ function makeJournalTypeLabel(journalType: string) {
   if (journalType === "general_report") return "General Report";
   if (journalType === "activity") return "Activity";
   if (journalType === "journal") return "Journal";
+  return journalType;
+}
+
+function makeJournalTypeLabelForUi(journalType: string, languageCode: string) {
+  if (languageCode !== "it") return makeJournalTypeLabel(journalType);
+  if (journalType === "tracker") return "Registro tracker";
+  if (journalType === "incident_report") return "Rapporto di incidente";
+  if (journalType === "general_report") return "Rapporto generale";
+  if (journalType === "activity") return "Attività";
+  if (journalType === "journal") return "Diario";
   return journalType;
 }
 
@@ -523,9 +596,15 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
   const entryActionLabel =
     journalTitle === "incident_report"
-      ? "Save incident report"
+      ? languageCode === "it"
+        ? "Salva rapporto di incidente"
+        : "Save incident report"
       : journalTitle === "general_report"
-      ? "Save general report"
+      ? languageCode === "it"
+        ? "Salva rapporto generale"
+        : "Save general report"
+      : languageCode === "it"
+      ? "Salva attività"
       : "Save activity";
 
   const ui =
@@ -557,6 +636,27 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           recentEntries: "Voci recenti",
           noSharedEntries: "Ancora nessuna voce condivisa.",
           noEntries: "Ancora nessuna voce.",
+          date: "Data",
+          time: "Ora",
+          location: "Luogo",
+          locationPlaceholder: "ad es. camera da letto, sala da pranzo, giardino",
+          incidentType: "Tipo di incidente",
+          description: "Descrizione",
+          descriptionPlaceholder: "Breve riassunto di ciò che è successo.",
+          personsInvolved: "Dettagli completi delle persone coinvolte",
+          personsInvolvedPlaceholder: "Nomi, ruoli, ferite, azioni intraprese.",
+          witnesses: "Testimoni",
+          witnessesPlaceholder: "Testimoni, dichiarazioni, oppure indica nessuno.",
+          uploadPhotos: "Carica foto",
+          photoSelected: "foto selezionata.",
+          photosSelected: "foto selezionate.",
+          generalReport: "Rapporto generale",
+          generalReportPlaceholder: "Scrivi qui il rapporto completo.",
+          activity: "Attività",
+          incidentReported: "Incidente segnalato?",
+          optionalNote: "Nota facoltativa",
+          optionalNotePlaceholder: "Aggiungi una breve nota se necessario.",
+          saving: "Salvataggio...",
         }
       : {
           title: "Journal",
@@ -585,6 +685,27 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           recentEntries: "Recent entries",
           noSharedEntries: "No shared entries yet.",
           noEntries: "No entries yet.",
+          date: "Date",
+          time: "Time",
+          location: "Location",
+          locationPlaceholder: "e.g. Bedroom, dining room, garden",
+          incidentType: "Type of incident",
+          description: "Description",
+          descriptionPlaceholder: "Short summary of what happened.",
+          personsInvolved: "Full details of the persons involved",
+          personsInvolvedPlaceholder: "Names, roles, injuries, actions taken.",
+          witnesses: "Witnesses",
+          witnessesPlaceholder: "Witnesses, statements, or note none.",
+          uploadPhotos: "Upload photos",
+          photoSelected: "photo selected.",
+          photosSelected: "photos selected.",
+          generalReport: "General report",
+          generalReportPlaceholder: "Write the full report here.",
+          activity: "Activity",
+          incidentReported: "Incident reported?",
+          optionalNote: "Optional note",
+          optionalNotePlaceholder: "Add a short note if needed.",
+          saving: "Saving...",
         };
 
   return (
@@ -649,7 +770,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
                     className={`cc-btn ${trackerMood === mood ? "cc-btn-primary" : ""}`}
                     onClick={() => setTrackerMood(mood)}
                   >
-                    {mood}
+                    {moodLabel(mood, languageCode)}
                   </button>
                 ))}
               </div>
@@ -720,7 +841,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             >
               {JOURNAL_TITLE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {journalTypeOptionLabel(option.value, languageCode)}
                 </option>
               ))}
             </select>
@@ -742,33 +863,33 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           <div className="cc-stack">
             <div className="cc-grid-2">
               <div className="cc-field">
-                <div className="cc-label">Date</div>
+                <div className="cc-label">{ui.date}</div>
                 <input className="cc-input" type="date" value={incidentDate} onChange={(e) => setIncidentDate(e.target.value)} />
               </div>
 
               <div className="cc-field">
-                <div className="cc-label">Time</div>
+                <div className="cc-label">{ui.time}</div>
                 <input className="cc-input" type="time" value={incidentTime} onChange={(e) => setIncidentTime(e.target.value)} />
               </div>
             </div>
 
             <div className="cc-grid-2">
               <div className="cc-field">
-                <div className="cc-label">Location</div>
+                <div className="cc-label">{ui.location}</div>
                 <input
                   className="cc-input"
                   value={incidentLocation}
                   onChange={(e) => setIncidentLocation(e.target.value)}
-                  placeholder="e.g. Bedroom, dining room, garden"
+                  placeholder={ui.locationPlaceholder}
                 />
               </div>
 
               <div className="cc-field">
-                <div className="cc-label">Type of incident</div>
+                <div className="cc-label">{ui.incidentType}</div>
                 <select className="cc-select" value={incidentType} onChange={(e) => setIncidentType(e.target.value)}>
                   {INCIDENT_TYPE_OPTIONS.map((option) => (
                     <option key={option} value={option}>
-                      {option}
+                      {incidentTypeLabel(option, languageCode)}
                     </option>
                   ))}
                 </select>
@@ -776,41 +897,41 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Description</div>
+              <div className="cc-label">{ui.description}</div>
               <textarea
                 className="cc-textarea"
                 value={incidentDescription}
                 onChange={(e) => setIncidentDescription(e.target.value)}
-                placeholder="Short summary of what happened."
+                placeholder={ui.descriptionPlaceholder}
               />
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Full details of the persons involved</div>
+              <div className="cc-label">{ui.personsInvolved}</div>
               <textarea
                 className="cc-textarea"
                 value={incidentPersonsInvolved}
                 onChange={(e) => setIncidentPersonsInvolved(e.target.value)}
-                placeholder="Names, roles, injuries, actions taken."
+                placeholder={ui.personsInvolvedPlaceholder}
               />
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Witnesses</div>
+              <div className="cc-label">{ui.witnesses}</div>
               <textarea
                 className="cc-textarea"
                 value={incidentWitnesses}
                 onChange={(e) => setIncidentWitnesses(e.target.value)}
-                placeholder="Witnesses, statements, or note none."
+                placeholder={ui.witnessesPlaceholder}
               />
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Upload photos</div>
+              <div className="cc-label">{ui.uploadPhotos}</div>
               <input className="cc-input" type="file" multiple accept="image/*" onChange={handleIncidentFileChange} />
               {incidentPhotoFiles.length > 0 ? (
                 <div className="cc-small cc-subtle">
-                  {incidentPhotoFiles.length} photo{incidentPhotoFiles.length === 1 ? "" : "s"} selected.
+                  {incidentPhotoFiles.length} {incidentPhotoFiles.length === 1 ? ui.photoSelected : ui.photosSelected}
                 </div>
               ) : null}
             </div>
@@ -819,12 +940,12 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
         {journalTitle === "general_report" ? (
           <div className="cc-field">
-            <div className="cc-label">General report</div>
+            <div className="cc-label">{ui.generalReport}</div>
             <textarea
               className="cc-textarea"
               value={generalReportContent}
               onChange={(e) => setGeneralReportContent(e.target.value)}
-              placeholder="Write the full report here."
+              placeholder={ui.generalReportPlaceholder}
             />
           </div>
         ) : null}
@@ -832,7 +953,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         {journalTitle === "activity" ? (
           <div className="cc-stack">
             <div className="cc-field">
-              <div className="cc-label">Activity</div>
+              <div className="cc-label">{ui.activity}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                 {ACTIVITY_OPTIONS.map((activity) => (
                   <button
@@ -845,7 +966,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
                     }}
                     style={{ justifyContent: "flex-start", minHeight: 52 }}
                   >
-                    {activity}
+                    {activityLabel(activity, languageCode)}
                   </button>
                 ))}
               </div>
@@ -854,17 +975,17 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             {needsIncidentCheckbox(selectedActivityType) ? (
               <label className="cc-check">
                 <input type="checkbox" checked={activityIncidentReported} onChange={(e) => setActivityIncidentReported(e.target.checked)} />
-                <span className="cc-label">Incident reported?</span>
+                <span className="cc-label">{ui.incidentReported}</span>
               </label>
             ) : null}
 
             <div className="cc-field">
-              <div className="cc-label">Optional note</div>
+              <div className="cc-label">{ui.optionalNote}</div>
               <textarea
                 className="cc-textarea"
                 value={activityNote}
                 onChange={(e) => setActivityNote(e.target.value)}
-                placeholder="Add a short note if needed."
+                placeholder={ui.optionalNotePlaceholder}
               />
             </div>
           </div>
@@ -872,7 +993,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
         <div className="cc-row">
           <button className="cc-btn cc-btn-primary" onClick={createEntry} disabled={!vaultKey || savingEntry}>
-            {savingEntry ? "Saving..." : entryActionLabel}
+            {savingEntry ? ui.saving : entryActionLabel}
           </button>
         </div>
       </div>
@@ -907,6 +1028,7 @@ function JournalCard({
   currentUserId: string;
 }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
+  const { languageCode } = useUserLanguage();
   const [open, setOpen] = useState(false);
   const [ptMood, setPtMood] = useState("");
   const [ptContent, setPtContent] = useState("");
@@ -964,22 +1086,25 @@ function JournalCard({
   }
 
   const parsedPayload = ptContent ? parseStructuredPayload(ptContent) : null;
-  const typeLabel = makeJournalTypeLabel(row.journal_type);
+  const typeLabel = makeJournalTypeLabelForUi(row.journal_type, languageCode);
+  const cardTitle = parsedPayload
+    ? journalTypeOptionLabel(parsedPayload.kind, languageCode)
+    : typeLabel;
 
   return (
     <div className="cc-panel-soft">
       <div className="cc-row-between">
         <div className="cc-wrap">
           <div className="cc-strong">
-            {parsedPayload?.title ?? typeLabel}
+            {cardTitle}
             <span className="cc-small">
-              {" "}\r\n              - {new Date(row.created_at).toLocaleString()} - {row.shared_to_circle ? "shared" : "private"}\r\n              {row.pain_level != null ? ` - pain:${row.pain_level}` : ""}\r\n              {row.created_by === currentUserId ? " - you" : ""}
+              {" "}\r\n              - {new Date(row.created_at).toLocaleString()} - {row.shared_to_circle ? (languageCode === "it" ? "condiviso" : "shared") : languageCode === "it" ? "privato" : "private"}\r\n              {row.pain_level != null ? ` - ${languageCode === "it" ? "dolore" : "pain"}:${row.pain_level}` : ""}\r\n              {row.created_by === currentUserId ? ` - ${languageCode === "it" ? "tu" : "you"}` : ""}
             </span>
           </div>
         </div>
 
         <button className="cc-btn" onClick={toggle}>
-          {open ? "Hide" : "Open"}
+          {open ? (languageCode === "it" ? "Nascondi" : "Hide") : languageCode === "it" ? "Apri" : "Open"}
         </button>
       </div>
 
@@ -988,7 +1113,7 @@ function JournalCard({
           {ptMood ? (
             <>
               <div className="cc-small">
-                <b>Mood:</b> {ptMood}
+                <b>{languageCode === "it" ? "Umore" : "Mood"}:</b> {moodLabel(ptMood, languageCode)}
               </div>
               <div className="cc-spacer-12" />
             </>
@@ -996,27 +1121,27 @@ function JournalCard({
 
           {parsedPayload?.kind === "incident_report" ? (
             <div className="cc-stack" style={{ gap: 10 }}>
-              <div className="cc-small"><b>Date:</b> {parsedPayload.date} {parsedPayload.time}</div>
-              <div className="cc-small"><b>Location:</b> {parsedPayload.location}</div>
-              <div className="cc-small"><b>Type of incident:</b> {parsedPayload.incidentType}</div>
+              <div className="cc-small"><b>{languageCode === "it" ? "Data" : "Date"}:</b> {parsedPayload.date} {parsedPayload.time}</div>
+              <div className="cc-small"><b>{languageCode === "it" ? "Luogo" : "Location"}:</b> {parsedPayload.location}</div>
+              <div className="cc-small"><b>{languageCode === "it" ? "Tipo di incidente" : "Type of incident"}:</b> {incidentTypeLabel(parsedPayload.incidentType, languageCode)}</div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>Description:</b>
+                <b>{languageCode === "it" ? "Descrizione" : "Description"}:</b>
                 {"\n"}
                 {parsedPayload.description}
               </div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>Persons involved:</b>
+                <b>{languageCode === "it" ? "Persone coinvolte" : "Persons involved"}:</b>
                 {"\n"}
                 {parsedPayload.personsInvolved}
               </div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>Witnesses:</b>
+                <b>{languageCode === "it" ? "Testimoni" : "Witnesses"}:</b>
                 {"\n"}
                 {parsedPayload.witnesses || "-"}
               </div>
               {parsedPayload.photoUploads.length > 0 ? (
                 <div className="cc-stack" style={{ gap: 8 }}>
-                  <div className="cc-small"><b>Photos:</b></div>
+                  <div className="cc-small"><b>{languageCode === "it" ? "Foto" : "Photos"}:</b></div>
                   <div className="cc-row">
                     {parsedPayload.photoUploads.map((photo) => (
                       <button
@@ -1025,7 +1150,7 @@ function JournalCard({
                         onClick={() => openIncidentPhoto(photo)}
                         disabled={openingPhotoPath === photo.path}
                       >
-                        {openingPhotoPath === photo.path ? "Opening..." : photo.name}
+                        {openingPhotoPath === photo.path ? (languageCode === "it" ? "Apertura..." : "Opening...") : photo.name}
                       </button>
                     ))}
                   </div>
@@ -1036,12 +1161,12 @@ function JournalCard({
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "-"}</div>
           ) : parsedPayload?.kind === "activity" ? (
             <div className="cc-stack" style={{ gap: 8 }}>
-              <div className="cc-small"><b>Activity:</b> {parsedPayload.activityType}</div>
+              <div className="cc-small"><b>{languageCode === "it" ? "Attività" : "Activity"}:</b> {activityLabel(parsedPayload.activityType, languageCode)}</div>
               {needsIncidentCheckbox(parsedPayload.activityType) ? (
-                <div className="cc-small"><b>Incident reported:</b> {parsedPayload.incidentReported ? "Yes" : "No"}</div>
+                <div className="cc-small"><b>{languageCode === "it" ? "Incidente segnalato" : "Incident reported"}:</b> {parsedPayload.incidentReported ? (languageCode === "it" ? "Sì" : "Yes") : "No"}</div>
               ) : null}
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                {parsedPayload.note || "No additional note."}
+                {parsedPayload.note || (languageCode === "it" ? "Nessuna nota aggiuntiva." : "No additional note.")}
               </div>
             </div>
           ) : (

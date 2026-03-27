@@ -76,7 +76,9 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [selectedRecipientId, setSelectedRecipientId] = useState<string>("");
-  const [newThreadTitle, setNewThreadTitle] = useState<string>("Direct message");
+  const [newThreadTitle, setNewThreadTitle] = useState<string>(
+    languageCode === "it" ? "Messaggio diretto" : "Direct message"
+  );
   const [draft, setDraft] = useState<string>("");
 
   async function refreshThreads() {
@@ -161,6 +163,19 @@ export default function DMClient({ patientId }: { patientId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
+  useEffect(() => {
+    setNewThreadTitle((current) => {
+      if (
+        current === "Direct message" ||
+        current === "Messaggio diretto" ||
+        !current.trim()
+      ) {
+        return languageCode === "it" ? "Messaggio diretto" : "Direct message";
+      }
+      return current;
+    });
+  }, [languageCode]);
+
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
 
@@ -200,7 +215,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setThreadDecryptErrorById((prev) => ({
           ...prev,
-          [t.thread_id]: "This conversation could not be opened on this device.",
+          [t.thread_id]:
+            languageCode === "it"
+              ? "Questa conversazione non può essere aperta su questo dispositivo."
+              : "This conversation could not be opened on this device.",
         }));
       } else {
         setMsg(text || "failed_to_decrypt_thread");
@@ -234,7 +252,10 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setMessageDecryptErrorById((prev) => ({
           ...prev,
-          [m.id]: "This message could not be opened on this device.",
+          [m.id]:
+            languageCode === "it"
+              ? "Questo messaggio non può essere aperto su questo dispositivo."
+              : "This message could not be opened on this device.",
         }));
       } else {
         setMsg(text || "failed_to_decrypt_message");
@@ -277,7 +298,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
       const titleEnv = await vaultEncryptString({
         vaultKey,
-        plaintext: newThreadTitle.trim() || "Direct message",
+        plaintext: newThreadTitle.trim() || (languageCode === "it" ? "Messaggio diretto" : "Direct message"),
         aad: { table: "dm_threads", column: "title_encrypted", patient_id: patientId },
       });
 
@@ -332,7 +353,22 @@ export default function DMClient({ patientId }: { patientId: string }) {
   }
 
   function memberLabel(m: Member) {
-    return `${m.nickname ?? m.user_id} (${m.role ?? "member"}${m.is_controller ? ", controller" : ""})`;
+    const role =
+      m.role === "patient"
+        ? languageCode === "it"
+          ? "paziente"
+          : "patient"
+        : m.role === "carer"
+        ? languageCode === "it"
+          ? "assistente"
+          : "carer"
+        : m.role === "family"
+        ? languageCode === "it"
+          ? "famiglia"
+          : "family"
+        : m.role ?? (languageCode === "it" ? "membro" : "member");
+    const controller = m.is_controller ? (languageCode === "it" ? ", referente" : ", controller") : "";
+    return `${m.nickname ?? m.user_id} (${role}${controller})`;
   }
 
   function nicknameForUser(userId: string) {
@@ -343,13 +379,13 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   function threadTitle(t: ThreadRow) {
     if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
-    if (t.title_encrypted) return "Protected conversation";
-    return "Direct message";
+    if (t.title_encrypted) return languageCode === "it" ? "Conversazione protetta" : "Protected conversation";
+    return languageCode === "it" ? "Messaggio diretto" : "Direct message";
   }
 
   function threadPreview(t: ThreadRow) {
     if (threadPreviewPlain[t.thread_id]) return threadPreviewPlain[t.thread_id];
-    if (t.last_message_preview_encrypted) return "Protected preview";
+    if (t.last_message_preview_encrypted) return languageCode === "it" ? "Anteprima protetta" : "Protected preview";
     return "";
   }
 
@@ -380,6 +416,14 @@ export default function DMClient({ patientId }: { patientId: string }) {
           selectThread: "Seleziona o apri una conversazione diretta.",
           loadingMessages: "Caricamento messaggi...",
           noMessages: "Ancora nessun messaggio.",
+          helper: "Questo crea una conversazione privata tra te e un altro membro del cerchio.",
+          open: "Apri",
+          view: "Visualizza",
+          protectedMessage: "Messaggio protetto",
+          newMessage: "Nuovo messaggio",
+          messagePlaceholder: "Scrivi qui il tuo messaggio...",
+          sending: "Invio...",
+          send: "Invia",
         }
       : {
           title: "Direct messages",
@@ -406,6 +450,14 @@ export default function DMClient({ patientId }: { patientId: string }) {
           selectThread: "Select or open a direct message thread.",
           loadingMessages: "Loading messages...",
           noMessages: "No messages yet.",
+          helper: "This creates a private thread between you and one other circle member.",
+          open: "Open",
+          view: "View",
+          protectedMessage: "Protected message",
+          newMessage: "New message",
+          messagePlaceholder: "Write your message here...",
+          sending: "Sending...",
+          send: "Send",
         };
 
   return (
@@ -484,7 +536,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
             </button>
 
             <div className="cc-small cc-subtle">
-              This creates a private thread between you and one other circle member.
+              {ui.helper}
             </div>
           </div>
 
@@ -579,14 +631,14 @@ export default function DMClient({ patientId }: { patientId: string }) {
                             onClick={() => decryptMessageIfNeeded(m)}
                             disabled={!vaultKey || !!plain}
                           >
-                            {plain ? "Open" : "View"}
+                            {plain ? ui.open : ui.view}
                           </button>
                         </div>
 
                         <div className="cc-spacer-12" />
 
                         <div className="cc-wrap" style={{ whiteSpace: "pre-wrap" }}>
-                          {plain ?? (decryptError ? decryptError : "Protected message")}
+                          {plain ?? (decryptError ? decryptError : ui.protectedMessage)}
                         </div>
                       </div>
                     );
@@ -596,16 +648,17 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
               <div className="cc-panel-green cc-stack">
                 <div className="cc-field">
-                  <div className="cc-label">New message</div>
+                  <div className="cc-label">{ui.newMessage}</div>
                   <textarea
                     className="cc-textarea"
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
+                    placeholder={ui.messagePlaceholder}
                     disabled={!vaultKey || sending}
                   />
                 </div>
                 <button className="cc-btn cc-btn-primary" onClick={sendMessage} disabled={!vaultKey || sending}>
-                  {sending ? "Sending..." : "Send"}
+                  {sending ? ui.sending : ui.send}
                 </button>
               </div>
             </>
