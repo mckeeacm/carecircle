@@ -148,6 +148,7 @@ export default function HubClient() {
       title={t(languageCode, "screen.hub")}
       subtitle={t(languageCode, "hub.subtitle")}
       hideBottomNav
+      compactHeader
       rightSlot={
         <Link className="cc-btn" href="/app/account">
           {t(languageCode, "nav.account")}
@@ -293,7 +294,7 @@ export default function HubClient() {
                         transition: "transform 0.18s ease",
                       }}
                     >
-                      >
+                      {"›"}
                     </div>
                   </div>
                 </button>

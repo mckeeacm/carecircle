@@ -13,6 +13,7 @@ type MobileShellProps = {
   children: ReactNode;
   hideBottomNav?: boolean;
   rightSlot?: ReactNode;
+  compactHeader?: boolean;
 };
 
 function sectionForPath(pathname: string): "today" | "journal" | "messages" | "profile" | "more" {
@@ -44,6 +45,7 @@ export default function MobileShell({
   children,
   hideBottomNav = false,
   rightSlot,
+  compactHeader = false,
 }: MobileShellProps) {
   const pathname = usePathname();
   const active = sectionForPath(pathname);
@@ -54,7 +56,9 @@ export default function MobileShell({
         <div
           className={`cc-app-shell-inner ${hideBottomNav ? "cc-app-shell-inner-no-nav" : ""}`}
         >
-          <header className="cc-mobile-header cc-card">
+          <header
+            className={`cc-mobile-header cc-card ${compactHeader ? "cc-mobile-header-compact" : ""}`}
+          >
             <div className="cc-mobile-header-main">
               <div className="cc-mobile-header-row">
                 <div className="cc-mobile-title-wrap">

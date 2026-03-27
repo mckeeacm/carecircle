@@ -339,6 +339,10 @@ img {
   padding: 14px 16px;
 }
 
+.cc-mobile-header-compact {
+  padding: 10px 14px;
+}
+
 .cc-mobile-header-main {
   display: grid;
   gap: 10px;
@@ -368,6 +372,56 @@ img {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.cc-mobile-header-compact .cc-mobile-header-main {
+  gap: 6px;
+}
+
+.cc-mobile-header-compact .cc-mobile-header-row {
+  gap: 10px;
+  align-items: center;
+}
+
+.cc-mobile-header-compact .cc-mobile-title-wrap {
+  gap: 6px;
+}
+
+.cc-mobile-header-compact .cc-mobile-title {
+  font-size: 24px;
+  line-height: 1.04;
+}
+
+.cc-mobile-header-compact .cc-subtle {
+  font-size: 12px;
+}
+
+.cc-mobile-header-compact .cc-brand-lockup,
+.cc-mobile-header-compact .cc-brand-lockup:visited,
+.cc-mobile-header-compact .cc-brand-lockup:hover,
+.cc-mobile-header-compact .cc-brand-lockup:active,
+.cc-mobile-header-compact .cc-brand-lockup:focus {
+  gap: 10px;
+}
+
+.cc-mobile-header-compact .cc-brand-mark {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 14px;
+}
+
+.cc-mobile-header-compact .cc-brand-mark-img {
+  width: 28px;
+  height: 28px;
+}
+
+.cc-mobile-header-compact .cc-kicker {
+  font-size: 11px;
+}
+
+.cc-mobile-header-compact .cc-brand-name {
+  font-size: 16px;
 }
 
 .cc-brand-lockup,
