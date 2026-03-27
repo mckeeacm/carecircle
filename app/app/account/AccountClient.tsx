@@ -355,7 +355,11 @@ export default function AccountClient() {
             <select
               className="cc-select"
               value={preferredLanguageCode}
-              onChange={(e) => setPreferredLanguageCode(normaliseLanguageCode(e.target.value))}
+              onChange={(e) => {
+                const next = normaliseLanguageCode(e.target.value);
+                setPreferredLanguageCode(next);
+                storeLanguageCode(next);
+              }}
               disabled={languageBusy}
             >
               {SUPPORTED_ACCOUNT_LANGUAGES.map((language) => (

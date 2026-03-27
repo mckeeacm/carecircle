@@ -636,7 +636,11 @@ export default function Home() {
                       <select
                         className="cc-select"
                         value={preferredLanguageCode}
-                        onChange={(e) => setPreferredLanguageCode(normaliseLanguageCode(e.target.value))}
+                        onChange={(e) => {
+                          const next = normaliseLanguageCode(e.target.value);
+                          setPreferredLanguageCode(next);
+                          storeLanguageCode(next);
+                        }}
                         disabled={loading}
                         style={{ minHeight: 54, fontSize: 17 }}
                       >
