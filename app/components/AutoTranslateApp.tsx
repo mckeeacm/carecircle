@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getLanguageLabel, LOCAL_LANGUAGE_KEY } from "@/lib/languages";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
@@ -29,6 +29,7 @@ const SELECTOR = [
 
 type TranslationResponse = {
   translations?: string[];
+  error?: string;
 };
 
 function cacheKey(languageCode: string, text: string) {
@@ -62,6 +63,7 @@ function shouldTranslateElement(element: Element) {
 export default function AutoTranslateApp() {
   const { languageCode } = useUserLanguage();
   const pendingRef = useRef(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
 
   useEffect(() => {
     const root = document.body;
@@ -72,6 +74,7 @@ export default function AutoTranslateApp() {
       pendingRef.current = true;
 
       try {
+        setTranslationError(null);
         const elements = Array.from(root.querySelectorAll(SELECTOR)).filter(shouldTranslateElement) as HTMLElement[];
         const seen = new Map<string, string>();
 
@@ -105,7 +108,15 @@ export default function AutoTranslateApp() {
         });
 
         const json = (await res.json().catch(() => null)) as TranslationResponse | null;
-        if (!res.ok || !json?.translations?.length) return;
+        if (!res.ok) {
+          setTranslationError(json?.error ?? "UI translation failed.");
+          return;
+        }
+
+        if (!json?.translations?.length) {
+          setTranslationError("No translated interface text was returned.");
+          return;
+        }
 
         const translations = json.translations;
         uncachedTexts.forEach((text, index) => {
@@ -119,8 +130,8 @@ export default function AutoTranslateApp() {
           const cached = window.localStorage.getItem(cacheKey(languageCode, sourceText));
           if (cached) element.textContent = cached;
         }
-      } catch {
-        // best-effort UI translation only
+      } catch (error: any) {
+        setTranslationError(error?.message ?? "UI translation failed.");
       } finally {
         pendingRef.current = false;
       }
@@ -146,5 +157,26 @@ export default function AutoTranslateApp() {
     return () => observer.disconnect();
   }, [languageCode]);
 
-  return null;
+  if (languageCode === "en" || !translationError) return null;
+
+  return (
+    <div
+      className="cc-card"
+      style={{
+        position: "fixed",
+        left: 12,
+        right: 12,
+        bottom: 90,
+        zIndex: 120,
+        padding: 12,
+        borderRadius: 16,
+        border: "1px solid rgba(220, 38, 38, 0.18)",
+        background: "rgba(255, 245, 245, 0.96)",
+      }}
+    >
+      <div className="cc-small" style={{ color: "#991b1b", opacity: 1 }}>
+        Translation is not working yet for this language on this device: {translationError}
+      </div>
+    </div>
+  );
 }

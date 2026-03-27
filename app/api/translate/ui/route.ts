@@ -6,6 +6,33 @@ type RequestBody = {
   texts?: string[];
 };
 
+function extractJsonObject(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  return trimmed;
+}
+
+function collectOutputText(json: any) {
+  if (typeof json?.output_text === "string" && json.output_text.trim()) {
+    return json.output_text.trim();
+  }
+
+  const parts = Array.isArray(json?.output) ? json.output : [];
+  const chunks: string[] = [];
+
+  for (const part of parts) {
+    const content = Array.isArray(part?.content) ? part.content : [];
+    for (const item of content) {
+      const text = item?.text;
+      if (typeof text === "string" && text.trim()) chunks.push(text.trim());
+    }
+  }
+
+  return chunks.join("\n").trim();
+}
+
 export async function POST(req: Request) {
   try {
     const openAiKey = process.env.OPENAI_API_KEY;
@@ -36,8 +63,7 @@ export async function POST(req: Request) {
         authorization: `Bearer ${openAiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-5-mini",
-        reasoning: { effort: "minimal" },
+        model: "gpt-4.1-mini",
         input: [
           {
             role: "system",
@@ -73,12 +99,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const outputText = String(json?.output_text ?? "").trim();
-    const parsed = JSON.parse(outputText) as { translations?: string[] };
+    const outputText = collectOutputText(json);
+    if (!outputText) {
+      return NextResponse.json({ error: "ui_translation_empty_response" }, { status: 500 });
+    }
+
+    const parsed = JSON.parse(extractJsonObject(outputText)) as { translations?: string[] };
     const translations = Array.isArray(parsed.translations) ? parsed.translations : [];
 
     if (translations.length !== sourceTexts.length) {
-      return NextResponse.json({ error: "ui_translation_mismatch" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "ui_translation_mismatch",
+          expected: sourceTexts.length,
+          received: translations.length,
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ translations });
