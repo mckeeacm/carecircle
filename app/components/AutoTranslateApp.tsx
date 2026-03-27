@@ -10,6 +10,9 @@ const SELECTOR = [
   "h1",
   "h2",
   "h3",
+  "p",
+  "span",
+  "div",
   "label",
   "option",
   ".cc-label",
@@ -17,6 +20,9 @@ const SELECTOR = [
   ".cc-h2",
   ".cc-mobile-title",
   ".cc-bottom-nav-label",
+  ".cc-subtle",
+  ".cc-small",
+  ".cc-strong",
   ".cc-kicker",
   ".cc-brand-name",
 ].join(", ");
@@ -37,11 +43,16 @@ function shouldTranslateElement(element: Element) {
   if (!(element instanceof HTMLElement)) return false;
   if (element.dataset.noTranslate === "true") return false;
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return false;
+  if (element.classList.contains("cc-bottom-nav-icon")) return false;
+  if (element.classList.contains("cc-brand-mark")) return false;
+  if (element.closest("svg")) return false;
+  if (element.tagName === "CODE") return false;
   if (element.children.length > 0 && !(element instanceof HTMLOptionElement)) return false;
 
   const text = normaliseText(element.textContent ?? "");
   if (!text) return false;
   if (text.length > 160) return false;
+  if (text === "CareCircle" || text === "CareBridge Studios") return false;
   if (/^[0-9\-/:., ]+$/.test(text)) return false;
   if (text.includes("@")) return false;
   if (/^[0-9a-f]{8}-/i.test(text)) return false;

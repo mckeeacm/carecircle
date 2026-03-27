@@ -223,7 +223,7 @@ export default function AccountClient() {
 
       setPreferredLanguageCode(languageCode);
       storeLanguageCode(languageCode);
-      setMsg(`Your language is now set to ${getLanguageLabel(languageCode)}.`);
+      setMsg(`Your language is now set to ${getLanguageLabel(languageCode)}. Translated labels may take a moment to update.`);
       await loadAccount();
     } catch (e: any) {
       setMsg(e?.message ?? "failed_to_save_language");
