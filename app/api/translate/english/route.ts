@@ -7,6 +7,28 @@ function extractBearerToken(req: Request) {
   return authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
 }
 
+function extractResponseText(payload: any): string {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  const outputs = Array.isArray(payload?.output) ? payload.output : [];
+
+  for (const item of outputs) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        return part.text.trim();
+      }
+      if (typeof part?.text?.value === "string" && part.text.value.trim()) {
+        return part.text.value.trim();
+      }
+    }
+  }
+
+  return "";
+}
+
 export async function POST(req: Request) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -103,7 +125,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const outputText = typeof json?.output_text === "string" ? json.output_text.trim() : "";
+    const outputText = extractResponseText(json);
     if (!outputText) {
       return NextResponse.json({ error: "translation_empty_response" }, { status: 500 });
     }
