@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 import { getSodium } from "@/lib/e2ee/sodium";
 import {
   getOrCreateDeviceKeypair,
@@ -193,6 +194,7 @@ export default function OnboardingClient() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const router = useRouter();
   const sp = useSearchParams();
+  const { languageCode } = useUserLanguage();
 
   const inviteTokenFromUrl = (sp.get("invite") ?? "").trim();
   const preferredPatientIdFromUrl = (sp.get("pid") ?? "").trim();
@@ -234,6 +236,202 @@ export default function OnboardingClient() {
   const selectedMembership = memberships.find((m) => m.patient_id === selectedPatientId) ?? null;
   const selectedPatient = selectedPatientId ? patientsById[selectedPatientId] : null;
   const isController = safeBool(selectedMembership?.is_controller);
+  const ui =
+    languageCode === "it"
+      ? {
+          welcome: "Benvenuto",
+          loadingSetup: "Caricamento della configurazione...",
+          loadingOnboarding: "Caricamento onboarding...",
+          intro: "Configuriamo correttamente questo dispositivo per il tuo cerchio.",
+          hub: "Hub",
+          message: "Messaggio",
+          setupSteps: "Passaggi di configurazione",
+          joinFromInvite: "Unisciti al cerchio dall'invito",
+          chooseCircleStep: "Crea o seleziona un cerchio",
+          secureAccessStep: "Configura l'accesso sicuro",
+          profileStep: "Configura il profilo del cerchio",
+          permissionsStep: "Permessi predefiniti",
+          finish: "Fine",
+          selectedCircle: "Cerchio selezionato",
+          role: "Ruolo",
+          controller: "controller",
+          deviceKey: "Chiave del dispositivo",
+          ok: "OK",
+          needsAttention: "richiede attenzione",
+          shareRow: "Riga condivisione",
+          present: "presente",
+          missing: "mancante",
+          cachedVault: "Vault in cache",
+          controllerLabel: "Controller",
+          trueText: "vero",
+          falseText: "falso",
+          joiningCircle: "Ti stai unendo al cerchio",
+          joiningDesc: "Stiamo accettando il tuo invito e collegandoti al cerchio.",
+          checkingSignIn: "Controllo accesso...",
+          acceptingInvite: "Accettazione invito...",
+          keepOpen: "Tieni aperta questa pagina.",
+          signInRequired: "Accesso richiesto",
+          signInRequiredDesc: "Accedi prima, poi riapri il link di invito.",
+          tryAgain: "Riprova",
+          alreadyLinked: "Sei già collegato a questo cerchio.",
+          joinedCircle: "Ti sei unito al cerchio.",
+          chooseCircle: "Scegli il tuo cerchio",
+          chooseCircleDesc: "Seleziona un cerchio esistente oppure creane uno nuovo qui.",
+          yourCircles: "I tuoi cerchi",
+          select: "Seleziona...",
+          orCreateBelow: "Oppure crea un nuovo cerchio qui sotto.",
+          newCircleName: "Nome nuovo cerchio",
+          circleNamePlaceholder: "Nome del cerchio",
+          creating: "Creazione...",
+          createCircle: "Crea cerchio",
+          secureAccessTitle: "Configura l'accesso sicuro",
+          secureAccessDesc:
+            "Questo dispositivo ha bisogno dell'accesso sicuro prima che note protette, dettagli del profilo e messaggi funzionino correttamente.",
+          whatHappensHere: "Cosa succede qui",
+          whatHappensHereDesc:
+            "1. Questo dispositivo viene registrato per l'accesso sicuro. 2. La condivisione del cerchio viene collegata a questo dispositivo. 3. L'app completa la configurazione automaticamente e mantiene questo dispositivo pronto.",
+          secureSetupAgain: "Questo dispositivo deve essere configurato di nuovo",
+          secureSetupAgainDesc:
+            "La configurazione sicura locale di questo dispositivo non corrisponde a quella registrata per il tuo account. Reimposta l'accesso sicuro su questo dispositivo e poi continua.",
+          secureNeedsRefreshing: "L'accesso sicuro deve essere aggiornato",
+          secureNeedsRefreshingDesc:
+            "Questa condivisione del cerchio è stata creata per una configurazione del dispositivo precedente. Reimposta l'accesso sicuro su questo dispositivo, poi chiedi al proprietario del cerchio di condividere di nuovo l'accesso.",
+          deviceReady: "Questo dispositivo è pronto",
+          settingUp: "Configurazione...",
+          setUpSecureAccessDevice: "Configura l'accesso sicuro su questo dispositivo",
+          resetting: "Reimpostazione...",
+          resetSecureAccessDevice: "Reimposta l'accesso sicuro su questo dispositivo",
+          setUpSecureAccessCircle: "Configura l'accesso sicuro per questo cerchio",
+          sharing: "Condivisione...",
+          shareSecureAccessMembers: "Condividi l'accesso sicuro con i membri",
+          nonControllerReshareHelp:
+            "Se questo dispositivo è stato reimpostato, il proprietario del cerchio deve condividere di nuovo l'accesso sicuro prima che il contenuto protetto possa aprirsi.",
+          finishingSetup: "Completamento configurazione...",
+          finishSecureSetupDevice: "Completa la configurazione sicura su questo dispositivo",
+          stayHereUntilReady:
+            "Questa pagina rimane qui finché configurazione del dispositivo, accesso al cerchio e accesso sicuro locale non sono tutti pronti.",
+          profileTitle: "Configura il profilo del cerchio",
+          profileDesc: "Ora che l'accesso sicuro è pronto, aggiungi qui i dettagli di base.",
+          communicationNotes: "Note sulla comunicazione",
+          communicationPlaceholder: "Preferenze di comunicazione",
+          allergies: "Allergie",
+          allergiesPlaceholder: "Allergie conosciute",
+          diagnoses: "Diagnosi",
+          diagnosesPlaceholder: "Diagnosi rilevanti",
+          languagesSpoken: "Lingue parlate",
+          languagesSpokenPlaceholder: "Lingue parlate",
+          safetyNotes: "Note di sicurezza",
+          safetyPlaceholder: "Informazioni di sicurezza importanti",
+          saving: "Salvataggio...",
+          saveContinue: "Salva e continua",
+          permissionsTitle: "Permessi predefiniti",
+          permissionsDesc: "Come controller, inizializza ora i permessi predefiniti.",
+          seeding: "Inizializzazione...",
+          seedDefaults: "Inizializza predefiniti",
+          openPermissionsPage: "Apri pagina permessi",
+          onboardingComplete: "Una volta inizializzati i predefiniti, l'onboarding è completo.",
+          readyTitle: "Sei pronto",
+          readyDesc: "Questo dispositivo è configurato e il tuo cerchio è pronto da usare.",
+          goToHub: "Vai all'Hub",
+          permissionsManaged: "I permessi in questo cerchio sono gestiti dal controller.",
+        }
+      : {
+          welcome: "Welcome",
+          loadingSetup: "Loading your setup...",
+          loadingOnboarding: "Loading onboarding...",
+          intro: "Let's get this device set up properly for your circle.",
+          hub: "Hub",
+          message: "Message",
+          setupSteps: "Setup steps",
+          joinFromInvite: "Join circle from invite",
+          chooseCircleStep: "Create or select a circle",
+          secureAccessStep: "Set up secure access",
+          profileStep: "Set up the circle profile",
+          permissionsStep: "Permissions defaults",
+          finish: "Finish",
+          selectedCircle: "Selected circle",
+          role: "Role",
+          controller: "controller",
+          deviceKey: "Device key",
+          ok: "OK",
+          needsAttention: "needs attention",
+          shareRow: "Share row",
+          present: "present",
+          missing: "missing",
+          cachedVault: "Cached vault",
+          controllerLabel: "Controller",
+          trueText: "true",
+          falseText: "false",
+          joiningCircle: "Joining your circle",
+          joiningDesc: "We're accepting your invite and linking you to the circle.",
+          checkingSignIn: "Checking sign-in...",
+          acceptingInvite: "Accepting invite...",
+          keepOpen: "Please keep this page open.",
+          signInRequired: "Sign in required",
+          signInRequiredDesc: "Please sign in first, then reopen your invite link.",
+          tryAgain: "Try again",
+          alreadyLinked: "You're already linked to this circle.",
+          joinedCircle: "You've joined the circle.",
+          chooseCircle: "Choose your circle",
+          chooseCircleDesc: "Select an existing circle, or create a new one here.",
+          yourCircles: "Your circles",
+          select: "Select...",
+          orCreateBelow: "Or create a new circle below.",
+          newCircleName: "New circle name",
+          circleNamePlaceholder: "Circle name",
+          creating: "Creating...",
+          createCircle: "Create circle",
+          secureAccessTitle: "Set up secure access",
+          secureAccessDesc:
+            "This device needs secure access before protected notes, profile details, and messages work properly.",
+          whatHappensHere: "What happens here",
+          whatHappensHereDesc:
+            "1. This device gets registered for secure access. 2. Your circle share is matched to this device. 3. The app finishes setup automatically and keeps this device ready.",
+          secureSetupAgain: "This device needs secure setup again",
+          secureSetupAgainDesc:
+            "This device's local secure setup does not match the one registered for your account. Reset secure access on this device, then continue.",
+          secureNeedsRefreshing: "Secure access needs refreshing",
+          secureNeedsRefreshingDesc:
+            "This circle share was created for an older device setup. Reset secure access on this device, then ask the circle owner to share access again.",
+          deviceReady: "This device is ready",
+          settingUp: "Setting up...",
+          setUpSecureAccessDevice: "Set up secure access on this device",
+          resetting: "Resetting...",
+          resetSecureAccessDevice: "Reset secure access on this device",
+          setUpSecureAccessCircle: "Set up secure access for this circle",
+          sharing: "Sharing...",
+          shareSecureAccessMembers: "Share secure access to members",
+          nonControllerReshareHelp:
+            "If this device was reset, the circle owner needs to share secure access to you again before protected content can open.",
+          finishingSetup: "Finishing setup...",
+          finishSecureSetupDevice: "Finish secure setup on this device",
+          stayHereUntilReady:
+            "This page stays here until device setup, circle access, and local secure access are all ready.",
+          profileTitle: "Set up the circle profile",
+          profileDesc: "Now that secure access is ready, add the basic details here.",
+          communicationNotes: "Communication notes",
+          communicationPlaceholder: "Communication preferences",
+          allergies: "Allergies",
+          allergiesPlaceholder: "Known allergies",
+          diagnoses: "Diagnoses",
+          diagnosesPlaceholder: "Relevant diagnoses",
+          languagesSpoken: "Languages spoken",
+          languagesSpokenPlaceholder: "Languages spoken",
+          safetyNotes: "Safety notes",
+          safetyPlaceholder: "Important safety information",
+          saving: "Saving...",
+          saveContinue: "Save and continue",
+          permissionsTitle: "Permissions defaults",
+          permissionsDesc: "As controller, seed the default permissions now.",
+          seeding: "Seeding...",
+          seedDefaults: "Seed defaults",
+          openPermissionsPage: "Open permissions page",
+          onboardingComplete: "Once defaults are seeded, onboarding is complete.",
+          readyTitle: "You're ready",
+          readyDesc: "This device is set up and your circle is ready to use.",
+          goToHub: "Go to Hub",
+          permissionsManaged: "Permissions in this circle are managed by the controller.",
+        };
 
   const currentStep: StepId = useMemo(() => {
     if (resolvedInviteToken && inviteStatus !== "accepted") return "invite";
@@ -906,7 +1104,7 @@ export default function OnboardingClient() {
         <div className="cc-container cc-stack">
           <div>
             <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Welcome</h1>
+            <h1 className="cc-h1">{ui.welcome}</h1>
             <div className="cc-subtle">Loading your setup…</div>
           </div>
           <div className="cc-card cc-card-pad">
@@ -923,7 +1121,7 @@ export default function OnboardingClient() {
         <div className="cc-row-between">
           <div>
             <div className="cc-kicker">CareCircle</div>
-            <h1 className="cc-h1">Welcome, {displayGreeting}</h1>
+            <h1 className="cc-h1">{ui.welcome}, {displayGreeting}</h1>
             <div className="cc-subtle">Let’s get this device set up properly for your circle.</div>
             {userEmail ? <div className="cc-small cc-subtle cc-wrap">{userEmail}</div> : null}
           </div>
@@ -931,7 +1129,7 @@ export default function OnboardingClient() {
           {currentStep === "finish" ? (
             <div className="cc-row">
               <Link className="cc-btn cc-btn-primary" href="/app/hub">
-                Hub
+                {ui.hub}
               </Link>
             </div>
           ) : null}
@@ -939,48 +1137,48 @@ export default function OnboardingClient() {
 
         {msg ? (
           <div className="cc-status cc-status-error">
-            <div className="cc-status-error-title">Message</div>
+            <div className="cc-status-error-title">{ui.message}</div>
             <div className="cc-wrap">{msg}</div>
           </div>
         ) : null}
 
         <div className="cc-grid-2-125">
           <div className="cc-card cc-card-pad cc-stack">
-            <div className="cc-strong">Setup steps</div>
+            <div className="cc-strong">{ui.setupSteps}</div>
 
             {resolvedInviteToken ? (
               <StepRow
-                label="Join circle from invite"
+                label={ui.joinFromInvite}
                 active={currentStep === "invite"}
                 done={inviteStatus === "accepted"}
               />
             ) : null}
 
-            <StepRow label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
+            <StepRow label={ui.chooseCircleStep} active={currentStep === "circle"} done={!!selectedPatientId} />
 
             <StepRow
-              label="Set up secure access"
+              label={ui.secureAccessStep}
               active={currentStep === "vault"}
               done={!!selectedPatientId && deviceKeyOk && hasVaultShare && hasCachedVault}
             />
 
             <StepRow
-              label="Set up the circle profile"
+              label={ui.profileStep}
               active={currentStep === "profile"}
               done={!!selectedPatientId && deviceKeyOk && hasVaultShare && hasCachedVault && hasProfile}
             />
 
             <StepRow
-              label="Permissions defaults"
+              label={ui.permissionsStep}
               active={currentStep === "permissions"}
               done={!!selectedPatientId && deviceKeyOk && hasVaultShare && hasCachedVault && hasProfile && !isController}
             />
 
-            <StepRow label="Finish" active={currentStep === "finish"} done={currentStep === "finish"} />
+            <StepRow label={ui.finish} active={currentStep === "finish"} done={currentStep === "finish"} />
 
             {selectedPatientId ? (
               <div className="cc-panel">
-                <div className="cc-small cc-subtle">Selected circle</div>
+                <div className="cc-small cc-subtle">{ui.selectedCircle}</div>
                 <div className="cc-strong">{selectedPatient?.display_name ?? selectedPatientId}</div>
                 <div className="cc-small cc-wrap">{selectedPatientId}</div>
                 <div className="cc-small">
@@ -992,19 +1190,19 @@ export default function OnboardingClient() {
 
             <div className="cc-row">
               <span className={`cc-pill ${deviceKeyOk ? "cc-pill-primary" : ""}`}>
-                Device key: {deviceKeyOk ? "OK" : "needs attention"}
+                {ui.deviceKey}: {deviceKeyOk ? ui.ok : ui.needsAttention}
               </span>
               <span className={`cc-pill ${hasVaultShare ? "cc-pill-primary" : ""}`}>
-                Share row: {hasVaultShare ? "present" : "missing"}
+                {ui.shareRow}: {hasVaultShare ? ui.present : ui.missing}
               </span>
             </div>
 
             <div className="cc-row">
               <span className={`cc-pill ${hasCachedVault ? "cc-pill-primary" : ""}`}>
-                Cached vault: {hasCachedVault ? "present" : "missing"}
+                {ui.cachedVault}: {hasCachedVault ? ui.present : ui.missing}
               </span>
               <span className={`cc-pill ${isController ? "cc-pill-primary" : ""}`}>
-                Controller: {isController ? "true" : "false"}
+                {ui.controllerLabel}: {isController ? ui.trueText : ui.falseText}
               </span>
             </div>
           </div>
@@ -1054,13 +1252,13 @@ export default function OnboardingClient() {
 
             {currentStep === "circle" ? (
               <>
-                <h2 className="cc-h2">Choose your circle</h2>
-                <div className="cc-subtle">Select an existing circle, or create a new one here.</div>
+                <h2 className="cc-h2">{ui.chooseCircle}</h2>
+                <div className="cc-subtle">{ui.chooseCircleDesc}</div>
 
                 {memberships.length > 0 ? (
                   <>
                     <div className="cc-field">
-                      <div className="cc-label">Your circles</div>
+                      <div className="cc-label">{ui.yourCircles}</div>
                       <select className="cc-select" value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)}>
                         <option value="" disabled>
                           Select…
@@ -1074,17 +1272,17 @@ export default function OnboardingClient() {
                       </select>
                     </div>
 
-                    <div className="cc-small cc-subtle">Or create a new circle below.</div>
+                    <div className="cc-small cc-subtle">{ui.orCreateBelow}</div>
                   </>
                 ) : null}
 
                 <div className="cc-field">
-                  <div className="cc-label">New circle name</div>
+                  <div className="cc-label">{ui.newCircleName}</div>
                   <input
                     className="cc-input"
                     value={newCircleName}
                     onChange={(e) => setNewCircleName(e.target.value)}
-                    placeholder="Circle name"
+                    placeholder={ui.circleNamePlaceholder}
                   />
                 </div>
 
@@ -1098,16 +1296,12 @@ export default function OnboardingClient() {
 
             {currentStep === "vault" ? (
               <>
-                <h2 className="cc-h2">Set up secure access</h2>
-                <div className="cc-subtle">
-                  This device needs secure access before protected notes, profile details, and messages work properly.
-                </div>
+                <h2 className="cc-h2">{ui.secureAccessTitle}</h2>
+                <div className="cc-subtle">{ui.secureAccessDesc}</div>
 
                 <div className="cc-panel-blue">
-                  <div className="cc-strong">What happens here</div>
-                  <div className="cc-subtle">
-                    1. This device gets registered for secure access. 2. Your circle share is matched to this device. 3. The app finishes setup automatically and keeps this device ready.
-                  </div>
+                  <div className="cc-strong">{ui.whatHappensHere}</div>
+                  <div className="cc-subtle">{ui.whatHappensHereDesc}</div>
                 </div>
 
                 {deviceKeyMatchesServer === false ? (
@@ -1134,7 +1328,7 @@ export default function OnboardingClient() {
                     onClick={enableE2EEOnThisDevice}
                     disabled={busy === "enable-e2ee" || deviceKeyOk}
                   >
-                    {deviceKeyOk ? "This device is ready" : busy === "enable-e2ee" ? "Setting up..." : "Set up secure access on this device"}
+                    {deviceKeyOk ? ui.deviceReady : busy === "enable-e2ee" ? ui.settingUp : ui.setUpSecureAccessDevice}
                   </button>
 
                   <button
@@ -1142,7 +1336,7 @@ export default function OnboardingClient() {
                     onClick={resetSecureDeviceOnThisDevice}
                     disabled={busy === "reset-device" || !uid}
                   >
-                    {busy === "reset-device" ? "Resetting..." : "Reset secure access on this device"}
+                    {busy === "reset-device" ? ui.resetting : ui.resetSecureAccessDevice}
                   </button>
 
                   {isController ? (
@@ -1151,7 +1345,7 @@ export default function OnboardingClient() {
                       onClick={initialiseNewVaultKey}
                       disabled={busy === "init-vault" || !deviceKeyOk}
                     >
-                      {busy === "init-vault" ? "Setting up..." : "Set up secure access for this circle"}
+                      {busy === "init-vault" ? ui.settingUp : ui.setUpSecureAccessCircle}
                     </button>
                   ) : null}
                 </div>
@@ -1163,14 +1357,14 @@ export default function OnboardingClient() {
                       onClick={shareKeyToMembers}
                       disabled={busy === "share-vault" || !deviceKeyOk}
                     >
-                      {busy === "share-vault" ? "Sharing..." : "Share secure access to members"}
+                      {busy === "share-vault" ? ui.sharing : ui.shareSecureAccessMembers}
                     </button>
                   </div>
                 ) : null}
 
                 {!isController ? (
                   <div className="cc-small cc-subtle">
-                    If this device was reset, the circle owner needs to share secure access to you again before protected content can open.
+                    {ui.nonControllerReshareHelp}
                   </div>
                 ) : null}
 
@@ -1180,24 +1374,24 @@ export default function OnboardingClient() {
                     onClick={unlockVaultOnThisDevice}
                     disabled={busy === "unlock-vault" || !deviceKeyOk || !hasVaultShare}
                   >
-                    {busy === "unlock-vault" ? "Finishing setup..." : "Finish secure setup on this device"}
+                    {busy === "unlock-vault" ? ui.finishingSetup : ui.finishSecureSetupDevice}
                   </button>
                 </div>
 
                 <div className="cc-small cc-subtle">
-                  This page stays here until device setup, circle access, and local secure access are all ready.
+                  {ui.stayHereUntilReady}
                 </div>
               </>
             ) : null}
 
             {currentStep === "profile" ? (
               <>
-                <h2 className="cc-h2">Set up the circle profile</h2>
-                <div className="cc-subtle">Now that secure access is ready, add the basic details here.</div>
+                <h2 className="cc-h2">{ui.profileTitle}</h2>
+                <div className="cc-subtle">{ui.profileDesc}</div>
 
                 <div className="cc-grid-2">
                   <div className="cc-field">
-                    <div className="cc-label">Communication notes</div>
+                    <div className="cc-label">{ui.communicationNotes}</div>
                     <textarea
                       className="cc-textarea"
                       value={communicationNotes}
@@ -1207,40 +1401,40 @@ export default function OnboardingClient() {
                   </div>
 
                   <div className="cc-field">
-                    <div className="cc-label">Allergies</div>
+                    <div className="cc-label">{ui.allergies}</div>
                     <textarea
                       className="cc-textarea"
                       value={allergies}
                       onChange={(e) => setAllergies(e.target.value)}
-                      placeholder="Known allergies"
+                      placeholder={ui.allergiesPlaceholder}
                     />
                   </div>
                 </div>
 
                 <div className="cc-grid-2">
                   <div className="cc-field">
-                    <div className="cc-label">Diagnoses</div>
+                    <div className="cc-label">{ui.diagnoses}</div>
                     <textarea
                       className="cc-textarea"
                       value={diagnoses}
                       onChange={(e) => setDiagnoses(e.target.value)}
-                      placeholder="Relevant diagnoses"
+                      placeholder={ui.diagnosesPlaceholder}
                     />
                   </div>
 
                   <div className="cc-field">
-                    <div className="cc-label">Languages spoken</div>
+                    <div className="cc-label">{ui.languagesSpoken}</div>
                     <textarea
                       className="cc-textarea"
                       value={languagesSpoken}
                       onChange={(e) => setLanguagesSpoken(e.target.value)}
-                      placeholder="Languages spoken"
+                      placeholder={ui.languagesSpokenPlaceholder}
                     />
                   </div>
                 </div>
 
                 <div className="cc-field">
-                  <div className="cc-label">Safety notes</div>
+                  <div className="cc-label">{ui.safetyNotes}</div>
                   <textarea
                     className="cc-textarea"
                     value={safetyNotes}
@@ -1259,8 +1453,8 @@ export default function OnboardingClient() {
 
             {currentStep === "permissions" ? (
               <>
-                <h2 className="cc-h2">Permissions defaults</h2>
-                <div className="cc-subtle">As controller, seed the default permissions now.</div>
+                <h2 className="cc-h2">{ui.permissionsTitle}</h2>
+                <div className="cc-subtle">{ui.permissionsDesc}</div>
 
                 <div className="cc-row">
                   <button className="cc-btn cc-btn-primary" onClick={seedDefaults} disabled={busy === "seed"}>
@@ -1268,28 +1462,28 @@ export default function OnboardingClient() {
                   </button>
 
                   <Link className="cc-btn" href={`/app/account/permissions?pid=${selectedPatientId}`}>
-                    Open permissions page
+                    {ui.openPermissionsPage}
                   </Link>
                 </div>
 
-                <div className="cc-small cc-subtle">Once defaults are seeded, onboarding is complete.</div>
+                <div className="cc-small cc-subtle">{ui.onboardingComplete}</div>
               </>
             ) : null}
 
             {currentStep === "finish" ? (
               <>
                 <h2 className="cc-h2">You’re ready</h2>
-                <div className="cc-subtle">This device is set up and your circle is ready to use.</div>
+                <div className="cc-subtle">{ui.readyDesc}</div>
 
                 <div className="cc-row">
                   <Link className="cc-btn cc-btn-primary" href="/app/hub">
-                    Go to Hub
+                    {ui.goToHub}
                   </Link>
                 </div>
 
                 {!isController ? (
                   <div className="cc-small cc-subtle">
-                    Permissions in this circle are managed by the controller.
+                    {ui.permissionsManaged}
                   </div>
                 ) : null}
               </>

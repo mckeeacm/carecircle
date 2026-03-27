@@ -205,8 +205,8 @@ function medicationStatusLabel(value: string | null) {
 function medicationStatusLabelForUi(value: string | null, languageCode: string) {
   if (value === "taken") return t(languageCode, "today.taken");
   if (value === "missed") return t(languageCode, "today.missed");
-  if (value === "refused") return "Refused";
-  if (value === "delayed") return "Delayed";
+  if (value === "refused") return languageCode === "it" ? "Rifiutato" : "Refused";
+  if (value === "delayed") return languageCode === "it" ? "Rimandato" : "Delayed";
   return value ?? "-";
 }
 
