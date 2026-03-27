@@ -146,9 +146,9 @@ export default function HubClient() {
   return (
     <MobileShell
       title={t(languageCode, "screen.hub")}
-      subtitle={t(languageCode, "hub.subtitle")}
       hideBottomNav
       compactHeader
+      showBrandLockup={false}
       rightSlot={
         <Link className="cc-btn" href="/app/account">
           {t(languageCode, "nav.account")}

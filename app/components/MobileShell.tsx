@@ -14,6 +14,7 @@ type MobileShellProps = {
   hideBottomNav?: boolean;
   rightSlot?: ReactNode;
   compactHeader?: boolean;
+  showBrandLockup?: boolean;
 };
 
 function sectionForPath(pathname: string): "today" | "journal" | "messages" | "profile" | "more" {
@@ -46,6 +47,7 @@ export default function MobileShell({
   hideBottomNav = false,
   rightSlot,
   compactHeader = false,
+  showBrandLockup = true,
 }: MobileShellProps) {
   const pathname = usePathname();
   const active = sectionForPath(pathname);
@@ -62,21 +64,23 @@ export default function MobileShell({
             <div className="cc-mobile-header-main">
               <div className="cc-mobile-header-row">
                 <div className="cc-mobile-title-wrap">
-                  <Link className="cc-brand-lockup" href="/app/hub" aria-label="Go to Hub">
-                    <span className="cc-brand-mark" aria-hidden="true">
-                      <Image
-                        src="/images/carecircle-watermark.png"
-                        alt=""
-                        className="cc-brand-mark-img"
-                        width={34}
-                        height={34}
-                      />
-                    </span>
-                    <span className="cc-brand-copy">
-                      <span className="cc-kicker">CareBridge Studios</span>
-                      <span className="cc-brand-name">CareCircle</span>
-                    </span>
-                  </Link>
+                  {showBrandLockup ? (
+                    <Link className="cc-brand-lockup" href="/app/hub" aria-label="Go to Hub">
+                      <span className="cc-brand-mark" aria-hidden="true">
+                        <Image
+                          src="/images/carecircle-watermark.png"
+                          alt=""
+                          className="cc-brand-mark-img"
+                          width={34}
+                          height={34}
+                        />
+                      </span>
+                      <span className="cc-brand-copy">
+                        <span className="cc-kicker">CareBridge Studios</span>
+                        <span className="cc-brand-name">CareCircle</span>
+                      </span>
+                    </Link>
+                  ) : null}
 
                   <h1 className="cc-mobile-title">{title}</h1>
                   {subtitle ? <div className="cc-subtle cc-wrap">{subtitle}</div> : null}
