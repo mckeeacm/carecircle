@@ -521,8 +521,8 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
-          <div className="cc-subtle">Encrypted notes can’t be saved or decrypted.</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
+          <div className="cc-subtle">Protected appointment notes will become available once this device finishes secure setup.</div>
         </div>
       ) : null}
 
@@ -1069,7 +1069,7 @@ function AppointmentEditorCard({
           disabled={!noteCanBeEdited}
           placeholder={
             !vaultKeyAvailable
-              ? "Vault key not available on this device."
+              ? "Secure access is not ready on this device."
               : appointment.notes_encrypted && decryptedNote == null
               ? "Decrypt notes first to edit existing encrypted notes."
               : "Optional appointment note…"

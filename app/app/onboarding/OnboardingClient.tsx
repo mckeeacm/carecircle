@@ -959,7 +959,7 @@ export default function OnboardingClient() {
             <StepRow label="Create or select a circle" active={currentStep === "circle"} done={!!selectedPatientId} />
 
             <StepRow
-              label="Fix device keys and vault access"
+              label="Set up secure access"
               active={currentStep === "vault"}
               done={!!selectedPatientId && deviceKeyOk && hasVaultShare && hasCachedVault}
             />
@@ -1098,32 +1098,32 @@ export default function OnboardingClient() {
 
             {currentStep === "vault" ? (
               <>
-                <h2 className="cc-h2">Fix device keys and vault access</h2>
+                <h2 className="cc-h2">Set up secure access</h2>
                 <div className="cc-subtle">
-                  This must be done before encrypted notes, profile and messages work properly.
+                  This device needs secure access before protected notes, profile details, and messages work properly.
                 </div>
 
                 <div className="cc-panel-blue">
-                  <div className="cc-strong">What you need</div>
+                  <div className="cc-strong">What happens here</div>
                   <div className="cc-subtle">
-                    1. This device needs one valid secure key. 2. Your circle needs a vault share for that exact key. 3. This device then unlocks and caches the vault.
+                    1. This device gets registered for secure access. 2. Your circle share is matched to this device. 3. The app finishes setup automatically and keeps this device ready.
                   </div>
                 </div>
 
                 {deviceKeyMatchesServer === false ? (
                   <div className="cc-status cc-status-error">
-                    <div className="cc-status-error-title">Secure device mismatch</div>
+                    <div className="cc-status-error-title">This device needs secure setup again</div>
                     <div className="cc-subtle">
-                      This device’s local secure key does not match the key currently registered for your account. Reset this secure device, then continue.
+                      This device's local secure setup does not match the one registered for your account. Reset secure access on this device, then continue.
                     </div>
                   </div>
                 ) : null}
 
                 {vaultUnlockNeedsReshare ? (
                   <div className="cc-status cc-status-error">
-                    <div className="cc-status-error-title">Secure share needs re-sharing</div>
+                    <div className="cc-status-error-title">Secure access needs refreshing</div>
                     <div className="cc-subtle">
-                      This circle share was created for an older device key. Reset this secure device, then ask the controller to share vault access again.
+                      This circle share was created for an older device setup. Reset secure access on this device, then ask the circle owner to share access again.
                     </div>
                   </div>
                 ) : null}
@@ -1134,7 +1134,7 @@ export default function OnboardingClient() {
                     onClick={enableE2EEOnThisDevice}
                     disabled={busy === "enable-e2ee" || deviceKeyOk}
                   >
-                    {deviceKeyOk ? "Device key ready" : busy === "enable-e2ee" ? "Enabling…" : "Enable secure key on this device"}
+                    {deviceKeyOk ? "This device is ready" : busy === "enable-e2ee" ? "Setting up..." : "Set up secure access on this device"}
                   </button>
 
                   <button
@@ -1142,7 +1142,7 @@ export default function OnboardingClient() {
                     onClick={resetSecureDeviceOnThisDevice}
                     disabled={busy === "reset-device" || !uid}
                   >
-                    {busy === "reset-device" ? "Resetting…" : "Reset secure device on this device"}
+                    {busy === "reset-device" ? "Resetting..." : "Reset secure access on this device"}
                   </button>
 
                   {isController ? (
@@ -1151,7 +1151,7 @@ export default function OnboardingClient() {
                       onClick={initialiseNewVaultKey}
                       disabled={busy === "init-vault" || !deviceKeyOk}
                     >
-                      {busy === "init-vault" ? "Initialising…" : "Initialise new vault"}
+                      {busy === "init-vault" ? "Setting up..." : "Set up secure access for this circle"}
                     </button>
                   ) : null}
                 </div>
@@ -1163,14 +1163,14 @@ export default function OnboardingClient() {
                       onClick={shareKeyToMembers}
                       disabled={busy === "share-vault" || !deviceKeyOk}
                     >
-                      {busy === "share-vault" ? "Sharing…" : "Share vault to members"}
+                      {busy === "share-vault" ? "Sharing..." : "Share secure access to members"}
                     </button>
                   </div>
                 ) : null}
 
                 {!isController ? (
                   <div className="cc-small cc-subtle">
-                    If your secure key was reset, the circle controller must share access to you again before unlock can work.
+                    If this device was reset, the circle owner needs to share secure access to you again before protected content can open.
                   </div>
                 ) : null}
 
@@ -1180,12 +1180,12 @@ export default function OnboardingClient() {
                     onClick={unlockVaultOnThisDevice}
                     disabled={busy === "unlock-vault" || !deviceKeyOk || !hasVaultShare}
                   >
-                    {busy === "unlock-vault" ? "Unlocking…" : "Unlock vault on this device"}
+                    {busy === "unlock-vault" ? "Finishing setup..." : "Finish secure setup on this device"}
                   </button>
                 </div>
 
                 <div className="cc-small cc-subtle">
-                  This page stays here until the device key, share row and local cached vault are all ready.
+                  This page stays here until device setup, circle access, and local secure access are all ready.
                 </div>
               </>
             ) : null}

@@ -764,8 +764,8 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
-          <div className="cc-subtle">You can’t decrypt or save encrypted notes.</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
+          <div className="cc-subtle">Protected notes will become available once this device finishes secure setup.</div>
         </div>
       ) : null}
 
@@ -1192,3 +1192,4 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     </MobileShell>
   );
 }
+

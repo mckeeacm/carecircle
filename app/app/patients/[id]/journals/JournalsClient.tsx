@@ -546,8 +546,8 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
-          <div className="cc-subtle">You canÂ't decrypt or save encrypted content.</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
+          <div className="cc-subtle">Protected journal details will appear once this device finishes secure setup.</div>
         </div>
       ) : null}
 
@@ -921,7 +921,7 @@ function JournalCard({
         </div>
 
         <button className="cc-btn" onClick={toggle}>
-          {open ? "Hide" : "Decrypt"}
+          {open ? "Hide" : "Open"}
         </button>
       </div>
 
@@ -994,3 +994,4 @@ function JournalCard({
     </div>
   );
 }
+

@@ -661,10 +661,9 @@ export default function TodayClient({ patientId }: { patientId: string }) {
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Vault key not available on this device</div>
+          <div className="cc-strong">Secure access is not ready on this device</div>
           <div className="cc-subtle">
-            You can still browse metadata, but encrypted content won’t decrypt until secure access is available on this
-            device.
+            You can still browse basic information, but protected details will appear once this device finishes secure setup.
           </div>
         </div>
       ) : null}
@@ -921,3 +920,4 @@ export default function TodayClient({ patientId }: { patientId: string }) {
     </MobileShell>
   );
 }
+
