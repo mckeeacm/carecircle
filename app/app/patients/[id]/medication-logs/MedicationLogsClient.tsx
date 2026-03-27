@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -168,6 +168,17 @@ function stripSystemPrefix(value: string | undefined) {
   return isSystemNotesPlaintext(value) ? value.slice(SYSTEM_NOTE_PREFIX.length).trim() : value;
 }
 
+function statusOptionLabel(value: string, languageCode: string) {
+  if (languageCode !== "it") {
+    return STATUS_OPTIONS.find((s) => s.value === value)?.label ?? value;
+  }
+  if (value === "taken") return "Assunto";
+  if (value === "missed") return "Mancato";
+  if (value === "refused") return "Rifiutato";
+  if (value === "delayed") return "Rimandato";
+  return value;
+}
+
 export default function MedicationLogsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
@@ -248,13 +259,17 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
           const body =
             groupMedicationLabels.length > 0
-              ? `Time for: ${groupMedicationLabels.join(", ")}`
+              ? languageCode === "it"
+                ? `Ãˆ il momento di: ${groupMedicationLabels.join(", ")}`
+                : `Time for: ${groupMedicationLabels.join(", ")}`
+              : languageCode === "it"
+              ? "Ãˆ il momento di prendere i tuoi farmaci."
               : "Time to take your medication.";
 
           return [
             {
               id: reminderNotificationId(group.id),
-              title: group.name?.trim() || "Medication reminder",
+              title: group.name?.trim() || (languageCode === "it" ? "Promemoria farmaci" : "Medication reminder"),
               body,
               channelId: REMINDER_CHANNEL_ID,
               smallIcon: "ic_launcher",
@@ -595,7 +610,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   }
 
   function whoLabel(createdBy: string, plainNote?: string) {
-    if (isSystemNotesPlaintext(plainNote)) return "System notes";
+    if (isSystemNotesPlaintext(plainNote)) return languageCode === "it" ? "Note di sistema" : "System notes";
     const m = membersById[createdBy];
     if (!m) return createdBy;
     return m.nickname?.trim() || createdBy;
@@ -613,7 +628,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
   }
 
   function statusLabel(value: string | null) {
-    return STATUS_OPTIONS.find((s) => s.value === value)?.label ?? value ?? "—";
+    return value ? statusOptionLabel(value, languageCode) : "-";
   }
 
   function statusClass(value: string | null) {
@@ -768,6 +783,37 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           optionalNote: "Nota facoltativa...",
           saveLog: "Salva registro",
           saving: "Salvataggio...",
+          remindersTitle: "Promemoria farmaci",
+          remindersSubtitle: "Crea promemoria per un farmaco o per un gruppo, ad esempio Farmaci della sera.",
+          remindersAndroid: "Nelle build Android dell'app, i promemoria attivi vengono pianificati anche come notifiche del dispositivo.",
+          todaysReminderStatus: "Stato promemoria di oggi",
+          upcoming: "In arrivo",
+          dueNow: "Da prendere ora",
+          midnight: "Mezzanotte",
+          noReminderMeds: "Nessun farmaco",
+          missedLabel: "Mancati",
+          takenAction: "Assunto",
+          reminderSaving: "Salvataggio...",
+          newReminder: "Nuovo promemoria",
+          reminderName: "Nome promemoria",
+          reminderNamePlaceholder: "ad es. Farmaci della sera",
+          time: "Ora",
+          includedMedications: "Farmaci inclusi",
+          saveReminder: "Salva promemoria",
+          reminderStorage: "Questo salva i programmi dei promemoria e li sincronizza con le notifiche Android quando disponibili.",
+          noReminders: "Ancora nessun promemoria.",
+          active: "Attivo",
+          paused: "In pausa",
+          pause: "Metti in pausa",
+          activate: "Attiva",
+          delete: "Elimina",
+          recentLogs: "Registri recenti",
+          recentLogsSubtitle: "Ultima attivita farmaci per questo cerchio.",
+          noLogs: "Ancora nessun registro.",
+          loggedBy: "Registrato da",
+          decrypted: "Decrittata",
+          decryptNote: "Apri nota",
+          noNote: "Nessuna nota",
         }
       : {
           title: "Medication logs",
@@ -789,6 +835,37 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           optionalNote: "Optional note...",
           saveLog: "Save log",
           saving: "Saving...",
+          remindersTitle: "Medication reminders",
+          remindersSubtitle: "Create reminders for one medication or a group, such as Evening meds.",
+          remindersAndroid: "On Android app builds, active reminders are also scheduled as device notifications.",
+          todaysReminderStatus: "Today's reminder status",
+          upcoming: "Upcoming",
+          dueNow: "Due now",
+          midnight: "Midnight",
+          noReminderMeds: "No medications",
+          missedLabel: "Missed",
+          takenAction: "Taken",
+          reminderSaving: "Saving...",
+          newReminder: "New reminder",
+          reminderName: "Reminder name",
+          reminderNamePlaceholder: "e.g. Evening meds",
+          time: "Time",
+          includedMedications: "Included medications",
+          saveReminder: "Save reminder",
+          reminderStorage: "This stores reminder schedules and syncs them to Android notifications when available.",
+          noReminders: "No reminders yet.",
+          active: "Active",
+          paused: "Paused",
+          pause: "Pause",
+          activate: "Activate",
+          delete: "Delete",
+          recentLogs: "Recent logs",
+          recentLogsSubtitle: "Latest medication activity for this circle.",
+          noLogs: "No logs yet.",
+          loggedBy: "Logged by",
+          decrypted: "Decrypted",
+          decryptNote: "Decrypt note",
+          noNote: "No note",
         };
 
   return (
@@ -900,7 +977,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       justifyContent: "center",
                     }}
                   >
-                    {opt.label}
+                    {statusOptionLabel(opt.value, languageCode)}
                   </button>
                 ))}
               </div>
@@ -932,18 +1009,18 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
 
       <div className="cc-card cc-card-pad cc-stack">
         <div>
-          <h2 className="cc-h2">Medication reminders</h2>
+          <h2 className="cc-h2">{ui.remindersTitle}</h2>
           <div className="cc-subtle">
-            Create reminders for one medication or a group, such as Evening meds.
+            {ui.remindersSubtitle}
           </div>
           <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
-            On Android app builds, active reminders are also scheduled as device notifications.
+            {ui.remindersAndroid}
           </div>
         </div>
 
         {reminderStates.length > 0 ? (
           <div className="cc-stack">
-            <div className="cc-strong">Today’s reminder status</div>
+            <div className="cc-strong">{ui.todaysReminderStatus}</div>
 
             {reminderStates.map((state) => {
               const busy = busyReminderId === state.group.id;
@@ -980,17 +1057,17 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       >
                         <span className={`cc-pill ${statePillClass}`}>
                           {state.state === "upcoming"
-                            ? "Upcoming"
+                            ? ui.upcoming
                             : state.state === "due"
-                            ? "Due now"
+                            ? ui.dueNow
                             : state.state === "taken"
-                            ? "Taken"
-                            : "Missed"}
+                            ? ui.takenAction
+                            : ui.missedLabel}
                         </span>
                         <span className="cc-small cc-subtle">
-                          {formatReminderDisplayTime(state.dueAt)} →{" "}
+                          {formatReminderDisplayTime(state.dueAt)} {"->"}{" "}
                           {state.closesAt.getHours() === 23 && state.closesAt.getMinutes() === 59
-                            ? "Midnight"
+                            ? ui.midnight
                             : formatReminderDisplayTime(state.closesAt)}
                         </span>
                       </div>
@@ -998,7 +1075,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       <div className="cc-strong">{state.group.name}</div>
 
                       <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
-                        {state.medicationIds.map((id) => medLabel(id)).join(" • ") || "No medications"}
+                        {state.medicationIds.map((id) => medLabel(id)).join(" • ") || ui.noReminderMeds}
                       </div>
 
                       {state.state === "missed" && state.missingMedicationIds.length > 0 ? (
@@ -1006,7 +1083,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                           className="cc-small"
                           style={{ marginTop: 8, color: "crimson", fontWeight: 800 }}
                         >
-                          Missed: {state.missingMedicationIds.map((id) => medLabel(id)).join(" • ")}
+                          {ui.missedLabel}: {state.missingMedicationIds.map((id) => medLabel(id)).join(" • ")}
                         </div>
                       ) : null}
                     </div>
@@ -1022,7 +1099,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                           state.state === "taken"
                         }
                       >
-                        {busy ? "Saving…" : state.state === "taken" ? "Taken" : "Taken"}
+                        {busy ? "Savingâ€¦" : state.state === "taken" ? ui.takenAction : "Taken"}
                       </button>
                     </div>
                   </div>
@@ -1033,21 +1110,21 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
         ) : null}
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-strong">New reminder</div>
+          <div className="cc-strong">{ui.newReminder}</div>
 
           <div className="cc-grid-2">
             <div className="cc-field">
-              <div className="cc-label">Reminder name</div>
+              <div className="cc-label">{ui.reminderName}</div>
               <input
                 className="cc-input"
                 value={reminderName}
                 onChange={(e) => setReminderName(e.target.value)}
-                placeholder="e.g. Evening meds"
+                placeholder={ui.reminderNamePlaceholder}
               />
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Time</div>
+              <div className="cc-label">{ui.time}</div>
               <input
                 className="cc-input"
                 type="time"
@@ -1058,7 +1135,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
           </div>
 
           <div className="cc-field">
-            <div className="cc-label">Included medications</div>
+            <div className="cc-label">{ui.includedMedications}</div>
             <div
               style={{
                 display: "grid",
@@ -1097,17 +1174,17 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
               onClick={createReminderGroup}
               disabled={savingReminder || selectedReminderMedIds.length === 0}
             >
-              {savingReminder ? "Saving…" : "Save reminder"}
+              {savingReminder ? ui.reminderSaving : ui.saveReminder}
             </button>
           </div>
 
           <div className="cc-small cc-subtle">
-            This stores reminder schedules and syncs them to Android notifications when available.
+            {ui.reminderStorage}
           </div>
         </div>
 
         {reminderGroups.length === 0 ? (
-          <div className="cc-small">No reminders yet.</div>
+          <div className="cc-small">{ui.noReminders}</div>
         ) : (
           <div className="cc-stack">
             {reminderGroups.map((group) => {
@@ -1136,20 +1213,20 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       <div className="cc-strong">{group.name}</div>
 
                       <div className="cc-small cc-subtle" style={{ marginTop: 6 }}>
-                        {groupMeds.length > 0 ? groupMeds.join(" • ") : "No medications"}
+                        {groupMeds.length > 0 ? groupMeds.join(" â€¢ ") : "No medications"}
                       </div>
                     </div>
 
                     <div className="cc-row" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
                       <button className="cc-btn" onClick={() => toggleReminderActive(group)} disabled={busy}>
-                        {busy ? "…" : group.active ? "Pause" : "Activate"}
+                        {busy ? "â€¦" : group.active ? "Pause" : "Activate"}
                       </button>
                       <button
                         className="cc-btn cc-btn-danger"
                         onClick={() => deleteReminderGroup(group.id)}
                         disabled={busy}
                       >
-                        {busy ? "…" : "Delete"}
+                        {busy ? "â€¦" : "Delete"}
                       </button>
                     </div>
                   </div>
@@ -1163,13 +1240,13 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Recent logs</h2>
-            <div className="cc-subtle">Latest medication activity for this circle.</div>
+            <h2 className="cc-h2">{ui.recentLogs}</h2>
+            <div className="cc-subtle">{ui.recentLogsSubtitle}</div>
           </div>
         </div>
 
         {logs.length === 0 ? (
-          <div className="cc-small">No logs yet.</div>
+          <div className="cc-small">{ui.noLogs}</div>
         ) : (
           <div className="cc-stack">
             {logs.map((l) => {
@@ -1211,7 +1288,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       ) : null}
 
                       <div className="cc-small cc-subtle" style={{ marginTop: 8 }}>
-                        Logged by <b>{whoLabel(l.created_by, plain)}</b>
+                        {ui.loggedBy} <b>{whoLabel(l.created_by, plain)}</b>
                       </div>
                     </div>
 
@@ -1220,7 +1297,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                       onClick={() => decryptLog(l)}
                       disabled={!vaultKey || !!plain || !hasNote}
                     >
-                      {plain ? "Decrypted" : hasNote ? "Decrypt note" : "No note"}
+                      {plain ? ui.decrypted : hasNote ? ui.decryptNote : ui.noNote}
                     </button>
                   </div>
 
@@ -1232,7 +1309,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {displayNote || "—"}
+                        {displayNote || "â€”"}
                       </div>
                     </div>
                   ) : null}
@@ -1245,4 +1322,5 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
     </MobileShell>
   );
 }
+
 
