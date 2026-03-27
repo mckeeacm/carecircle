@@ -8,6 +8,7 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type AppointmentRow = {
   id: string;
@@ -131,6 +132,7 @@ function formatAuditValue(field: string, value: string | null) {
 export default function AppointmentsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [rows, setRows] = useState<AppointmentRow[]>([]);
   const [auditRows, setAuditRows] = useState<AppointmentAuditRow[]>([]);
@@ -501,45 +503,84 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
   const upcomingRows = rows.filter((r) => new Date(r.starts_at).getTime() >= now.getTime());
   const pastRows = rows.filter((r) => new Date(r.starts_at).getTime() < now.getTime());
 
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Appuntamenti",
+          subtitle: "Pianifica e segui gli appuntamenti di cura",
+          today: "Oggi",
+          error: "Errore",
+          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
+          secureSubtitle:
+            "Le note protette degli appuntamenti saranno disponibili quando questo dispositivo avra completato la configurazione sicura.",
+          newAppointment: "Nuovo appuntamento",
+          newAppointmentSubtitle: "Crea un appuntamento in un ordine piu chiaro e pratico.",
+          loading: "Caricamento...",
+          refresh: "Aggiorna",
+          details: "Dettagli appuntamento",
+          transport: "Trasporto",
+          encryptedNotes: "Note protette",
+          createAppointment: "Crea appuntamento",
+          saving: "Salvataggio...",
+        }
+      : {
+          title: "Appointments",
+          subtitle: "Plan and track care appointments",
+          today: "Today",
+          error: "Error",
+          secureTitle: "Secure access is not ready on this device",
+          secureSubtitle:
+            "Protected appointment notes will become available once this device finishes secure setup.",
+          newAppointment: "New appointment",
+          newAppointmentSubtitle: "Create an appointment in a clearer, more practical order.",
+          loading: "Loading...",
+          refresh: "Refresh",
+          details: "Appointment details",
+          transport: "Transport",
+          encryptedNotes: "Encrypted notes",
+          createAppointment: "Create appointment",
+          saving: "Saving...",
+        };
+
   return (
     <MobileShell
-      title="Appointments"
-      subtitle="Plan and track care appointments"
+      title={ui.title}
+      subtitle={ui.subtitle}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-          Today
+          {ui.today}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{ui.error}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">Protected appointment notes will become available once this device finishes secure setup.</div>
+          <div className="cc-strong">{ui.secureTitle}</div>
+          <div className="cc-subtle">{ui.secureSubtitle}</div>
         </div>
       ) : null}
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">New appointment</h2>
-            <div className="cc-subtle">Create an appointment in a clearer, more practical order.</div>
+            <h2 className="cc-h2">{ui.newAppointment}</h2>
+            <div className="cc-subtle">{ui.newAppointmentSubtitle}</div>
           </div>
 
           <button className="cc-btn" onClick={refresh} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? ui.loading : ui.refresh}
           </button>
         </div>
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-strong">Appointment details</div>
+          <div className="cc-strong">{ui.details}</div>
 
           <div className="cc-grid-2">
             <div className="cc-field">
@@ -595,7 +636,7 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
         </div>
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-strong">Transport</div>
+          <div className="cc-strong">{ui.transport}</div>
 
           <div className="cc-grid-2">
             <div className="cc-field">
@@ -644,7 +685,7 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
         </div>
 
         <div className="cc-panel-soft cc-stack" style={{ padding: 16, borderRadius: 20 }}>
-          <div className="cc-strong">Encrypted notes</div>
+          <div className="cc-strong">{ui.encryptedNotes}</div>
 
           <div className="cc-field">
             <div className="cc-label">Notes (encrypted, optional)</div>
@@ -660,7 +701,7 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
 
         <div className="cc-row">
           <button className="cc-btn cc-btn-primary" onClick={createAppointment} disabled={saving}>
-            {saving ? "Saving…" : "Create appointment"}
+            {saving ? ui.saving : ui.createAppointment}
           </button>
         </div>
       </div>

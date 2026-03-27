@@ -9,6 +9,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { DEFAULT_ACCOUNT_LANGUAGE_CODE, normaliseLanguageCode } from "@/lib/languages";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type PatientRow = { id: string; display_name: string };
 
@@ -64,6 +65,7 @@ function isDecryptMismatchError(message: string) {
 export default function ProfileClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -455,65 +457,106 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
     }
   }
 
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Profilo",
+          summary: "Riepilogo",
+          message: "Messaggio",
+          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
+          secureSubtitle: "I campi dettagliati del profilo non sono ancora disponibili su questo dispositivo.",
+          detailsTitle: "Dettagli del profilo",
+          detailsSubtitle: "Mantieni allineate le note dettagliate e il riepilogo clinico senza doppio inserimento. Il riepilogo resta sempre in inglese.",
+          copyAll: "Copia tutto nel riepilogo inglese",
+          copying: "Copia in corso...",
+          refresh: "Aggiorna",
+          loading: "Caricamento...",
+          saveProfile: "Salva profilo",
+          saving: "Salvataggio...",
+          lastUpdated: "Ultimo aggiornamento",
+          noProfile: "Nessun profilo ancora registrato.",
+          advanceTitle: "Pianificazione anticipata",
+          advanceSubtitle: "Registra i dettagli chiave su rappresentanza e decisioni per passaggi di consegne e cura.",
+          detailedNotes: "Note dettagliate del profilo",
+          detailedNotesSubtitle: "Informazioni sensibili del cerchio disponibili quando l'accesso sicuro e pronto.",
+        }
+      : {
+          title: "Profile",
+          summary: "Summary",
+          message: "Message",
+          secureTitle: "Secure access is not ready on this device",
+          secureSubtitle: "Detailed profile fields are not available on this device yet.",
+          detailsTitle: "Profile details",
+          detailsSubtitle: "Keep detailed notes and the clinician summary aligned without double entry. The summary always stays in English.",
+          copyAll: "Copy all to English summary",
+          copying: "Copying...",
+          refresh: "Refresh",
+          loading: "Loading...",
+          saveProfile: "Save profile",
+          saving: "Saving...",
+          lastUpdated: "Last updated",
+          noProfile: "No profile record yet.",
+          advanceTitle: "Advance planning",
+          advanceSubtitle: "Record key decision-making and representation details for handover and care.",
+          detailedNotes: "Detailed profile notes",
+          detailedNotesSubtitle: "Sensitive circle information that opens when secure access is ready.",
+        };
+
   return (
     <MobileShell
-      title="Profile"
+      title={ui.title}
       subtitle={patient?.display_name ?? patientId}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/summary`}>
-          Summary
+          {ui.summary}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Message</div>
+          <div className="cc-status-error-title">{ui.message}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">Detailed profile fields are not available on this device yet.</div>
+          <div className="cc-strong">{ui.secureTitle}</div>
+          <div className="cc-subtle">{ui.secureSubtitle}</div>
         </div>
       ) : null}
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Profile details</h2>
-              <div className="cc-subtle">
-              Keep detailed notes and the clinician summary aligned without double entry. The summary always stays in English.
-              </div>
+              <h2 className="cc-h2">{ui.detailsTitle}</h2>
+              <div className="cc-subtle">{ui.detailsSubtitle}</div>
             </div>
 
           <div className="cc-row" style={{ flexWrap: "wrap" }}>
             <button className="cc-btn" onClick={copyAllToSummary} disabled={!vaultKey || summaryCopyBusy != null}>
-              {summaryCopyBusy === "all" ? "Copying..." : "Copy all to English summary"}
+              {summaryCopyBusy === "all" ? ui.copying : ui.copyAll}
             </button>
             <button className="cc-btn" onClick={loadProfile} disabled={loading}>
-              {loading ? "Loading..." : "Refresh"}
+              {loading ? ui.loading : ui.refresh}
             </button>
             <button className="cc-btn cc-btn-primary" onClick={saveProfile} disabled={!vaultKey || savingProfile}>
-              {savingProfile ? "Saving..." : "Save profile"}
+              {savingProfile ? ui.saving : ui.saveProfile}
             </button>
           </div>
         </div>
 
         <div className="cc-small cc-subtle">
-          {profile?.updated_at ? `Last updated: ${new Date(profile.updated_at).toLocaleString()}` : "No profile record yet."}
+          {profile?.updated_at ? `${ui.lastUpdated}: ${new Date(profile.updated_at).toLocaleString()}` : ui.noProfile}
         </div>
       </div>
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Advance planning</h2>
-            <div className="cc-subtle">
-              Record key decision-making and representation details for handover and care.
-            </div>
+            <h2 className="cc-h2">{ui.advanceTitle}</h2>
+            <div className="cc-subtle">{ui.advanceSubtitle}</div>
           </div>
         </div>
 
@@ -537,8 +580,8 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Detailed profile notes</h2>
-              <div className="cc-subtle">Sensitive circle information that opens when secure access is ready.</div>
+              <h2 className="cc-h2">{ui.detailedNotes}</h2>
+              <div className="cc-subtle">{ui.detailedNotesSubtitle}</div>
             </div>
           </div>
 

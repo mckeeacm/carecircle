@@ -8,6 +8,7 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type JournalRow = {
   id: string;
@@ -162,6 +163,7 @@ function needsIncidentCheckbox(activityType: string) {
 export default function JournalsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [rows, setRows] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -526,28 +528,87 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       ? "Save general report"
       : "Save activity";
 
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Diario",
+          today: "Oggi",
+          error: "Errore",
+          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
+          secureSubtitle: "I dettagli protetti del diario appariranno quando questo dispositivo avra completato la configurazione sicura.",
+          allEntries: "Tutte le voci",
+          circleFeed: "Feed del cerchio",
+          loading: "Caricamento...",
+          refresh: "Aggiorna",
+          trackersTitle: "Tracker di oggi",
+          trackersSubtitle: "Umore, dolore e sobrieta vengono salvati insieme come un unico tracker.",
+          mood: "Umore",
+          pain: "Dolore",
+          sobriety: "Sobrieta",
+          yes: "Si",
+          no: "No",
+          shareTracker: "Condividi il tracker nel diario del cerchio",
+          saveTrackers: "Salva tracker",
+          newEntry: "Nuova voce",
+          newEntrySubtitle: "Scegli un titolo di diario e completa il modulo corrispondente.",
+          journalTitle: "Titolo del diario",
+          shareToCircle: "Condividi con il cerchio",
+          nonPatientShared: "Le voci dei membri non pazienti sono sempre condivise con il cerchio.",
+          recentEntries: "Voci recenti",
+          noSharedEntries: "Ancora nessuna voce condivisa.",
+          noEntries: "Ancora nessuna voce.",
+        }
+      : {
+          title: "Journal",
+          today: "Today",
+          error: "Error",
+          secureTitle: "Secure access is not ready on this device",
+          secureSubtitle: "Protected journal details will appear once this device finishes secure setup.",
+          allEntries: "All entries",
+          circleFeed: "Circle feed",
+          loading: "Loading...",
+          refresh: "Refresh",
+          trackersTitle: "Today's trackers",
+          trackersSubtitle: "Mood, pain and sobriety are saved together as one tracker log.",
+          mood: "Mood",
+          pain: "Pain",
+          sobriety: "Sobriety",
+          yes: "Yes",
+          no: "No",
+          shareTracker: "Share tracker log to circle journal",
+          saveTrackers: "Save trackers",
+          newEntry: "New entry",
+          newEntrySubtitle: "Choose a journal title and complete the matching form.",
+          journalTitle: "Journal title",
+          shareToCircle: "Share to circle",
+          nonPatientShared: "Entries from non-patient members are always shared to the circle.",
+          recentEntries: "Recent entries",
+          noSharedEntries: "No shared entries yet.",
+          noEntries: "No entries yet.",
+        };
+
   return (
     <MobileShell
-      title="Journal"
+      title={ui.title}
       subtitle={myRole ? `Role: ${myRole}` : patientId}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-          Today
+          {ui.today}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{ui.error}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">Protected journal details will appear once this device finishes secure setup.</div>
+          <div className="cc-strong">{ui.secureTitle}</div>
+          <div className="cc-subtle">{ui.secureSubtitle}</div>
         </div>
       ) : null}
 
@@ -556,16 +617,16 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           className={`cc-tab ${viewMode === "all" ? "cc-tab-active" : ""}`}
           onClick={() => setViewMode("all")}
         >
-          All entries
+          {ui.allEntries}
         </button>
         <button
           className={`cc-tab ${viewMode === "shared" ? "cc-tab-active" : ""}`}
           onClick={() => setViewMode("shared")}
         >
-          Circle feed
+          {ui.circleFeed}
         </button>
         <button className="cc-btn" onClick={refresh} disabled={loading}>
-          {loading ? "Loading..." : "Refresh"}
+          {loading ? ui.loading : ui.refresh}
         </button>
       </div>
 
@@ -573,14 +634,14 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
             <div>
-              <h2 className="cc-h2">Today's trackers</h2>
-              <div className="cc-subtle">Mood, pain and sobriety are saved together as one tracker log.</div>
+              <h2 className="cc-h2">{ui.trackersTitle}</h2>
+              <div className="cc-subtle">{ui.trackersSubtitle}</div>
             </div>
           </div>
 
           <div className="cc-grid-3">
             <div className="cc-panel-soft cc-stack">
-              <div className="cc-strong">Mood</div>
+              <div className="cc-strong">{ui.mood}</div>
               <div className="cc-row">
                 {["Sad", "Low", "Okay", "Good", "Great"].map((mood) => (
                   <button
@@ -595,7 +656,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-panel-soft cc-stack">
-              <div className="cc-strong">Pain</div>
+              <div className="cc-strong">{ui.pain}</div>
               <div className="cc-row" style={{ flexWrap: "wrap" }}>
                 {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
                   <button
@@ -610,19 +671,19 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-panel-soft cc-stack">
-              <div className="cc-strong">Sobriety</div>
+              <div className="cc-strong">{ui.sobriety}</div>
               <div className="cc-row">
                 <button
                   className={`cc-btn ${trackerSobriety === "yes" ? "cc-btn-primary" : ""}`}
                   onClick={() => setTrackerSobriety("yes")}
                 >
-                  Yes
+                  {ui.yes}
                 </button>
                 <button
                   className={`cc-btn ${trackerSobriety === "no" ? "cc-btn-danger" : ""}`}
                   onClick={() => setTrackerSobriety("no")}
                 >
-                  No
+                  {ui.no}
                 </button>
               </div>
             </div>
@@ -630,12 +691,12 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
           <label className="cc-check">
             <input type="checkbox" checked={trackerShare} onChange={(e) => setTrackerShare(e.target.checked)} />
-            <span className="cc-label">Share tracker log to circle journal</span>
+            <span className="cc-label">{ui.shareTracker}</span>
           </label>
 
           <div className="cc-row">
             <button className="cc-btn cc-btn-primary" onClick={saveTrackers} disabled={!vaultKey}>
-              Save trackers
+              {ui.saveTrackers}
             </button>
           </div>
         </div>
@@ -644,14 +705,14 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">New entry</h2>
-            <div className="cc-subtle">Choose a journal title and complete the matching form.</div>
+            <h2 className="cc-h2">{ui.newEntry}</h2>
+            <div className="cc-subtle">{ui.newEntrySubtitle}</div>
           </div>
         </div>
 
         <div className="cc-grid-2">
           <div className="cc-field">
-            <div className="cc-label">Journal title</div>
+            <div className="cc-label">{ui.journalTitle}</div>
             <select
               className="cc-select"
               value={journalTitle}
@@ -668,11 +729,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
           {isPatientRole ? (
             <label className="cc-check" style={{ alignSelf: "end" }}>
               <input type="checkbox" checked={sharedToCircle} onChange={(e) => setSharedToCircle(e.target.checked)} />
-              <span className="cc-label">Share to circle</span>
+              <span className="cc-label">{ui.shareToCircle}</span>
             </label>
           ) : (
             <div className="cc-small cc-subtle" style={{ alignSelf: "end" }}>
-              Entries from non-patient members are always shared to the circle.
+              {ui.nonPatientShared}
             </div>
           )}
         </div>
@@ -817,11 +878,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       </div>
 
       <div className="cc-card cc-card-pad">
-        <h2 className="cc-h2">Recent entries</h2>
+        <h2 className="cc-h2">{ui.recentEntries}</h2>
         <div className="cc-spacer-12" />
 
         {rows.length === 0 ? (
-          <div className="cc-small">{viewMode === "shared" ? "No shared entries yet." : "No entries yet."}</div>
+          <div className="cc-small">{viewMode === "shared" ? ui.noSharedEntries : ui.noEntries}</div>
         ) : (
           <div className="cc-stack">
             {rows.map((r) => (

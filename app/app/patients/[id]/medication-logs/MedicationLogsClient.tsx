@@ -10,6 +10,7 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type MedicationRow = {
   id: string;
@@ -170,6 +171,7 @@ function stripSystemPrefix(value: string | undefined) {
 export default function MedicationLogsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [meds, setMeds] = useState<MedicationRow[]>([]);
   const [logs, setLogs] = useState<MedicationLogRow[]>([]);
@@ -744,52 +746,103 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
       ? selectedMedicationNames[0]
       : `${selectedMedicationNames.length} medications selected`;
 
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Registri farmaci",
+          subtitle: "Monitora l'attivita dei farmaci",
+          medicationsSelected: "farmaci selezionati",
+          today: "Oggi",
+          error: "Errore",
+          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
+          secureSubtitle: "Le note protette saranno disponibili quando questo dispositivo avra completato la configurazione sicura.",
+          quickLog: "Registrazione rapida",
+          quickLogSubtitle: "Tocca uno o piu farmaci, scegli uno stato e salva.",
+          loading: "Caricamento...",
+          refresh: "Aggiorna",
+          noActiveMeds: "Nessun farmaco attivo",
+          noActiveMedsSubtitle: "Non ci sono ancora farmaci attivi da registrare.",
+          medication: "Farmaco",
+          status: "Stato",
+          note: "Nota (protetta, facoltativa)",
+          optionalNote: "Nota facoltativa...",
+          saveLog: "Salva registro",
+          saving: "Salvataggio...",
+        }
+      : {
+          title: "Medication logs",
+          subtitle: "Track medication activity",
+          medicationsSelected: "medications selected",
+          today: "Today",
+          error: "Error",
+          secureTitle: "Secure access is not ready on this device",
+          secureSubtitle: "Protected notes will become available once this device finishes secure setup.",
+          quickLog: "Quick log",
+          quickLogSubtitle: "Tap one or more medications, choose a status, and save.",
+          loading: "Loading...",
+          refresh: "Refresh",
+          noActiveMeds: "No active medications",
+          noActiveMedsSubtitle: "There are no active medications to log yet.",
+          medication: "Medication",
+          status: "Status",
+          note: "Note (encrypted, optional)",
+          optionalNote: "Optional note...",
+          saveLog: "Save log",
+          saving: "Saving...",
+        };
+
   return (
     <MobileShell
-      title="Medication logs"
-      subtitle={selectedMedicationSubtitle}
+      title={ui.title}
+      subtitle={
+        selectedMedicationNames.length === 0
+          ? ui.subtitle
+          : selectedMedicationNames.length === 1
+          ? selectedMedicationNames[0]
+          : `${selectedMedicationNames.length} ${ui.medicationsSelected}`
+      }
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-          Today
+          {ui.today}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{ui.error}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">Protected notes will become available once this device finishes secure setup.</div>
+          <div className="cc-strong">{ui.secureTitle}</div>
+          <div className="cc-subtle">{ui.secureSubtitle}</div>
         </div>
       ) : null}
 
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">Quick log</h2>
-            <div className="cc-subtle">Tap one or more medications, choose a status, and save.</div>
+            <h2 className="cc-h2">{ui.quickLog}</h2>
+            <div className="cc-subtle">{ui.quickLogSubtitle}</div>
           </div>
 
           <button className="cc-btn" onClick={refresh} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
+            {loading ? ui.loading : ui.refresh}
           </button>
         </div>
 
         {meds.length === 0 ? (
           <div className="cc-panel-soft" style={{ padding: 16, borderRadius: 20 }}>
-            <div className="cc-strong">No active medications</div>
-            <div className="cc-small cc-subtle">There are no active medications to log yet.</div>
+            <div className="cc-strong">{ui.noActiveMeds}</div>
+            <div className="cc-small cc-subtle">{ui.noActiveMedsSubtitle}</div>
           </div>
         ) : (
           <>
             <div className="cc-field">
-              <div className="cc-label">Medication</div>
+              <div className="cc-label">{ui.medication}</div>
               <div
                 style={{
                   display: "grid",
@@ -828,7 +881,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Status</div>
+              <div className="cc-label">{ui.status}</div>
               <div
                 style={{
                   display: "grid",
@@ -854,12 +907,12 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Note (encrypted, optional)</div>
+              <div className="cc-label">{ui.note}</div>
               <textarea
                 className="cc-textarea"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Optional note…"
+                placeholder={ui.optionalNote}
                 disabled={!vaultKey}
               />
             </div>
@@ -870,7 +923,7 @@ export default function MedicationLogsClient({ patientId }: { patientId: string 
                 onClick={createLog}
                 disabled={!vaultKey || saving || selectedMedicationIds.length === 0}
               >
-                {saving ? "Saving…" : "Save log"}
+                {saving ? ui.saving : ui.saveLog}
               </button>
             </div>
           </>

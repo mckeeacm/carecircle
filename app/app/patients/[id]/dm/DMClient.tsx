@@ -8,6 +8,7 @@ import { vaultEncryptString } from "@/lib/e2ee/vaultCrypto";
 import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
+import { useUserLanguage } from "@/app/components/UserLanguageProvider";
 
 type ThreadRow = {
   thread_id: string;
@@ -53,6 +54,7 @@ function isDecryptMismatchError(message: string) {
 export default function DMClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
+  const { languageCode } = useUserLanguage();
 
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -334,7 +336,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
   }
 
   function nicknameForUser(userId: string) {
-    if (userId === currentUserId) return "You";
+    if (userId === currentUserId) return languageCode === "it" ? "Tu" : "You";
     const member = members.find((m) => m.user_id === userId);
     return member?.nickname?.trim() || userId;
   }
@@ -351,61 +353,112 @@ export default function DMClient({ patientId }: { patientId: string }) {
     return "";
   }
 
+  const ui =
+    languageCode === "it"
+      ? {
+          title: "Messaggi diretti",
+          subtitle: "Messaggi privati 1 a 1 per questo cerchio",
+          today: "Oggi",
+          error: "Errore",
+          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
+          secureSubtitle: "I messaggi privati non sono ancora disponibili per questa persona su questo dispositivo.",
+          introTitle: "Messaggi diretti privati 1 a 1",
+          introBody: "Questa pagina e per messaggi privati tra due membri del cerchio. I messaggi restano protetti automaticamente.",
+          threads: "Conversazioni",
+          loading: "Caricamento...",
+          refresh: "Aggiorna",
+          newThread: "Nuovo messaggio diretto",
+          who: "Chi vuoi contattare?",
+          selectMember: "Seleziona un membro del cerchio...",
+          conversationTitle: "Titolo della conversazione",
+          openDirectMessage: "Apri messaggio diretto",
+          noThreads: "Ancora nessuna conversazione diretta.",
+          lastMessage: "Ultimo messaggio",
+          created: "Creato",
+          messages: "Messaggi",
+          noThreadSelected: "Nessuna conversazione selezionata",
+          selectThread: "Seleziona o apri una conversazione diretta.",
+          loadingMessages: "Caricamento messaggi...",
+          noMessages: "Ancora nessun messaggio.",
+        }
+      : {
+          title: "Direct messages",
+          subtitle: "Private 1-to-1 messages for this circle",
+          today: "Today",
+          error: "Error",
+          secureTitle: "Secure access is not ready on this device",
+          secureSubtitle: "Private messages are not available yet for this person on this device.",
+          introTitle: "Private 1-to-1 direct messages",
+          introBody: "This page is for private messages between two circle members. Messages stay protected automatically.",
+          threads: "Threads",
+          loading: "Loading...",
+          refresh: "Refresh",
+          newThread: "New direct message",
+          who: "Who do you want to message?",
+          selectMember: "Select a circle member...",
+          conversationTitle: "Conversation title",
+          openDirectMessage: "Open direct message",
+          noThreads: "No direct message threads yet.",
+          lastMessage: "Last message",
+          created: "Created",
+          messages: "Messages",
+          noThreadSelected: "No thread selected",
+          selectThread: "Select or open a direct message thread.",
+          loadingMessages: "Loading messages...",
+          noMessages: "No messages yet.",
+        };
+
   return (
     <MobileShell
-      title="Direct messages"
-      subtitle="Private 1-to-1 messages for this circle"
+      title={ui.title}
+      subtitle={ui.subtitle}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
-          Today
+          {ui.today}
         </Link>
       }
     >
       {msg ? (
         <div className="cc-status cc-status-error">
-          <div className="cc-status-error-title">Error</div>
+          <div className="cc-status-error-title">{ui.error}</div>
           <div className="cc-wrap">{msg}</div>
         </div>
       ) : null}
 
       {!vaultKey ? (
         <div className="cc-status cc-status-loading">
-          <div className="cc-strong">Secure access is not ready on this device</div>
-          <div className="cc-subtle">
-            Private messages are not available yet for this person on this device.
-          </div>
+          <div className="cc-strong">{ui.secureTitle}</div>
+          <div className="cc-subtle">{ui.secureSubtitle}</div>
         </div>
       ) : null}
 
       <div className="cc-panel-blue">
-        <div className="cc-strong">Private 1-to-1 direct messages</div>
-        <div className="cc-subtle">
-          This page is for private messages between two circle members. Messages stay protected automatically.
-        </div>
+        <div className="cc-strong">{ui.introTitle}</div>
+        <div className="cc-subtle">{ui.introBody}</div>
       </div>
 
       <div className="cc-grid-2-125">
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Threads</h2>
+            <h2 className="cc-h2">{ui.threads}</h2>
             <button className="cc-btn" onClick={refreshThreads} disabled={loading}>
-              {loading ? "Loading..." : "Refresh"}
+              {loading ? ui.loading : ui.refresh}
             </button>
           </div>
 
           <div className="cc-panel-blue cc-stack">
-            <div className="cc-strong">New direct message</div>
+            <div className="cc-strong">{ui.newThread}</div>
 
             <div className="cc-field">
-              <div className="cc-label">Who do you want to message?</div>
+              <div className="cc-label">{ui.who}</div>
               <select
                 className="cc-select"
                 value={selectedRecipientId}
                 onChange={(e) => setSelectedRecipientId(e.target.value)}
                 disabled={!vaultKey}
               >
-                <option value="">Select a circle member...</option>
+                <option value="">{ui.selectMember}</option>
                 {members
                   .filter((m) => m.user_id !== currentUserId)
                   .map((m) => (
@@ -417,7 +470,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
             </div>
 
             <div className="cc-field">
-              <div className="cc-label">Conversation title</div>
+              <div className="cc-label">{ui.conversationTitle}</div>
               <input
                 className="cc-input"
                 value={newThreadTitle}
@@ -427,7 +480,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
             </div>
 
             <button className="cc-btn cc-btn-primary" onClick={openOrCreateDirectThread} disabled={!vaultKey}>
-              Open direct message
+              {ui.openDirectMessage}
             </button>
 
             <div className="cc-small cc-subtle">
@@ -437,7 +490,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
           <div className="cc-stack">
             {threads.length === 0 ? (
-              <div className="cc-small">No direct message threads yet.</div>
+              <div className="cc-small">{ui.noThreads}</div>
             ) : (
               threads.map((t) => {
                 const active = t.thread_id === activeThreadId;
@@ -468,8 +521,8 @@ export default function DMClient({ patientId }: { patientId: string }) {
                     ) : null}
                     <div className="cc-small cc-subtle" style={{ marginTop: 4 }}>
                       {t.last_message_at
-                        ? `Last message: ${new Date(t.last_message_at).toLocaleString()}`
-                        : `Created: ${new Date(t.created_at).toLocaleString()}`}
+                        ? `${ui.lastMessage}: ${new Date(t.last_message_at).toLocaleString()}`
+                        : `${ui.created}: ${new Date(t.created_at).toLocaleString()}`}
                     </div>
                     {decryptError ? (
                       <div className="cc-small" style={{ marginTop: 6, color: "crimson" }}>
@@ -485,21 +538,21 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
         <div className="cc-card cc-card-pad cc-stack">
           <div className="cc-row-between">
-            <h2 className="cc-h2">Messages</h2>
-            <span className="cc-small cc-wrap">{activeThreadId || "No thread selected"}</span>
+            <h2 className="cc-h2">{ui.messages}</h2>
+            <span className="cc-small cc-wrap">{activeThreadId || ui.noThreadSelected}</span>
           </div>
 
           {!activeThreadId ? (
-            <div className="cc-panel">Select or open a direct message thread.</div>
+            <div className="cc-panel">{ui.selectThread}</div>
           ) : (
             <>
               {openingThread ? (
-                <div className="cc-panel">Loading messages...</div>
+                <div className="cc-panel">{ui.loadingMessages}</div>
               ) : null}
 
               <div className="cc-stack">
                 {messages.length === 0 ? (
-                  <div className="cc-small">No messages yet.</div>
+                  <div className="cc-small">{ui.noMessages}</div>
                 ) : (
                   messages.map((m) => {
                     const plain = bodyPlain[m.id];
