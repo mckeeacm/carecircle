@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -183,7 +183,7 @@ function StepRow({ label, active, done }: { label: string; active: boolean; done
       style={{ justifyContent: "flex-start" }}
     >
       <span className={`cc-pill ${done ? "cc-pill-primary" : ""}`} style={{ minWidth: 34, textAlign: "center" }}>
-        {done ? "✓" : "•"}
+        {done ? "âœ“" : "â€¢"}
       </span>
       <div style={{ fontWeight: active ? 900 : 800, opacity: done ? 0.9 : 0.85 }}>{label}</div>
     </div>
@@ -273,7 +273,7 @@ export default function OnboardingClient() {
           signInRequired: "Accesso richiesto",
           signInRequiredDesc: "Accedi prima, poi riapri il link di invito.",
           tryAgain: "Riprova",
-          alreadyLinked: "Sei già collegato a questo cerchio.",
+          alreadyLinked: "Sei giÃ  collegato a questo cerchio.",
           joinedCircle: "Ti sei unito al cerchio.",
           chooseCircle: "Scegli il tuo cerchio",
           chooseCircleDesc: "Seleziona un cerchio esistente oppure creane uno nuovo qui.",
@@ -295,8 +295,8 @@ export default function OnboardingClient() {
             "La configurazione sicura locale di questo dispositivo non corrisponde a quella registrata per il tuo account. Reimposta l'accesso sicuro su questo dispositivo e poi continua.",
           secureNeedsRefreshing: "L'accesso sicuro deve essere aggiornato",
           secureNeedsRefreshingDesc:
-            "Questa condivisione del cerchio è stata creata per una configurazione del dispositivo precedente. Reimposta l'accesso sicuro su questo dispositivo, poi chiedi al proprietario del cerchio di condividere di nuovo l'accesso.",
-          deviceReady: "Questo dispositivo è pronto",
+            "Questa condivisione del cerchio Ã¨ stata creata per una configurazione del dispositivo precedente. Reimposta l'accesso sicuro su questo dispositivo, poi chiedi al proprietario del cerchio di condividere di nuovo l'accesso.",
+          deviceReady: "Questo dispositivo Ã¨ pronto",
           settingUp: "Configurazione...",
           setUpSecureAccessDevice: "Configura l'accesso sicuro su questo dispositivo",
           resetting: "Reimpostazione...",
@@ -305,13 +305,13 @@ export default function OnboardingClient() {
           sharing: "Condivisione...",
           shareSecureAccessMembers: "Condividi l'accesso sicuro con i membri",
           nonControllerReshareHelp:
-            "Se questo dispositivo è stato reimpostato, il proprietario del cerchio deve condividere di nuovo l'accesso sicuro prima che il contenuto protetto possa aprirsi.",
+            "Se questo dispositivo Ã¨ stato reimpostato, il proprietario del cerchio deve condividere di nuovo l'accesso sicuro prima che il contenuto protetto possa aprirsi.",
           finishingSetup: "Completamento configurazione...",
           finishSecureSetupDevice: "Completa la configurazione sicura su questo dispositivo",
           stayHereUntilReady:
-            "Questa pagina rimane qui finché configurazione del dispositivo, accesso al cerchio e accesso sicuro locale non sono tutti pronti.",
+            "Questa pagina rimane qui finchÃ© configurazione del dispositivo, accesso al cerchio e accesso sicuro locale non sono tutti pronti.",
           profileTitle: "Configura il profilo del cerchio",
-          profileDesc: "Ora che l'accesso sicuro è pronto, aggiungi qui i dettagli di base.",
+          profileDesc: "Ora che l'accesso sicuro Ã¨ pronto, aggiungi qui i dettagli di base.",
           communicationNotes: "Note sulla comunicazione",
           communicationPlaceholder: "Preferenze di comunicazione",
           allergies: "Allergie",
@@ -329,9 +329,9 @@ export default function OnboardingClient() {
           seeding: "Inizializzazione...",
           seedDefaults: "Inizializza predefiniti",
           openPermissionsPage: "Apri pagina permessi",
-          onboardingComplete: "Una volta inizializzati i predefiniti, l'onboarding è completo.",
+          onboardingComplete: "Una volta inizializzati i predefiniti, l'onboarding Ã¨ completo.",
           readyTitle: "Sei pronto",
-          readyDesc: "Questo dispositivo è configurato e il tuo cerchio è pronto da usare.",
+          readyDesc: "Questo dispositivo Ã¨ configurato e il tuo cerchio Ã¨ pronto da usare.",
           goToHub: "Vai all'Hub",
           permissionsManaged: "I permessi in questo cerchio sono gestiti dal controller.",
         }
@@ -1105,10 +1105,10 @@ export default function OnboardingClient() {
           <div>
             <div className="cc-kicker">CareCircle</div>
             <h1 className="cc-h1">{ui.welcome}</h1>
-            <div className="cc-subtle">Loading your setup…</div>
+            <div className="cc-subtle">{ui.loadingSetup}</div>
           </div>
           <div className="cc-card cc-card-pad">
-            <div className="cc-subtle">Loading onboarding…</div>
+            <div className="cc-subtle">{ui.loadingOnboarding}</div>
           </div>
         </div>
       </div>
@@ -1122,7 +1122,7 @@ export default function OnboardingClient() {
           <div>
             <div className="cc-kicker">CareCircle</div>
             <h1 className="cc-h1">{ui.welcome}, {displayGreeting}</h1>
-            <div className="cc-subtle">Let’s get this device set up properly for your circle.</div>
+            <div className="cc-subtle">{ui.intro}</div>
             {userEmail ? <div className="cc-small cc-subtle cc-wrap">{userEmail}</div> : null}
           </div>
 
@@ -1182,8 +1182,8 @@ export default function OnboardingClient() {
                 <div className="cc-strong">{selectedPatient?.display_name ?? selectedPatientId}</div>
                 <div className="cc-small cc-wrap">{selectedPatientId}</div>
                 <div className="cc-small">
-                  Role: <b>{selectedMembership?.role ?? "—"}</b>
-                  {isController ? " • controller" : ""}
+                  {ui.role}: <b>{selectedMembership?.role ?? "-"}</b>
+                  {isController ? ` • ${ui.controller}` : ""}
                 </div>
               </div>
             ) : null}
@@ -1210,29 +1210,29 @@ export default function OnboardingClient() {
           <div className="cc-card cc-card-pad cc-stack">
             {currentStep === "invite" ? (
               <>
-                <h2 className="cc-h2">Joining your circle</h2>
-                <div className="cc-subtle">We’re accepting your invite and linking you to the circle.</div>
+                <h2 className="cc-h2">{ui.joiningCircle}</h2>
+                <div className="cc-subtle">{ui.joiningDesc}</div>
 
                 {inviteStatus === "checking" || inviteStatus === "accepting" ? (
                   <div className="cc-status cc-status-loading">
                     <div className="cc-strong">
-                      {inviteStatus === "checking" ? "Checking sign-in…" : "Accepting invite…"}
+                      {inviteStatus === "checking" ? ui.checkingSignIn : ui.acceptingInvite}
                     </div>
-                    <div className="cc-subtle">Please keep this page open.</div>
+                    <div className="cc-subtle">{ui.keepOpen}</div>
                   </div>
                 ) : null}
 
                 {inviteStatus === "need_auth" ? (
                   <div className="cc-status cc-status-error">
-                    <div className="cc-status-error-title">Sign in required</div>
-                    <div className="cc-subtle">Please sign in first, then reopen your invite link.</div>
+                    <div className="cc-status-error-title">{ui.signInRequired}</div>
+                    <div className="cc-subtle">{ui.signInRequiredDesc}</div>
                   </div>
                 ) : null}
 
                 {inviteStatus === "error" ? (
                   <div className="cc-row">
                     <button className="cc-btn cc-btn-primary" onClick={acceptInviteIfPresent}>
-                      Try again
+                      {ui.tryAgain}
                     </button>
                   </div>
                 ) : null}
@@ -1240,7 +1240,7 @@ export default function OnboardingClient() {
                 {inviteStatus === "accepted" && inviteResult ? (
                   <div className="cc-status cc-status-ok">
                     <div className="cc-strong">
-                      {inviteResult.already_member ? "You’re already linked to this circle." : "You’ve joined the circle."}
+                      {inviteResult.already_member ? ui.alreadyLinked : ui.joinedCircle}
                     </div>
                     <div className="cc-subtle">
                       Role: <b>{inviteResult.role}</b>
@@ -1261,7 +1261,7 @@ export default function OnboardingClient() {
                       <div className="cc-label">{ui.yourCircles}</div>
                       <select className="cc-select" value={selectedPatientId} onChange={(e) => setSelectedPatientId(e.target.value)}>
                         <option value="" disabled>
-                          Select…
+                          Selectâ€¦
                         </option>
                         {memberships.map((m) => (
                           <option key={m.patient_id} value={m.patient_id}>
@@ -1288,7 +1288,7 @@ export default function OnboardingClient() {
 
                 <div className="cc-row">
                   <button className="cc-btn cc-btn-primary" onClick={createCircle} disabled={busy === "create-circle"}>
-                    {busy === "create-circle" ? "Creating…" : "Create circle"}
+                    {busy === "create-circle" ? ui.creating : ui.createCircle}
                   </button>
                 </div>
               </>
@@ -1396,7 +1396,7 @@ export default function OnboardingClient() {
                       className="cc-textarea"
                       value={communicationNotes}
                       onChange={(e) => setCommunicationNotes(e.target.value)}
-                      placeholder="Communication preferences"
+                      placeholder={ui.communicationPlaceholder}
                     />
                   </div>
 
@@ -1439,13 +1439,13 @@ export default function OnboardingClient() {
                     className="cc-textarea"
                     value={safetyNotes}
                     onChange={(e) => setSafetyNotes(e.target.value)}
-                    placeholder="Important safety information"
+                    placeholder={ui.safetyPlaceholder}
                   />
                 </div>
 
                 <div className="cc-row">
                   <button className="cc-btn cc-btn-primary" onClick={saveProfileInline} disabled={profileBusy}>
-                    {profileBusy ? "Saving…" : "Save and continue"}
+                    {profileBusy ? ui.saving : ui.saveContinue}
                   </button>
                 </div>
               </>
@@ -1458,7 +1458,7 @@ export default function OnboardingClient() {
 
                 <div className="cc-row">
                   <button className="cc-btn cc-btn-primary" onClick={seedDefaults} disabled={busy === "seed"}>
-                    {busy === "seed" ? "Seeding…" : "Seed defaults"}
+                    {busy === "seed" ? ui.seeding : ui.seedDefaults}
                   </button>
 
                   <Link className="cc-btn" href={`/app/account/permissions?pid=${selectedPatientId}`}>
@@ -1472,7 +1472,7 @@ export default function OnboardingClient() {
 
             {currentStep === "finish" ? (
               <>
-                <h2 className="cc-h2">You’re ready</h2>
+                <h2 className="cc-h2">{ui.readyTitle}</h2>
                 <div className="cc-subtle">{ui.readyDesc}</div>
 
                 <div className="cc-row">
