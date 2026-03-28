@@ -13,6 +13,7 @@ import {
 } from "@/lib/e2ee/vaultShares";
 import MobileShell from "@/app/components/MobileShell";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { getPageUi } from "@/lib/pageUi";
 
 type CacheRecord = {
   v: 1;
@@ -149,86 +150,7 @@ export default function VaultInitClient() {
   const [hasCached, setHasCached] = useState(false);
   const [isController, setIsController] = useState<boolean | null>(null);
 
-  const ui =
-    languageCode === "it"
-      ? {
-          title: "Accesso sicuro",
-          loadingTitle: "Caricamento accesso sicuro",
-          account: "Account",
-          hub: "Hub",
-          message: "Messaggio",
-          loadingCard: "Controllo accesso sicuro...",
-          signedInAs: "Accesso effettuato come",
-          secureAccess: "Accesso sicuro del cerchio",
-          fixAction: "Correggi accesso sicuro",
-          fixingAction: "Correzione accesso sicuro...",
-          continueToday: "Continua a Oggi",
-          whatThisDoes: "Cosa fa questa pagina",
-          whatThisDoesText:
-            "Questa pagina controlla automaticamente la chiave del dispositivo, la condivisione sicura e l'accesso protetto per questo cerchio, poi completa la configurazione quando possibile.",
-          advanced: "Risoluzione avanzata dei problemi",
-          hide: "Nascondi",
-          show: "Mostra",
-          deviceKey: "Chiave dispositivo",
-          shareRow: "Condivisione",
-          cachedVault: "Vault salvato",
-          controller: "Responsabile",
-          ok: "OK",
-          unknown: "sconosciuto",
-          missing: "mancante",
-          present: "presente",
-          trueLabel: "vero",
-          falseLabel: "falso",
-          refreshStatus: "Aggiorna stato",
-          resetDevice: "Reimposta questo dispositivo",
-          resetting: "Reimpostazione...",
-          shareReady: "Condividi con i membri pronti",
-          sharing: "Condivisione...",
-          dangerZone: "Zona di rischio",
-          dangerText:
-            "Creare una NUOVA chiave del cerchio può lasciare i contenuti più vecchi collegati alla chiave precedente.",
-          newKey: "Inizializza NUOVA chiave sicura",
-          rekeying: "Rigenerazione chiave...",
-        }
-      : {
-          title: "Secure access",
-          loadingTitle: "Loading secure circle access",
-          account: "Account",
-          hub: "Hub",
-          message: "Message",
-          loadingCard: "Checking secure access...",
-          signedInAs: "Signed in as",
-          secureAccess: "Circle secure access",
-          fixAction: "Fix secure access",
-          fixingAction: "Fixing secure access...",
-          continueToday: "Continue to Today",
-          whatThisDoes: "What this does",
-          whatThisDoesText:
-            "This page automatically checks your device key, secure share, and vault access for this circle, then completes setup where possible.",
-          advanced: "Advanced troubleshooting",
-          hide: "Hide",
-          show: "Show",
-          deviceKey: "Device key",
-          shareRow: "Share row",
-          cachedVault: "Cached vault",
-          controller: "Controller",
-          ok: "OK",
-          unknown: "unknown",
-          missing: "missing",
-          present: "present",
-          trueLabel: "true",
-          falseLabel: "false",
-          refreshStatus: "Refresh status",
-          resetDevice: "Reset this device",
-          resetting: "Resetting...",
-          shareReady: "Share to ready members",
-          sharing: "Sharing...",
-          dangerZone: "Danger zone",
-          dangerText:
-            "Creating a NEW circle key can leave older encrypted content tied to the previous key.",
-          newKey: "Initialise NEW secure key",
-          rekeying: "Rekeying...",
-        };
+  const ui = getPageUi("vaultInit", languageCode);
 
   async function getSessionUser() {
     const { data, error } = await supabase.auth.getSession();

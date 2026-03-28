@@ -10,6 +10,7 @@ import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { DEFAULT_ACCOUNT_LANGUAGE_CODE, normaliseLanguageCode } from "@/lib/languages";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { getPageUi } from "@/lib/pageUi";
 
 type PatientRow = { id: string; display_name: string };
 
@@ -457,82 +458,7 @@ export default function ProfileClient({ patientId }: { patientId: string }) {
     }
   }
 
-  const ui =
-    languageCode === "it"
-      ? {
-          title: "Profilo",
-          summary: "Riepilogo",
-          message: "Messaggio",
-          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
-          secureSubtitle: "I campi dettagliati del profilo non sono ancora disponibili su questo dispositivo.",
-          detailsTitle: "Dettagli del profilo",
-          detailsSubtitle: "Mantieni allineate le note dettagliate e il riepilogo clinico senza doppio inserimento. Il riepilogo resta sempre in inglese.",
-          copyAll: "Copia tutto nel riepilogo inglese",
-          copying: "Copia in corso...",
-          refresh: "Aggiorna",
-          loading: "Caricamento...",
-          saveProfile: "Salva profilo",
-          saving: "Salvataggio...",
-          lastUpdated: "Ultimo aggiornamento",
-          noProfile: "Nessun profilo ancora registrato.",
-          advanceTitle: "Pianificazione anticipata",
-          advanceSubtitle: "Registra i dettagli chiave su rappresentanza e decisioni per passaggi di consegne e cura.",
-          detailedNotes: "Note dettagliate del profilo",
-          detailedNotesSubtitle: "Informazioni sensibili del cerchio disponibili quando l'accesso sicuro e pronto.",
-          clinicianPreview: "Anteprima riepilogo clinico",
-          clinicianPreviewText:
-            "Questi campi di riepilogo restano in inglese per i membri autorizzati, anche se qui le note dettagliate non sono ancora aperte.",
-          openSummary: "Apri riepilogo",
-          medications: "Farmaci",
-          medicationsSubtitle: "Usato da Registri farmaci.",
-          openLogs: "Apri registri",
-          addMedication: "Aggiungi farmaco",
-          name: "Nome",
-          dosage: "Dosaggio",
-          scheduleText: "Testo programma",
-          addMedicationAction: "Aggiungi farmaco",
-          adding: "Aggiunta...",
-          optional: "Facoltativo",
-          noMedications: "Ancora nessun farmaco.",
-          dash: "-",
-        }
-      : {
-          title: "Profile",
-          summary: "Summary",
-          message: "Message",
-          secureTitle: "Secure access is not ready on this device",
-          secureSubtitle: "Detailed profile fields are not available on this device yet.",
-          detailsTitle: "Profile details",
-          detailsSubtitle: "Keep detailed notes and the clinician summary aligned without double entry. The summary always stays in English.",
-          copyAll: "Copy all to English summary",
-          copying: "Copying...",
-          refresh: "Refresh",
-          loading: "Loading...",
-          saveProfile: "Save profile",
-          saving: "Saving...",
-          lastUpdated: "Last updated",
-          noProfile: "No profile record yet.",
-          advanceTitle: "Advance planning",
-          advanceSubtitle: "Record key decision-making and representation details for handover and care.",
-          detailedNotes: "Detailed profile notes",
-          detailedNotesSubtitle: "Sensitive circle information that opens when secure access is ready.",
-          clinicianPreview: "Clinician summary preview",
-          clinicianPreviewText:
-            "These summary fields stay in English for permitted members, even if detailed notes are not open here yet.",
-          openSummary: "Open summary",
-          medications: "Medications",
-          medicationsSubtitle: "Used by Medication logs.",
-          openLogs: "Open logs",
-          addMedication: "Add medication",
-          name: "Name",
-          dosage: "Dosage",
-          scheduleText: "Schedule text",
-          addMedicationAction: "Add medication",
-          adding: "Adding...",
-          optional: "Optional",
-          noMedications: "No medications yet.",
-          dash: "-",
-        };
+  const ui = getPageUi("profile", languageCode);
 
   return (
     <MobileShell

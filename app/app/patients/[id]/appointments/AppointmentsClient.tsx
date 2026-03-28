@@ -9,6 +9,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { getPageUi } from "@/lib/pageUi";
 
 type AppointmentRow = {
   id: string;
@@ -503,44 +504,7 @@ export default function AppointmentsClient({ patientId }: { patientId: string })
   const upcomingRows = rows.filter((r) => new Date(r.starts_at).getTime() >= now.getTime());
   const pastRows = rows.filter((r) => new Date(r.starts_at).getTime() < now.getTime());
 
-  const ui =
-    languageCode === "it"
-      ? {
-          title: "Appuntamenti",
-          subtitle: "Pianifica e segui gli appuntamenti di cura",
-          today: "Oggi",
-          error: "Errore",
-          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
-          secureSubtitle:
-            "Le note protette degli appuntamenti saranno disponibili quando questo dispositivo avra completato la configurazione sicura.",
-          newAppointment: "Nuovo appuntamento",
-          newAppointmentSubtitle: "Crea un appuntamento in un ordine piu chiaro e pratico.",
-          loading: "Caricamento...",
-          refresh: "Aggiorna",
-          details: "Dettagli appuntamento",
-          transport: "Trasporto",
-          encryptedNotes: "Note protette",
-          createAppointment: "Crea appuntamento",
-          saving: "Salvataggio...",
-        }
-      : {
-          title: "Appointments",
-          subtitle: "Plan and track care appointments",
-          today: "Today",
-          error: "Error",
-          secureTitle: "Secure access is not ready on this device",
-          secureSubtitle:
-            "Protected appointment notes will become available once this device finishes secure setup.",
-          newAppointment: "New appointment",
-          newAppointmentSubtitle: "Create an appointment in a clearer, more practical order.",
-          loading: "Loading...",
-          refresh: "Refresh",
-          details: "Appointment details",
-          transport: "Transport",
-          encryptedNotes: "Encrypted notes",
-          createAppointment: "Create appointment",
-          saving: "Saving...",
-        };
+  const ui = getPageUi("appointments", languageCode);
 
   return (
     <MobileShell
