@@ -9,6 +9,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { getPageUi } from "@/lib/pageUi";
 
 type ThreadRow = {
   thread_id: string;
@@ -55,6 +56,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
   const { languageCode } = useUserLanguage();
+  const ui = getPageUi("dm", languageCode);
 
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -76,9 +78,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [selectedRecipientId, setSelectedRecipientId] = useState<string>("");
-  const [newThreadTitle, setNewThreadTitle] = useState<string>(
-    languageCode === "it" ? "Messaggio diretto" : "Direct message"
-  );
+  const [newThreadTitle, setNewThreadTitle] = useState<string>(ui.defaultThreadTitle);
   const [draft, setDraft] = useState<string>("");
 
   async function refreshThreads() {
@@ -165,16 +165,11 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
   useEffect(() => {
     setNewThreadTitle((current) => {
-      if (
-        current === "Direct message" ||
-        current === "Messaggio diretto" ||
-        !current.trim()
-      ) {
-        return languageCode === "it" ? "Messaggio diretto" : "Direct message";
-      }
+      const knownTitles = ["Direct message", "Messaggio diretto", ui.defaultThreadTitle];
+      if (knownTitles.includes(current) || !current.trim()) return ui.defaultThreadTitle;
       return current;
     });
-  }, [languageCode]);
+  }, [languageCode, ui.defaultThreadTitle]);
 
   async function decryptThreadIfNeeded(t: ThreadRow) {
     if (!vaultKey) return;
@@ -215,10 +210,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setThreadDecryptErrorById((prev) => ({
           ...prev,
-          [t.thread_id]:
-            languageCode === "it"
-              ? "Questa conversazione non può essere aperta su questo dispositivo."
-              : "This conversation could not be opened on this device.",
+          [t.thread_id]: ui.threadDecryptError,
         }));
       } else {
         setMsg(text || "failed_to_decrypt_thread");
@@ -252,10 +244,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
       if (isDecryptMismatchError(text)) {
         setMessageDecryptErrorById((prev) => ({
           ...prev,
-          [m.id]:
-            languageCode === "it"
-              ? "Questo messaggio non può essere aperto su questo dispositivo."
-              : "This message could not be opened on this device.",
+          [m.id]: ui.messageDecryptError,
         }));
       } else {
         setMsg(text || "failed_to_decrypt_message");
@@ -298,7 +287,7 @@ export default function DMClient({ patientId }: { patientId: string }) {
 
       const titleEnv = await vaultEncryptString({
         vaultKey,
-        plaintext: newThreadTitle.trim() || (languageCode === "it" ? "Messaggio diretto" : "Direct message"),
+        plaintext: newThreadTitle.trim() || ui.defaultThreadTitle,
         aad: { table: "dm_threads", column: "title_encrypted", patient_id: patientId },
       });
 
@@ -355,110 +344,34 @@ export default function DMClient({ patientId }: { patientId: string }) {
   function memberLabel(m: Member) {
     const role =
       m.role === "patient"
-        ? languageCode === "it"
-          ? "paziente"
-          : "patient"
+        ? ui.rolePatient
         : m.role === "carer"
-        ? languageCode === "it"
-          ? "assistente"
-          : "carer"
+        ? ui.roleCarer
         : m.role === "family"
-        ? languageCode === "it"
-          ? "famiglia"
-          : "family"
-        : m.role ?? (languageCode === "it" ? "membro" : "member");
-    const controller = m.is_controller ? (languageCode === "it" ? ", referente" : ", controller") : "";
+        ? ui.roleFamily
+        : m.role ?? ui.roleMember;
+    const controller = m.is_controller ? ui.controllerSuffix : "";
     return `${m.nickname ?? m.user_id} (${role}${controller})`;
   }
 
   function nicknameForUser(userId: string) {
-    if (userId === currentUserId) return languageCode === "it" ? "Tu" : "You";
+    if (userId === currentUserId) return ui.you;
     const member = members.find((m) => m.user_id === userId);
     return member?.nickname?.trim() || userId;
   }
 
   function threadTitle(t: ThreadRow) {
     if (threadTitlePlain[t.thread_id]) return threadTitlePlain[t.thread_id];
-    if (t.title_encrypted) return languageCode === "it" ? "Conversazione protetta" : "Protected conversation";
-    return languageCode === "it" ? "Messaggio diretto" : "Direct message";
+    if (t.title_encrypted) return ui.protectedConversation;
+    return ui.defaultThreadTitle;
   }
 
   function threadPreview(t: ThreadRow) {
     if (threadPreviewPlain[t.thread_id]) return threadPreviewPlain[t.thread_id];
-    if (t.last_message_preview_encrypted) return languageCode === "it" ? "Anteprima protetta" : "Protected preview";
+    if (t.last_message_preview_encrypted) return ui.protectedPreview;
     return "";
   }
 
-  const ui =
-    languageCode === "it"
-      ? {
-          title: "Messaggi diretti",
-          subtitle: "Messaggi privati 1 a 1 per questo cerchio",
-          today: "Oggi",
-          error: "Errore",
-          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
-          secureSubtitle: "I messaggi privati non sono ancora disponibili per questa persona su questo dispositivo.",
-          introTitle: "Messaggi diretti privati 1 a 1",
-          introBody: "Questa pagina e per messaggi privati tra due membri del cerchio. I messaggi restano protetti automaticamente.",
-          threads: "Conversazioni",
-          loading: "Caricamento...",
-          refresh: "Aggiorna",
-          newThread: "Nuovo messaggio diretto",
-          who: "Chi vuoi contattare?",
-          selectMember: "Seleziona un membro del cerchio...",
-          conversationTitle: "Titolo della conversazione",
-          openDirectMessage: "Apri messaggio diretto",
-          noThreads: "Ancora nessuna conversazione diretta.",
-          lastMessage: "Ultimo messaggio",
-          created: "Creato",
-          messages: "Messaggi",
-          noThreadSelected: "Nessuna conversazione selezionata",
-          selectThread: "Seleziona o apri una conversazione diretta.",
-          loadingMessages: "Caricamento messaggi...",
-          noMessages: "Ancora nessun messaggio.",
-          helper: "Questo crea una conversazione privata tra te e un altro membro del cerchio.",
-          open: "Apri",
-          view: "Visualizza",
-          protectedMessage: "Messaggio protetto",
-          newMessage: "Nuovo messaggio",
-          messagePlaceholder: "Scrivi qui il tuo messaggio...",
-          sending: "Invio...",
-          send: "Invia",
-        }
-      : {
-          title: "Direct messages",
-          subtitle: "Private 1-to-1 messages for this circle",
-          today: "Today",
-          error: "Error",
-          secureTitle: "Secure access is not ready on this device",
-          secureSubtitle: "Private messages are not available yet for this person on this device.",
-          introTitle: "Private 1-to-1 direct messages",
-          introBody: "This page is for private messages between two circle members. Messages stay protected automatically.",
-          threads: "Threads",
-          loading: "Loading...",
-          refresh: "Refresh",
-          newThread: "New direct message",
-          who: "Who do you want to message?",
-          selectMember: "Select a circle member...",
-          conversationTitle: "Conversation title",
-          openDirectMessage: "Open direct message",
-          noThreads: "No direct message threads yet.",
-          lastMessage: "Last message",
-          created: "Created",
-          messages: "Messages",
-          noThreadSelected: "No thread selected",
-          selectThread: "Select or open a direct message thread.",
-          loadingMessages: "Loading messages...",
-          noMessages: "No messages yet.",
-          helper: "This creates a private thread between you and one other circle member.",
-          open: "Open",
-          view: "View",
-          protectedMessage: "Protected message",
-          newMessage: "New message",
-          messagePlaceholder: "Write your message here...",
-          sending: "Sending...",
-          send: "Send",
-        };
 
   return (
     <MobileShell

@@ -9,6 +9,7 @@ import { decryptStringWithLocalCache } from "@/lib/e2ee/decryptWithCache";
 import type { CipherEnvelopeV1 } from "@/lib/e2ee/envelope";
 import MobileShell from "@/app/components/MobileShell";
 import { useUserLanguage } from "@/app/components/UserLanguageProvider";
+import { getPageUi } from "@/lib/pageUi";
 
 type JournalRow = {
   id: string;
@@ -113,67 +114,20 @@ const ACTIVITY_OPTIONS = [
   "Wound Care",
 ] as const;
 
-function moodLabel(mood: string, languageCode: string) {
-  if (languageCode !== "it") return mood;
-  if (mood === "Sad") return "Triste";
-  if (mood === "Low") return "Giù";
-  if (mood === "Okay") return "Così così";
-  if (mood === "Good") return "Bene";
-  if (mood === "Great") return "Ottimo";
-  return mood;
+function moodLabel(mood: string, ui: Record<string, any>) {
+  return ui.moodLabels?.[mood] ?? mood;
 }
 
-function journalTypeOptionLabel(kind: JournalEntryKind, languageCode: string) {
-  if (languageCode !== "it") {
-    return JOURNAL_TITLE_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
-  }
-  if (kind === "incident_report") return "Rapporto di incidente";
-  if (kind === "general_report") return "Rapporto generale";
-  return "Attività";
+function journalTypeOptionLabel(kind: JournalEntryKind, ui: Record<string, any>) {
+  return ui.journalTitleOptions?.[kind] ?? kind;
 }
 
-function incidentTypeLabel(type: string, languageCode: string) {
-  if (languageCode !== "it") return type;
-  if (type === "Behaviour incident") return "Incidente comportamentale";
-  if (type === "Fall") return "Caduta";
-  if (type === "Medication issue") return "Problema con i farmaci";
-  if (type === "Injury") return "Lesione";
-  if (type === "Safeguarding concern") return "Problema di tutela";
-  if (type === "Health deterioration") return "Peggioramento della salute";
-  if (type === "Missing person / absconding") return "Persona scomparsa / allontanamento";
-  if (type === "Property damage") return "Danni alla proprietà";
-  if (type === "Visitor issue") return "Problema con un visitatore";
-  if (type === "Other") return "Altro";
-  return type;
+function incidentTypeLabel(type: string, ui: Record<string, any>) {
+  return ui.incidentTypes?.[type] ?? type;
 }
 
-function activityLabel(activity: string, languageCode: string) {
-  if (languageCode !== "it") return activity;
-  if (activity === "Bathing") return "Bagno";
-  if (activity === "Bed Rail Check") return "Controllo sponde del letto";
-  if (activity === "Behaviour") return "Comportamento";
-  if (activity === "Blood Glucose") return "Glicemia";
-  if (activity === "Bowel Movement") return "Evacuazione";
-  if (activity === "Enteral Feeding") return "Alimentazione enterale";
-  if (activity === "Falls") return "Cadute";
-  if (activity === "Fluid Output") return "Output dei liquidi";
-  if (activity === "Fluids Drink") return "Liquidi bevuti";
-  if (activity === "Infection") return "Infezione";
-  if (activity === "Night Checks") return "Controlli notturni";
-  if (activity === "Nurse Notes") return "Note infermieristiche";
-  if (activity === "Nutrition (Meal)") return "Nutrizione (pasto)";
-  if (activity === "Sanitary Change") return "Cambio igienico";
-  if (activity === "Medication Given") return "Farmaco somministrato";
-  if (activity === "Medication Refused") return "Farmaco rifiutato";
-  if (activity === "Mobility") return "Mobilità";
-  if (activity === "Observation") return "Osservazione";
-  if (activity === "Personal Care") return "Cura personale";
-  if (activity === "Pressure Area Care") return "Cura delle zone da pressione";
-  if (activity === "Sleep Check") return "Controllo del sonno";
-  if (activity === "Toileting") return "Uso dei servizi";
-  if (activity === "Vitals") return "Parametri vitali";
-  if (activity === "Wound Care") return "Cura della ferita";
-  return activity;
+function activityLabel(activity: string, ui: Record<string, any>) {
+  return ui.activityTypes?.[activity] ?? activity;
 }
 
 function isUuid(s: string) {
@@ -210,23 +164,8 @@ function sanitiseFileName(name: string) {
   return name.replace(/[^\w.\-]+/g, "_");
 }
 
-function makeJournalTypeLabel(journalType: string) {
-  if (journalType === "tracker") return "Tracker log";
-  if (journalType === "incident_report") return "Incident Report";
-  if (journalType === "general_report") return "General Report";
-  if (journalType === "activity") return "Activity";
-  if (journalType === "journal") return "Journal";
-  return journalType;
-}
-
-function makeJournalTypeLabelForUi(journalType: string, languageCode: string) {
-  if (languageCode !== "it") return makeJournalTypeLabel(journalType);
-  if (journalType === "tracker") return "Registro tracker";
-  if (journalType === "incident_report") return "Rapporto di incidente";
-  if (journalType === "general_report") return "Rapporto generale";
-  if (journalType === "activity") return "Attività";
-  if (journalType === "journal") return "Diario";
-  return journalType;
+function makeJournalTypeLabelForUi(journalType: string, ui: Record<string, any>) {
+  return ui.journalTypeLabels?.[journalType] ?? journalType;
 }
 
 function needsIncidentCheckbox(activityType: string) {
@@ -237,6 +176,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { vaultKey } = usePatientVault();
   const { languageCode } = useUserLanguage();
+  const ui = getPageUi("journals", languageCode);
 
   const [rows, setRows] = useState<JournalRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -596,122 +536,16 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
   const entryActionLabel =
     journalTitle === "incident_report"
-      ? languageCode === "it"
-        ? "Salva rapporto di incidente"
-        : "Save incident report"
+      ? ui.saveIncidentReport
       : journalTitle === "general_report"
-      ? languageCode === "it"
-        ? "Salva rapporto generale"
-        : "Save general report"
-      : languageCode === "it"
-      ? "Salva attività"
-      : "Save activity";
+      ? ui.saveGeneralReport
+      : ui.saveActivity;
 
-  const ui =
-    languageCode === "it"
-      ? {
-          title: "Diario",
-          today: "Oggi",
-          error: "Errore",
-          secureTitle: "L'accesso sicuro non e pronto su questo dispositivo",
-          secureSubtitle: "I dettagli protetti del diario appariranno quando questo dispositivo avra completato la configurazione sicura.",
-          allEntries: "Tutte le voci",
-          circleFeed: "Feed del cerchio",
-          loading: "Caricamento...",
-          refresh: "Aggiorna",
-          trackersTitle: "Tracker di oggi",
-          trackersSubtitle: "Umore, dolore e sobrieta vengono salvati insieme come un unico tracker.",
-          mood: "Umore",
-          pain: "Dolore",
-          sobriety: "Sobrieta",
-          yes: "Si",
-          no: "No",
-          shareTracker: "Condividi il tracker nel diario del cerchio",
-          saveTrackers: "Salva tracker",
-          newEntry: "Nuova voce",
-          newEntrySubtitle: "Scegli un titolo di diario e completa il modulo corrispondente.",
-          journalTitle: "Titolo del diario",
-          shareToCircle: "Condividi con il cerchio",
-          nonPatientShared: "Le voci dei membri non pazienti sono sempre condivise con il cerchio.",
-          recentEntries: "Voci recenti",
-          noSharedEntries: "Ancora nessuna voce condivisa.",
-          noEntries: "Ancora nessuna voce.",
-          date: "Data",
-          time: "Ora",
-          location: "Luogo",
-          locationPlaceholder: "ad es. camera da letto, sala da pranzo, giardino",
-          incidentType: "Tipo di incidente",
-          description: "Descrizione",
-          descriptionPlaceholder: "Breve riassunto di ciò che è successo.",
-          personsInvolved: "Dettagli completi delle persone coinvolte",
-          personsInvolvedPlaceholder: "Nomi, ruoli, ferite, azioni intraprese.",
-          witnesses: "Testimoni",
-          witnessesPlaceholder: "Testimoni, dichiarazioni, oppure indica nessuno.",
-          uploadPhotos: "Carica foto",
-          photoSelected: "foto selezionata.",
-          photosSelected: "foto selezionate.",
-          generalReport: "Rapporto generale",
-          generalReportPlaceholder: "Scrivi qui il rapporto completo.",
-          activity: "Attività",
-          incidentReported: "Incidente segnalato?",
-          optionalNote: "Nota facoltativa",
-          optionalNotePlaceholder: "Aggiungi una breve nota se necessario.",
-          saving: "Salvataggio...",
-        }
-      : {
-          title: "Journal",
-          today: "Today",
-          error: "Error",
-          secureTitle: "Secure access is not ready on this device",
-          secureSubtitle: "Protected journal details will appear once this device finishes secure setup.",
-          allEntries: "All entries",
-          circleFeed: "Circle feed",
-          loading: "Loading...",
-          refresh: "Refresh",
-          trackersTitle: "Today's trackers",
-          trackersSubtitle: "Mood, pain and sobriety are saved together as one tracker log.",
-          mood: "Mood",
-          pain: "Pain",
-          sobriety: "Sobriety",
-          yes: "Yes",
-          no: "No",
-          shareTracker: "Share tracker log to circle journal",
-          saveTrackers: "Save trackers",
-          newEntry: "New entry",
-          newEntrySubtitle: "Choose a journal title and complete the matching form.",
-          journalTitle: "Journal title",
-          shareToCircle: "Share to circle",
-          nonPatientShared: "Entries from non-patient members are always shared to the circle.",
-          recentEntries: "Recent entries",
-          noSharedEntries: "No shared entries yet.",
-          noEntries: "No entries yet.",
-          date: "Date",
-          time: "Time",
-          location: "Location",
-          locationPlaceholder: "e.g. Bedroom, dining room, garden",
-          incidentType: "Type of incident",
-          description: "Description",
-          descriptionPlaceholder: "Short summary of what happened.",
-          personsInvolved: "Full details of the persons involved",
-          personsInvolvedPlaceholder: "Names, roles, injuries, actions taken.",
-          witnesses: "Witnesses",
-          witnessesPlaceholder: "Witnesses, statements, or note none.",
-          uploadPhotos: "Upload photos",
-          photoSelected: "photo selected.",
-          photosSelected: "photos selected.",
-          generalReport: "General report",
-          generalReportPlaceholder: "Write the full report here.",
-          activity: "Activity",
-          incidentReported: "Incident reported?",
-          optionalNote: "Optional note",
-          optionalNotePlaceholder: "Add a short note if needed.",
-          saving: "Saving...",
-        };
 
   return (
     <MobileShell
       title={ui.title}
-      subtitle={myRole ? `Role: ${myRole}` : patientId}
+      subtitle={myRole ? `${ui.roleLabel}: ${myRole}` : patientId}
       patientId={patientId}
       rightSlot={
         <Link className="cc-btn" href={`/app/patients/${patientId}/today`}>
@@ -770,7 +604,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
                     className={`cc-btn ${trackerMood === mood ? "cc-btn-primary" : ""}`}
                     onClick={() => setTrackerMood(mood)}
                   >
-                    {moodLabel(mood, languageCode)}
+                    {moodLabel(mood, ui)}
                   </button>
                 ))}
               </div>
@@ -841,7 +675,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             >
               {JOURNAL_TITLE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {journalTypeOptionLabel(option.value, languageCode)}
+                  {journalTypeOptionLabel(option.value, ui)}
                 </option>
               ))}
             </select>
@@ -889,7 +723,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
                 <select className="cc-select" value={incidentType} onChange={(e) => setIncidentType(e.target.value)}>
                   {INCIDENT_TYPE_OPTIONS.map((option) => (
                     <option key={option} value={option}>
-                      {incidentTypeLabel(option, languageCode)}
+                      {incidentTypeLabel(option, ui)}
                     </option>
                   ))}
                 </select>
@@ -966,7 +800,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
                     }}
                     style={{ justifyContent: "flex-start", minHeight: 52 }}
                   >
-                    {activityLabel(activity, languageCode)}
+                    {activityLabel(activity, ui)}
                   </button>
                 ))}
               </div>
@@ -1029,6 +863,7 @@ function JournalCard({
 }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { languageCode } = useUserLanguage();
+  const ui = getPageUi("journals", languageCode);
   const [open, setOpen] = useState(false);
   const [ptMood, setPtMood] = useState("");
   const [ptContent, setPtContent] = useState("");
@@ -1086,9 +921,9 @@ function JournalCard({
   }
 
   const parsedPayload = ptContent ? parseStructuredPayload(ptContent) : null;
-  const typeLabel = makeJournalTypeLabelForUi(row.journal_type, languageCode);
+  const typeLabel = makeJournalTypeLabelForUi(row.journal_type, ui);
   const cardTitle = parsedPayload
-    ? journalTypeOptionLabel(parsedPayload.kind, languageCode)
+    ? journalTypeOptionLabel(parsedPayload.kind, ui)
     : typeLabel;
 
   return (
@@ -1104,7 +939,7 @@ function JournalCard({
         </div>
 
         <button className="cc-btn" onClick={toggle}>
-          {open ? (languageCode === "it" ? "Nascondi" : "Hide") : languageCode === "it" ? "Apri" : "Open"}
+          {open ? ui.hide : ui.open}
         </button>
       </div>
 
@@ -1113,7 +948,7 @@ function JournalCard({
           {ptMood ? (
             <>
               <div className="cc-small">
-                <b>{languageCode === "it" ? "Umore" : "Mood"}:</b> {moodLabel(ptMood, languageCode)}
+                <b>{ui.mood}:</b> {moodLabel(ptMood, ui)}
               </div>
               <div className="cc-spacer-12" />
             </>
@@ -1121,27 +956,27 @@ function JournalCard({
 
           {parsedPayload?.kind === "incident_report" ? (
             <div className="cc-stack" style={{ gap: 10 }}>
-              <div className="cc-small"><b>{languageCode === "it" ? "Data" : "Date"}:</b> {parsedPayload.date} {parsedPayload.time}</div>
-              <div className="cc-small"><b>{languageCode === "it" ? "Luogo" : "Location"}:</b> {parsedPayload.location}</div>
-              <div className="cc-small"><b>{languageCode === "it" ? "Tipo di incidente" : "Type of incident"}:</b> {incidentTypeLabel(parsedPayload.incidentType, languageCode)}</div>
+              <div className="cc-small"><b>{ui.date}:</b> {parsedPayload.date} {parsedPayload.time}</div>
+              <div className="cc-small"><b>{ui.location}:</b> {parsedPayload.location}</div>
+              <div className="cc-small"><b>{ui.incidentType}:</b> {incidentTypeLabel(parsedPayload.incidentType, ui)}</div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>{languageCode === "it" ? "Descrizione" : "Description"}:</b>
+                <b>{ui.description}:</b>
                 {"\n"}
                 {parsedPayload.description}
               </div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>{languageCode === "it" ? "Persone coinvolte" : "Persons involved"}:</b>
+                <b>{ui.personsInvolvedShort}:</b>
                 {"\n"}
                 {parsedPayload.personsInvolved}
               </div>
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                <b>{languageCode === "it" ? "Testimoni" : "Witnesses"}:</b>
+                <b>{ui.witnesses}:</b>
                 {"\n"}
                 {parsedPayload.witnesses || "-"}
               </div>
               {parsedPayload.photoUploads.length > 0 ? (
                 <div className="cc-stack" style={{ gap: 8 }}>
-                  <div className="cc-small"><b>{languageCode === "it" ? "Foto" : "Photos"}:</b></div>
+                  <div className="cc-small"><b>{ui.photos}:</b></div>
                   <div className="cc-row">
                     {parsedPayload.photoUploads.map((photo) => (
                       <button
@@ -1150,7 +985,7 @@ function JournalCard({
                         onClick={() => openIncidentPhoto(photo)}
                         disabled={openingPhotoPath === photo.path}
                       >
-                        {openingPhotoPath === photo.path ? (languageCode === "it" ? "Apertura..." : "Opening...") : photo.name}
+                        {openingPhotoPath === photo.path ? ui.opening : photo.name}
                       </button>
                     ))}
                   </div>
@@ -1161,12 +996,12 @@ function JournalCard({
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{parsedPayload.content || "-"}</div>
           ) : parsedPayload?.kind === "activity" ? (
             <div className="cc-stack" style={{ gap: 8 }}>
-              <div className="cc-small"><b>{languageCode === "it" ? "Attività" : "Activity"}:</b> {activityLabel(parsedPayload.activityType, languageCode)}</div>
+              <div className="cc-small"><b>{ui.activity}:</b> {activityLabel(parsedPayload.activityType, ui)}</div>
               {needsIncidentCheckbox(parsedPayload.activityType) ? (
-                <div className="cc-small"><b>{languageCode === "it" ? "Incidente segnalato" : "Incident reported"}:</b> {parsedPayload.incidentReported ? (languageCode === "it" ? "Sì" : "Yes") : "No"}</div>
+                <div className="cc-small"><b>{ui.incidentReported}:</b> {parsedPayload.incidentReported ? ui.yes : ui.no}</div>
               ) : null}
               <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>
-                {parsedPayload.note || (languageCode === "it" ? "Nessuna nota aggiuntiva." : "No additional note.")}
+                {parsedPayload.note || ui.noAdditionalNote}
               </div>
             </div>
           ) : (
