@@ -5144,7 +5144,22 @@ export const journalsPageUi = {
     "opening": "Opening...",
     "personsInvolvedShort": "Persons involved",
     "photos": "Photos",
-    "noAdditionalNote": "No additional note."
+    "noAdditionalNote": "No additional note.",
+    "editEntry": "Edit entry",
+    "editEntrySubtitle": "Update this entry and save your changes.",
+    "cancelEdit": "Cancel edit",
+    "updateEntry": "Update entry",
+    "existingPhoto": "existing photo.",
+    "existingPhotos": "existing photos.",
+    "comments": "Comments",
+    "loadingComments": "Loading comments...",
+    "noComments": "No comments yet.",
+    "editComment": "Edit comment",
+    "commentPlaceholder": "Add a comment...",
+    "savingComment": "Saving comment...",
+    "updateComment": "Update comment",
+    "addComment": "Add comment",
+    "edited": "edited"
   },
   "pl": {
     "moodLabels": {
@@ -5265,7 +5280,22 @@ export const journalsPageUi = {
     "opening": "Otwieranie...",
     "personsInvolvedShort": "Osoby zaangażowane",
     "photos": "Zdjęcia",
-    "noAdditionalNote": "Brak dodatkowej notatki."
+    "noAdditionalNote": "Brak dodatkowej notatki.",
+    "editEntry": "Edytuj wpis",
+    "editEntrySubtitle": "Zaktualizuj wpis i zapisz zmiany.",
+    "cancelEdit": "Anuluj edycję",
+    "updateEntry": "Aktualizuj wpis",
+    "existingPhoto": "istniejące zdjęcie.",
+    "existingPhotos": "istniejące zdjęcia.",
+    "comments": "Komentarze",
+    "loadingComments": "Ładowanie komentarzy...",
+    "noComments": "Brak komentarzy.",
+    "editComment": "Edytuj komentarz",
+    "commentPlaceholder": "Dodaj komentarz...",
+    "savingComment": "Zapisywanie komentarza...",
+    "updateComment": "Aktualizuj komentarz",
+    "addComment": "Dodaj komentarz",
+    "edited": "edytowano"
   },
   "ro": {
     "moodLabels": {
@@ -5386,7 +5416,22 @@ export const journalsPageUi = {
     "opening": "Se deschide...",
     "personsInvolvedShort": "Persoane implicate",
     "photos": "Fotografii",
-    "noAdditionalNote": "Fără notă suplimentară."
+    "noAdditionalNote": "Fără notă suplimentară.",
+    "editEntry": "Modifică intrarea",
+    "editEntrySubtitle": "Actualizează această intrare și salvează modificările.",
+    "cancelEdit": "Anulează modificarea",
+    "updateEntry": "Actualizează intrarea",
+    "existingPhoto": "fotografie existentă.",
+    "existingPhotos": "fotografii existente.",
+    "comments": "Comentarii",
+    "loadingComments": "Se încarcă comentariile...",
+    "noComments": "Nicio comentariu încă.",
+    "editComment": "Modifică comentariul",
+    "commentPlaceholder": "Adaugă un comentariu...",
+    "savingComment": "Se salvează comentariul...",
+    "updateComment": "Actualizează comentariul",
+    "addComment": "Adaugă comentariu",
+    "edited": "modificat"
   },
   "pa": {
     "moodLabels": {
@@ -5507,7 +5552,22 @@ export const journalsPageUi = {
     "opening": "ਖੋਲਿਆ ਜਾ ਰਿਹਾ ਹੈ...",
     "personsInvolvedShort": "ਸ਼ਾਮਿਲ ਲੋਕ",
     "photos": "ਫੋਟੋਆਂ",
-    "noAdditionalNote": "ਕੋਈ ਹੋਰ ਨੋਟ ਨਹੀਂ."
+    "noAdditionalNote": "ਕੋਈ ਹੋਰ ਨੋਟ ਨਹੀਂ.",
+    "editEntry": "ਦਾਖਲਾ ਸੰਪਾਦਿਤ ਕਰੋ",
+    "editEntrySubtitle": "ਇਸ ਦਾਖਲੇ ਨੂੰ ਅਪਡੇਟ ਕਰੋ ਅਤੇ ਬਦਲਾਅ ਸੰਭਾਲੋ।",
+    "cancelEdit": "ਸੰਪਾਦਨ ਰੱਦ ਕਰੋ",
+    "updateEntry": "ਦਾਖਲਾ ਅਪਡੇਟ ਕਰੋ",
+    "existingPhoto": "ਮੌਜੂਦਾ ਫੋਟੋ।",
+    "existingPhotos": "ਮੌਜੂਦਾ ਫੋਟੋਆਂ।",
+    "comments": "ਟਿੱਪਣੀਆਂ",
+    "loadingComments": "ਟਿੱਪਣੀਆਂ ਲੋਡ ਹੋ ਰਹੀਆਂ ਹਨ...",
+    "noComments": "ਹਾਲੇ ਤੱਕ ਕੋਈ ਟਿੱਪਣੀ ਨਹੀਂ।",
+    "editComment": "ਟਿੱਪਣੀ ਸੰਪਾਦਿਤ ਕਰੋ",
+    "commentPlaceholder": "ਇੱਕ ਟਿੱਪਣੀ ਜੋੜੋ...",
+    "savingComment": "ਟਿੱਪਣੀ ਸੰਭਾਲੀ ਜਾ ਰਹੀ ਹੈ...",
+    "updateComment": "ਟਿੱਪਣੀ ਅਪਡੇਟ ਕਰੋ",
+    "addComment": "ਟਿੱਪਣੀ ਜੋੜੋ",
+    "edited": "ਸੰਪਾਦਿਤ"
   },
   "ur": {
     "moodLabels": {
@@ -5628,7 +5688,22 @@ export const journalsPageUi = {
     "opening": "کھولا جا رہا ہے...",
     "personsInvolvedShort": "ملوث افراد",
     "photos": "تصاویر",
-    "noAdditionalNote": "کوئی اضافی نوٹ نہیں۔"
+    "noAdditionalNote": "کوئی اضافی نوٹ نہیں۔",
+    "editEntry": "اندراج میں ترمیم کریں",
+    "editEntrySubtitle": "اس اندراج کو اپ ڈیٹ کریں اور تبدیلیاں محفوظ کریں۔",
+    "cancelEdit": "ترمیم منسوخ کریں",
+    "updateEntry": "اندراج اپ ڈیٹ کریں",
+    "existingPhoto": "موجودہ تصویر۔",
+    "existingPhotos": "موجودہ تصاویر۔",
+    "comments": "تبصرے",
+    "loadingComments": "تبصرے لوڈ ہو رہے ہیں...",
+    "noComments": "ابھی تک کوئی تبصرہ نہیں۔",
+    "editComment": "تبصرے میں ترمیم کریں",
+    "commentPlaceholder": "تبصرہ شامل کریں...",
+    "savingComment": "تبصرہ محفوظ کیا جا رہا ہے...",
+    "updateComment": "تبصرہ اپ ڈیٹ کریں",
+    "addComment": "تبصرہ شامل کریں",
+    "edited": "ترمیم شدہ"
   },
   "pt": {
     "moodLabels": {
@@ -5749,7 +5824,22 @@ export const journalsPageUi = {
     "opening": "Abrindo...",
     "personsInvolvedShort": "Pessoas envolvidas",
     "photos": "Fotos",
-    "noAdditionalNote": "Sem nota adicional."
+    "noAdditionalNote": "Sem nota adicional.",
+    "editEntry": "Editar entrada",
+    "editEntrySubtitle": "Atualize esta entrada e salve suas alterações.",
+    "cancelEdit": "Cancelar edição",
+    "updateEntry": "Atualizar entrada",
+    "existingPhoto": "foto existente.",
+    "existingPhotos": "fotos existentes.",
+    "comments": "Comentários",
+    "loadingComments": "Carregando comentários...",
+    "noComments": "Ainda não há comentários.",
+    "editComment": "Editar comentário",
+    "commentPlaceholder": "Adicionar um comentário...",
+    "savingComment": "Salvando comentário...",
+    "updateComment": "Atualizar comentário",
+    "addComment": "Adicionar comentário",
+    "edited": "editado"
   },
   "es": {
     "moodLabels": {
@@ -5870,7 +5960,22 @@ export const journalsPageUi = {
     "opening": "Abriendo...",
     "personsInvolvedShort": "Personas involucradas",
     "photos": "Fotos",
-    "noAdditionalNote": "Sin nota adicional."
+    "noAdditionalNote": "Sin nota adicional.",
+    "editEntry": "Editar entrada",
+    "editEntrySubtitle": "Actualiza esta entrada y guarda los cambios.",
+    "cancelEdit": "Cancelar edición",
+    "updateEntry": "Actualizar entrada",
+    "existingPhoto": "foto existente.",
+    "existingPhotos": "fotos existentes.",
+    "comments": "Comentarios",
+    "loadingComments": "Cargando comentarios...",
+    "noComments": "Sin comentarios aún.",
+    "editComment": "Editar comentario",
+    "commentPlaceholder": "Agregar un comentario...",
+    "savingComment": "Guardando comentario...",
+    "updateComment": "Actualizar comentario",
+    "addComment": "Agregar comentario",
+    "edited": "editado"
   },
   "ar": {
     "moodLabels": {
@@ -5991,7 +6096,22 @@ export const journalsPageUi = {
     "opening": "فتح...",
     "personsInvolvedShort": "الأشخاص المعنيون",
     "photos": "صور",
-    "noAdditionalNote": "لا توجد ملاحظات إضافية."
+    "noAdditionalNote": "لا توجد ملاحظات إضافية.",
+    "editEntry": "تعديل الإدخال",
+    "editEntrySubtitle": "قم بتحديث هذا الإدخال واحفظ التغييرات.",
+    "cancelEdit": "إلغاء التعديل",
+    "updateEntry": "تحديث الإدخال",
+    "existingPhoto": "صورة موجودة.",
+    "existingPhotos": "صور موجودة.",
+    "comments": "التعليقات",
+    "loadingComments": "جارٍ تحميل التعليقات...",
+    "noComments": "لا توجد تعليقات بعد.",
+    "editComment": "تعديل التعليق",
+    "commentPlaceholder": "أضف تعليقًا...",
+    "savingComment": "جارٍ حفظ التعليق...",
+    "updateComment": "تحديث التعليق",
+    "addComment": "أضف تعليقاً",
+    "edited": "تم التعديل"
   },
   "arz": {
     "moodLabels": {
@@ -6112,7 +6232,22 @@ export const journalsPageUi = {
     "opening": "فتح...",
     "personsInvolvedShort": "الأشخاص المعنيون",
     "photos": "صور",
-    "noAdditionalNote": "لا توجد ملاحظة إضافية."
+    "noAdditionalNote": "لا توجد ملاحظة إضافية.",
+    "editEntry": "تعديل الإدخال",
+    "editEntrySubtitle": "حدّث هذا الإدخال واحفظ التغييرات.",
+    "cancelEdit": "إلغاء التعديل",
+    "updateEntry": "تحديث الإدخال",
+    "existingPhoto": "صورة موجودة.",
+    "existingPhotos": "صور موجودة.",
+    "comments": "التعليقات",
+    "loadingComments": "جارٍ تحميل التعليقات...",
+    "noComments": "لا توجد تعليقات بعد.",
+    "editComment": "تعديل التعليق",
+    "commentPlaceholder": "أضف تعليق...",
+    "savingComment": "جارٍ حفظ التعليق...",
+    "updateComment": "تحديث التعليق",
+    "addComment": "أضف تعليق",
+    "edited": "تم التعديل"
   },
   "bn": {
     "moodLabels": {
@@ -6233,7 +6368,22 @@ export const journalsPageUi = {
     "opening": "খোলা হচ্ছে...",
     "personsInvolvedShort": "সংযুক্ত ব্যক্তি/ব্যক্তিরা",
     "photos": "ছবি",
-    "noAdditionalNote": "অতিরিক্ত নোট নেই।"
+    "noAdditionalNote": "অতিরিক্ত নোট নেই।",
+    "editEntry": "এন্ট্রি সম্পাদনা",
+    "editEntrySubtitle": "এই এন্ট্রি আপডেট করুন এবং পরিবর্তন সংরক্ষণ করুন।",
+    "cancelEdit": "সম্পাদনা বাতিল করুন",
+    "updateEntry": "এন্ট্রি আপডেট করুন",
+    "existingPhoto": "বিদ্যমান ছবি।",
+    "existingPhotos": "বিদ্যমান ছবি।",
+    "comments": "মন্তব্য",
+    "loadingComments": "মন্তব্য লোড হচ্ছে...",
+    "noComments": "এখনও কোন মন্তব্য নেই।",
+    "editComment": "মন্তব্য সম্পাদনা করুন",
+    "commentPlaceholder": "একটি মন্তব্য যোগ করুন...",
+    "savingComment": "মন্তব্য সংরক্ষণ হচ্ছে...",
+    "updateComment": "মন্তব্য আপডেট করুন",
+    "addComment": "মন্তব্য যোগ করুন",
+    "edited": "সম্পাদিত"
   },
   "gu": {
     "moodLabels": {
@@ -6354,7 +6504,22 @@ export const journalsPageUi = {
     "opening": "ખૂલાઈ રહ્યું છે...",
     "personsInvolvedShort": "સંલગ્ન લોકો",
     "photos": "ફોટા",
-    "noAdditionalNote": "વધુ નોંધ નથી."
+    "noAdditionalNote": "વધુ નોંધ નથી.",
+    "editEntry": "પ્રવેશે સંપાદિત કરો",
+    "editEntrySubtitle": "આ પ્રવેશને અપડેટ કરો અને તમારા ફેરફારો સંગ્રહિત કરો.",
+    "cancelEdit": "સંપાદન રદ કરો",
+    "updateEntry": "પ્રવેશ અપડેટ કરો",
+    "existingPhoto": "મોજુદ ફોટો.",
+    "existingPhotos": "મોજુદ ફોટા.",
+    "comments": "ટિપ્પણીઓ",
+    "loadingComments": "ટિપ્પણીઓ લોડ થઈ રહી છે...",
+    "noComments": "હજી સુધી કોઈ ટિપ્પણીઓ નથી.",
+    "editComment": "ટિપ્પણીઓ સંપાદિત કરો",
+    "commentPlaceholder": "ટિપ્પણી ઉમેરો...",
+    "savingComment": "ટિપ્પણી સેવ કરવામાં આવી રહી છે...",
+    "updateComment": "ટિપ્પણી અપડેટ કરો",
+    "addComment": "ટિપ્પણી ઉમેરો",
+    "edited": "સંપાદિત"
   },
   "it": {
     "moodLabels": {
@@ -6475,7 +6640,22 @@ export const journalsPageUi = {
     "opening": "Apertura...",
     "personsInvolvedShort": "Persone coinvolte",
     "photos": "Foto",
-    "noAdditionalNote": "Nessuna nota aggiuntiva."
+    "noAdditionalNote": "Nessuna nota aggiuntiva.",
+    "editEntry": "Modifica voce",
+    "editEntrySubtitle": "Aggiorna questa voce e salva le modifiche.",
+    "cancelEdit": "Annulla modifica",
+    "updateEntry": "Aggiorna voce",
+    "existingPhoto": "foto esistente.",
+    "existingPhotos": "foto esistenti.",
+    "comments": "Commenti",
+    "loadingComments": "Caricamento commenti...",
+    "noComments": "Ancora nessun commento.",
+    "editComment": "Modifica commento",
+    "commentPlaceholder": "Aggiungi un commento...",
+    "savingComment": "Salvataggio commento...",
+    "updateComment": "Aggiorna commento",
+    "addComment": "Aggiungi commento",
+    "edited": "modificato"
   },
   "ckb": {
     "moodLabels": {
@@ -6596,7 +6776,22 @@ export const journalsPageUi = {
     "opening": "Opening...",
     "personsInvolvedShort": "Persons involved",
     "photos": "Photos",
-    "noAdditionalNote": "No additional note."
+    "noAdditionalNote": "No additional note.",
+    "editEntry": "بگۆڕێنەوەی تۆمار",
+    "editEntrySubtitle": "ئەم تۆمارە نوێ بکەرەوە و گۆڕانکاریەکانت پاشەکەوت بکە.",
+    "cancelEdit": "ەلابردنی گۆڕانکاری",
+    "updateEntry": "نوێکردنەوەی تۆمار",
+    "existingPhoto": "وێنەی هەنووکەی.",
+    "existingPhotos": "وێنەکانی هەنووکە.",
+    "comments": "ڕەشنوسەکان",
+    "loadingComments": "بارکردنی ڕەشنوسەکان...",
+    "noComments": "هەنوز ڕەشنوس نەهاتووە.",
+    "editComment": "گۆڕینی ڕەشنوس",
+    "commentPlaceholder": "ڕەشنوسێک زیاد بکە...",
+    "savingComment": "پاشەکەوتکردنی ڕەشنوس...",
+    "updateComment": "نوێکردنەوەی ڕەشنوس",
+    "addComment": "زیادکردنی ڕەشنوس",
+    "edited": "گۆڕا"
   },
   "fa": {
     "moodLabels": {
@@ -6717,7 +6912,22 @@ export const journalsPageUi = {
     "opening": "در حال باز شدن...",
     "personsInvolvedShort": "افراد درگیر",
     "photos": "تصاویر",
-    "noAdditionalNote": "بدون یادداشت اضافی."
+    "noAdditionalNote": "بدون یادداشت اضافی.",
+    "editEntry": "ویرایش مورد",
+    "editEntrySubtitle": "این مورد را به‌روزرسانی و تغییرات را ذخیره کنید.",
+    "cancelEdit": "لغو ویرایش",
+    "updateEntry": "به‌روزرسانی مورد",
+    "existingPhoto": "عکس موجود.",
+    "existingPhotos": "عکس‌های موجود.",
+    "comments": "دیدگاه‌ها",
+    "loadingComments": "در حال بارگذاری دیدگاه‌ها...",
+    "noComments": "هنوز دیدگاهی وجود ندارد.",
+    "editComment": "ویرایش دیدگاه",
+    "commentPlaceholder": "یک دیدگاه اضافه کنید...",
+    "savingComment": "در حال ذخیره دیدگاه...",
+    "updateComment": "به‌روزرسانی دیدگاه",
+    "addComment": "افزودن دیدگاه",
+    "edited": "ویرایش شد"
   },
   "tr": {
     "moodLabels": {
@@ -6838,7 +7048,22 @@ export const journalsPageUi = {
     "opening": "Açılıyor...",
     "personsInvolvedShort": "İlgili kişiler",
     "photos": "Fotoğraflar",
-    "noAdditionalNote": "Ek not yok."
+    "noAdditionalNote": "Ek not yok.",
+    "editEntry": "Girdiyi düzenle",
+    "editEntrySubtitle": "Bu girdiyi güncelle ve değişiklikleri kaydet.",
+    "cancelEdit": "Düzenlemeyi iptal et",
+    "updateEntry": "Girdiyi güncelle",
+    "existingPhoto": "var olan fotoğraf.",
+    "existingPhotos": "var olan fotoğraflar.",
+    "comments": "Yorumlar",
+    "loadingComments": "Yorumlar yükleniyor...",
+    "noComments": "Henüz yorum yok.",
+    "editComment": "Yorumu düzenle",
+    "commentPlaceholder": "Yorum ekle...",
+    "savingComment": "Yorum kaydediliyor...",
+    "updateComment": "Yorumu güncelle",
+    "addComment": "Yorum ekle",
+    "edited": "düzenlendi"
   },
   "ta": {
     "moodLabels": {
@@ -6959,7 +7184,22 @@ export const journalsPageUi = {
     "opening": "திறக்கப்படுகிறது...",
     "personsInvolvedShort": "பங்கேற்ற நபர்கள்",
     "photos": "படங்கள்",
-    "noAdditionalNote": "மேலும் குறிப்பு இல்லை."
+    "noAdditionalNote": "மேலும் குறிப்பு இல்லை.",
+    "editEntry": "வருமானத்தைத் திருத்து",
+    "editEntrySubtitle": "இந்த பதிவை புதுப்பித்து மாற்றங்களைச் சேமிக்கவும்.",
+    "cancelEdit": "திருத்தத்தை ரத்து செய்",
+    "updateEntry": "பதிவை புதுப்பி",
+    "existingPhoto": "முன் புகைப்படம்.",
+    "existingPhotos": "முன் புகைப்படங்கள்.",
+    "comments": "கருத்துக்கள்",
+    "loadingComments": "கருத்துகள் பதிவேற்றப்படுகிறது...",
+    "noComments": "என்டுவரும் கருத்து இல்லை.",
+    "editComment": "கருத்தைத் திருத்து",
+    "commentPlaceholder": "கருத்து சேர்க்கவும்...",
+    "savingComment": "கருத்தைச் சேமிக்கிறோம்...",
+    "updateComment": "கருத்தை புதுப்பி",
+    "addComment": "கருத்து சேர்க்கவும்",
+    "edited": "திருத்தப்பட்டது"
   },
   "cy": {
     "moodLabels": {
@@ -7080,7 +7320,22 @@ export const journalsPageUi = {
     "opening": "Opening...",
     "personsInvolvedShort": "Persons involved",
     "photos": "Photos",
-    "noAdditionalNote": "No additional note."
+    "noAdditionalNote": "No additional note.",
+    "editEntry": "Golygu cofnod",
+    "editEntrySubtitle": "Diweddaru'r cofnod hwn a chadw eich newidiadau.",
+    "cancelEdit": "Canslo golygu",
+    "updateEntry": "Diweddaru cofnod",
+    "existingPhoto": "llun presennol.",
+    "existingPhotos": "lluniau presennol.",
+    "comments": "Sylwadau",
+    "loadingComments": "Llwytho sylwadau...",
+    "noComments": "Dim sylwadau eto.",
+    "editComment": "Golygu sylw",
+    "commentPlaceholder": "Ychwanegu sylw...",
+    "savingComment": "Yn cadw sylw...",
+    "updateComment": "Diweddaru sylw",
+    "addComment": "Ychwanegu sylw",
+    "edited": "wedi'i olygu"
   },
   "uk": {
     "moodLabels": {
@@ -7201,7 +7456,22 @@ export const journalsPageUi = {
     "opening": "Відкриття...",
     "personsInvolvedShort": "Зацікавлені особи",
     "photos": "Фото",
-    "noAdditionalNote": "Немає додаткової нотатки."
+    "noAdditionalNote": "Немає додаткової нотатки.",
+    "editEntry": "Редагувати запис",
+    "editEntrySubtitle": "Оновіть запис та збережіть зміни.",
+    "cancelEdit": "Скасувати редагування",
+    "updateEntry": "Оновити запис",
+    "existingPhoto": "існуюче фото.",
+    "existingPhotos": "існуючі фото.",
+    "comments": "Коментарі",
+    "loadingComments": "Завантаження коментарів...",
+    "noComments": "Коментарів ще немає.",
+    "editComment": "Редагувати коментар",
+    "commentPlaceholder": "Додати коментар...",
+    "savingComment": "Збереження коментаря...",
+    "updateComment": "Оновити коментар",
+    "addComment": "Додати коментар",
+    "edited": "відредаговано"
   }
 } as const;
 

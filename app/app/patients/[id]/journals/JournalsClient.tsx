@@ -18,11 +18,22 @@ type JournalRow = {
   occurred_at: string | null;
   created_by: string;
   created_at: string;
+  updated_at: string | null;
   shared_to_circle: boolean;
   pain_level: number | null;
   include_in_clinician_summary: boolean | null;
   content_encrypted: CipherEnvelopeV1 | null;
   mood_encrypted: CipherEnvelopeV1 | null;
+};
+
+type JournalCommentRow = {
+  id: string;
+  journal_entry_id: string;
+  patient_id: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string | null;
+  content_encrypted: CipherEnvelopeV1;
 };
 
 type MembershipRow = {
@@ -115,6 +126,12 @@ const ACTIVITY_OPTIONS = [
   "Wound Care",
 ] as const;
 
+type JournalEditSeed = {
+  row: JournalRow;
+  parsedPayload: StructuredJournalPayload | null;
+  plainContent: string;
+};
+
 function moodLabel(mood: string, ui: Record<string, any>) {
   return ui.moodLabels?.[mood] ?? mood;
 }
@@ -199,6 +216,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   const [incidentPersonsInvolved, setIncidentPersonsInvolved] = useState("");
   const [incidentWitnesses, setIncidentWitnesses] = useState("");
   const [incidentPhotoFiles, setIncidentPhotoFiles] = useState<File[]>([]);
+  const [incidentExistingPhotos, setIncidentExistingPhotos] = useState<IncidentPhoto[]>([]);
 
   const [selectedActivityType, setSelectedActivityType] = useState("");
   const [activityNote, setActivityNote] = useState("");
@@ -211,6 +229,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
 
   const [savingEntry, setSavingEntry] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
 
   async function refresh() {
     if (!patientId || !isUuid(patientId)) {
@@ -244,7 +263,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       let query = supabase
         .from("journal_entries")
         .select(
-          "id, patient_id, journal_type, occurred_at, created_by, created_at, shared_to_circle, pain_level, include_in_clinician_summary, content_encrypted, mood_encrypted"
+          "id, patient_id, journal_type, occurred_at, created_by, created_at, updated_at, shared_to_circle, pain_level, include_in_clinician_summary, content_encrypted, mood_encrypted"
         )
         .eq("patient_id", patientId)
         .order("created_at", { ascending: false })
@@ -300,6 +319,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     setIncidentPersonsInvolved("");
     setIncidentWitnesses("");
     setIncidentPhotoFiles([]);
+    setIncidentExistingPhotos([]);
   }
 
   function resetActivityForm() {
@@ -311,6 +331,7 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   function resetEntryForm() {
     setGeneralReportContent("");
     setSharedToCircle(true);
+    setEditingEntryId(null);
     resetIncidentForm();
     resetActivityForm();
   }
@@ -387,6 +408,96 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     if (error) throw error;
   }
 
+  async function updateStructuredEntry(
+    entryId: string,
+    payload: StructuredJournalPayload,
+    journalType: JournalEntryKind
+  ) {
+    if (!vaultKey) throw new Error("no_vault_share");
+    if (!patientId || !isUuid(patientId)) throw new Error(`invalid patientId: ${String(patientId)}`);
+
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    if (authErr) throw authErr;
+    const uid = auth.user?.id;
+    if (!uid) throw new Error("not_authenticated");
+
+    const contentEnv = await vaultEncryptString({
+      vaultKey,
+      plaintext: buildStructuredPayload(payload),
+      aad: { table: "journal_entries", column: "content_encrypted", patient_id: patientId },
+    });
+
+    const effectiveSharedToCircle = isPatientRole ? sharedToCircle : true;
+    const occurredAt =
+      journalType === "incident_report" && payload.kind === "incident_report"
+        ? new Date(`${payload.date}T${payload.time || "00:00"}`).toISOString()
+        : new Date().toISOString();
+
+    const { error } = await supabase
+      .from("journal_entries")
+      .update({
+        journal_type: journalType,
+        occurred_at: occurredAt,
+        shared_to_circle: effectiveSharedToCircle,
+        content_encrypted: contentEnv,
+        updated_at: new Date().toISOString(),
+        updated_by: uid,
+      })
+      .eq("id", entryId)
+      .eq("patient_id", patientId)
+      .eq("created_by", uid);
+
+    if (error) throw error;
+  }
+
+  function beginEditingEntry(seed: JournalEditSeed) {
+    const { row, parsedPayload, plainContent } = seed;
+    if (row.created_by !== currentUserId) return;
+    if (row.journal_type === "tracker") return;
+
+    setEditingEntryId(row.id);
+    setSharedToCircle(row.shared_to_circle);
+
+    if (parsedPayload?.kind === "incident_report") {
+      setJournalTitle("incident_report");
+      setIncidentDate(parsedPayload.date || getDefaultIncidentDate());
+      setIncidentTime(parsedPayload.time || getDefaultIncidentTime());
+      setIncidentLocation(parsedPayload.location || "");
+      setIncidentType(parsedPayload.incidentType || "Behaviour incident");
+      setIncidentDescription(parsedPayload.description || "");
+      setIncidentPersonsInvolved(parsedPayload.personsInvolved || "");
+      setIncidentWitnesses(parsedPayload.witnesses || "");
+      setIncidentPhotoFiles([]);
+      setIncidentExistingPhotos(parsedPayload.photoUploads || []);
+      setGeneralReportContent("");
+      resetActivityForm();
+      return;
+    }
+
+    if (parsedPayload?.kind === "general_report") {
+      setJournalTitle("general_report");
+      setGeneralReportContent(parsedPayload.content || "");
+      resetIncidentForm();
+      resetActivityForm();
+      return;
+    }
+
+    if (parsedPayload?.kind === "activity") {
+      setJournalTitle("activity");
+      setSelectedActivityType(parsedPayload.activityType || "");
+      setActivityNote(parsedPayload.note || "");
+      setActivityIncidentReported(!!parsedPayload.incidentReported);
+      resetIncidentForm();
+      setGeneralReportContent("");
+      return;
+    }
+
+    setJournalTitle(row.journal_type === "general_report" ? "general_report" : "activity");
+    setGeneralReportContent(plainContent || "");
+    resetIncidentForm();
+    resetActivityForm();
+  }
+
   async function createEntry() {
     setMsg(null);
     setSavingEntry(true);
@@ -394,15 +505,16 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
     try {
       if (journalTitle === "general_report") {
         if (!generalReportContent.trim()) throw new Error("general_report_required");
-
-        await createStructuredEntry(
-          {
-            kind: "general_report",
-            title: "General Report",
-            content: generalReportContent.trim(),
-          },
-          "general_report"
-        );
+        const payload: StructuredJournalPayload = {
+          kind: "general_report",
+          title: "General Report",
+          content: generalReportContent.trim(),
+        };
+        if (editingEntryId) {
+          await updateStructuredEntry(editingEntryId, payload, "general_report");
+        } else {
+          await createStructuredEntry(payload, "general_report");
+        }
       } else if (journalTitle === "incident_report") {
         if (!incidentDate) throw new Error("incident_date_required");
         if (!incidentTime) throw new Error("incident_time_required");
@@ -416,36 +528,39 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         const uid = auth.user?.id;
         if (!uid) throw new Error("not_authenticated");
 
-        const photoUploads = await uploadIncidentPhotos(uid);
-
-        await createStructuredEntry(
-          {
-            kind: "incident_report",
-            title: "Incident Report",
-            date: incidentDate,
-            time: incidentTime,
-            location: incidentLocation.trim(),
-            incidentType: incidentType.trim(),
-            description: incidentDescription.trim(),
-            personsInvolved: incidentPersonsInvolved.trim(),
-            witnesses: incidentWitnesses.trim(),
-            photoUploads,
-          },
-          "incident_report"
-        );
+        const newPhotoUploads = await uploadIncidentPhotos(uid);
+        const photoUploads = editingEntryId ? [...incidentExistingPhotos, ...newPhotoUploads] : newPhotoUploads;
+        const payload: StructuredJournalPayload = {
+          kind: "incident_report",
+          title: "Incident Report",
+          date: incidentDate,
+          time: incidentTime,
+          location: incidentLocation.trim(),
+          incidentType: incidentType.trim(),
+          description: incidentDescription.trim(),
+          personsInvolved: incidentPersonsInvolved.trim(),
+          witnesses: incidentWitnesses.trim(),
+          photoUploads,
+        };
+        if (editingEntryId) {
+          await updateStructuredEntry(editingEntryId, payload, "incident_report");
+        } else {
+          await createStructuredEntry(payload, "incident_report");
+        }
       } else {
         if (!selectedActivityType) throw new Error("activity_type_required");
-
-        await createStructuredEntry(
-          {
-            kind: "activity",
-            title: "Activities",
-            activityType: selectedActivityType,
-            note: activityNote.trim(),
-            incidentReported: needsIncidentCheckbox(selectedActivityType) ? activityIncidentReported : false,
-          },
-          "activity"
-        );
+        const payload: StructuredJournalPayload = {
+          kind: "activity",
+          title: "Activities",
+          activityType: selectedActivityType,
+          note: activityNote.trim(),
+          incidentReported: needsIncidentCheckbox(selectedActivityType) ? activityIncidentReported : false,
+        };
+        if (editingEntryId) {
+          await updateStructuredEntry(editingEntryId, payload, "activity");
+        } else {
+          await createStructuredEntry(payload, "activity");
+        }
       }
 
       resetEntryForm();
@@ -536,7 +651,9 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
   }
 
   const entryActionLabel =
-    journalTitle === "incident_report"
+    editingEntryId
+      ? ui.updateEntry
+      : journalTitle === "incident_report"
       ? ui.saveIncidentReport
       : journalTitle === "general_report"
       ? ui.saveGeneralReport
@@ -661,9 +778,14 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       <div className="cc-card cc-card-pad cc-stack">
         <div className="cc-row-between">
           <div>
-            <h2 className="cc-h2">{ui.newEntry}</h2>
-            <div className="cc-subtle">{ui.newEntrySubtitle}</div>
+            <h2 className="cc-h2">{editingEntryId ? ui.editEntry : ui.newEntry}</h2>
+            <div className="cc-subtle">{editingEntryId ? ui.editEntrySubtitle : ui.newEntrySubtitle}</div>
           </div>
+          {editingEntryId ? (
+            <button className="cc-btn" onClick={resetEntryForm}>
+              {ui.cancelEdit}
+            </button>
+          ) : null}
         </div>
 
         <div className="cc-grid-2">
@@ -764,6 +886,11 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
             <div className="cc-field">
               <div className="cc-label">{ui.uploadPhotos}</div>
               <input className="cc-input" type="file" multiple accept="image/*" onChange={handleIncidentFileChange} />
+              {editingEntryId && incidentExistingPhotos.length > 0 ? (
+                <div className="cc-small cc-subtle">
+                  {incidentExistingPhotos.length} {incidentExistingPhotos.length === 1 ? ui.existingPhoto : ui.existingPhotos}
+                </div>
+              ) : null}
               {incidentPhotoFiles.length > 0 ? (
                 <div className="cc-small cc-subtle">
                   {incidentPhotoFiles.length} {incidentPhotoFiles.length === 1 ? ui.photoSelected : ui.photosSelected}
@@ -842,7 +969,14 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         ) : (
           <div className="cc-stack">
             {rows.map((r) => (
-              <JournalCard key={r.id} row={r} patientId={patientId} vaultKey={vaultKey} currentUserId={currentUserId} />
+              <JournalCard
+                key={r.id}
+                row={r}
+                patientId={patientId}
+                vaultKey={vaultKey}
+                currentUserId={currentUserId}
+                onEditEntry={beginEditingEntry}
+              />
             ))}
           </div>
         )}
@@ -856,11 +990,13 @@ function JournalCard({
   patientId,
   vaultKey,
   currentUserId,
+  onEditEntry,
 }: {
   row: JournalRow;
   patientId: string;
   vaultKey: Uint8Array | null;
   currentUserId: string;
+  onEditEntry: (seed: JournalEditSeed) => void;
 }) {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const { languageCode } = useUserLanguage();
@@ -869,6 +1005,13 @@ function JournalCard({
   const [ptMood, setPtMood] = useState("");
   const [ptContent, setPtContent] = useState("");
   const [openingPhotoPath, setOpeningPhotoPath] = useState<string | null>(null);
+  const [comments, setComments] = useState<JournalCommentRow[]>([]);
+  const [commentPlainById, setCommentPlainById] = useState<Record<string, string>>({});
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [savingComment, setSavingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentDraft, setEditingCommentDraft] = useState("");
 
   async function decrypt() {
     if (!vaultKey) return;
@@ -903,9 +1046,101 @@ function JournalCard({
     if (!open) {
       setOpen(true);
       if (!ptContent) await decrypt();
+      await refreshComments();
     } else {
       setOpen(false);
     }
+  }
+
+  async function refreshComments() {
+    setLoadingComments(true);
+    try {
+      const { data, error } = await supabase
+        .from("journal_comments")
+        .select("id, journal_entry_id, patient_id, created_by, created_at, updated_at, content_encrypted")
+        .eq("journal_entry_id", row.id)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      const next = (data ?? []) as JournalCommentRow[];
+      setComments(next);
+
+      if (!vaultKey) return;
+      const decryptedEntries = await Promise.all(
+        next.map(async (comment) => {
+          const plain = await decryptStringWithLocalCache({
+            patientId,
+            table: "journal_comments",
+            rowId: comment.id,
+            column: "content_encrypted",
+            env: comment.content_encrypted,
+            vaultKey,
+          });
+          return [comment.id, plain] as const;
+        })
+      );
+
+      setCommentPlainById(Object.fromEntries(decryptedEntries));
+    } catch {
+      setComments([]);
+    } finally {
+      setLoadingComments(false);
+    }
+  }
+
+  async function saveComment() {
+    if (!vaultKey) return;
+    const draft = editingCommentId ? editingCommentDraft : commentDraft;
+    if (!draft.trim()) return;
+
+    setSavingComment(true);
+    try {
+      const contentEnv = await vaultEncryptString({
+        vaultKey,
+        plaintext: draft.trim(),
+        aad: { table: "journal_comments", column: "content_encrypted", patient_id: patientId },
+      });
+
+      if (editingCommentId) {
+        const { error } = await supabase
+          .from("journal_comments")
+          .update({
+            content_encrypted: contentEnv,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", editingCommentId)
+          .eq("created_by", currentUserId);
+        if (error) throw error;
+        setEditingCommentId(null);
+        setEditingCommentDraft("");
+      } else {
+        const { error } = await supabase.from("journal_comments").insert({
+          journal_entry_id: row.id,
+          patient_id: patientId,
+          created_by: currentUserId,
+          content_encrypted: contentEnv,
+        });
+        if (error) throw error;
+        setCommentDraft("");
+      }
+
+      await refreshComments();
+    } finally {
+      setSavingComment(false);
+    }
+  }
+
+  function startEditingComment(commentId: string) {
+    setEditingCommentId(commentId);
+    setEditingCommentDraft(commentPlainById[commentId] ?? "");
+  }
+
+  function handleEditEntry() {
+    onEditEntry({
+      row,
+      parsedPayload: ptContent ? parseStructuredPayload(ptContent) : null,
+      plainContent: ptContent,
+    });
   }
 
   async function openIncidentPhoto(photo: IncidentPhoto) {
@@ -926,6 +1161,7 @@ function JournalCard({
   const cardTitle = parsedPayload
     ? journalTypeOptionLabel(parsedPayload.kind, ui)
     : typeLabel;
+  const canEditEntry = row.created_by === currentUserId && row.journal_type !== "tracker";
 
   return (
     <div className="cc-panel-soft">
@@ -934,14 +1170,24 @@ function JournalCard({
           <div className="cc-strong">
             {cardTitle}
             <span className="cc-small">
-              {" "}\r\n              - {new Date(row.created_at).toLocaleString()} - {row.shared_to_circle ? (languageCode === "it" ? "condiviso" : "shared") : languageCode === "it" ? "privato" : "private"}\r\n              {row.pain_level != null ? ` - ${languageCode === "it" ? "dolore" : "pain"}:${row.pain_level}` : ""}\r\n              {row.created_by === currentUserId ? ` - ${languageCode === "it" ? "tu" : "you"}` : ""}
+              {" "}
+              - {new Date(row.created_at).toLocaleString()} - {row.shared_to_circle ? ui.shared : ui.private}
+              {row.pain_level != null ? ` - ${ui.painTag}:${row.pain_level}` : ""}
+              {row.created_by === currentUserId ? ` - ${ui.you}` : ""}
             </span>
           </div>
         </div>
 
-        <button className="cc-btn" onClick={toggle}>
-          {open ? ui.hide : ui.open}
-        </button>
+        <div className="cc-row">
+          {canEditEntry && open ? (
+            <button className="cc-btn" onClick={handleEditEntry}>
+              {ui.editEntry}
+            </button>
+          ) : null}
+          <button className="cc-btn" onClick={toggle}>
+            {open ? ui.hide : ui.open}
+          </button>
+        </div>
       </div>
 
       {open ? (
@@ -1008,6 +1254,86 @@ function JournalCard({
           ) : (
             <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{ptContent || "-"}</div>
           )}
+
+          <div className="cc-spacer-12" />
+          <div className="cc-stack" style={{ gap: 10 }}>
+            <div className="cc-strong">{ui.comments}</div>
+            {loadingComments ? <div className="cc-small cc-subtle">{ui.loadingComments}</div> : null}
+            {!loadingComments && comments.length === 0 ? (
+              <div className="cc-small cc-subtle">{ui.noComments}</div>
+            ) : null}
+            {comments.map((comment) => {
+              const isAuthor = comment.created_by === currentUserId;
+              const isEditing = editingCommentId === comment.id;
+              const isEdited =
+                !!comment.updated_at &&
+                !!comment.created_at &&
+                new Date(comment.updated_at).getTime() > new Date(comment.created_at).getTime() + 1000;
+
+              return (
+                <div key={comment.id} className="cc-panel" style={{ padding: 12 }}>
+                  <div className="cc-row-between">
+                    <div className="cc-small cc-subtle">
+                      {isAuthor ? ui.you : comment.created_by}
+                      {" · "}
+                      {new Date(comment.created_at).toLocaleString()}
+                      {isEdited ? ` · ${ui.edited}` : ""}
+                    </div>
+                    {isAuthor && !isEditing ? (
+                      <button className="cc-btn" onClick={() => startEditingComment(comment.id)}>
+                        {ui.editComment}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {isEditing ? (
+                    <div className="cc-stack" style={{ gap: 8, marginTop: 8 }}>
+                      <textarea
+                        className="cc-textarea"
+                        value={editingCommentDraft}
+                        onChange={(e) => setEditingCommentDraft(e.target.value)}
+                        placeholder={ui.commentPlaceholder}
+                      />
+                      <div className="cc-row">
+                        <button className="cc-btn cc-btn-primary" onClick={saveComment} disabled={savingComment}>
+                          {savingComment ? ui.savingComment : ui.updateComment}
+                        </button>
+                        <button
+                          className="cc-btn"
+                          onClick={() => {
+                            setEditingCommentId(null);
+                            setEditingCommentDraft("");
+                          }}
+                        >
+                          {ui.cancelEdit}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="cc-wrap" style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 8 }}>
+                      {commentPlainById[comment.id] || "-"}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {!editingCommentId ? (
+              <div className="cc-stack" style={{ gap: 8 }}>
+                <textarea
+                  className="cc-textarea"
+                  value={commentDraft}
+                  onChange={(e) => setCommentDraft(e.target.value)}
+                  placeholder={ui.commentPlaceholder}
+                />
+                <div className="cc-row">
+                  <button className="cc-btn cc-btn-primary" onClick={saveComment} disabled={savingComment || !vaultKey}>
+                    {savingComment ? ui.savingComment : ui.addComment}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
