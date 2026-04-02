@@ -5074,7 +5074,8 @@ export const journalsPageUi = {
       "Sleep Check": "Sleep Check",
       "Toileting": "Toileting",
       "Vitals": "Vitals",
-      "Wound Care": "Wound Care"
+      "Wound Care": "Wound Care",
+      "Blood Pressure": "Blood Pressure"
     },
     "journalTypeLabels": {
       "tracker": "Tracker log",
@@ -5194,7 +5195,8 @@ export const journalsPageUi = {
       "Sleep Check": "Kontrola snu",
       "Toileting": "Korzystanie z toalety",
       "Vitals": "Parametry życiowe",
-      "Wound Care": "Opieka nad ranami"
+      "Wound Care": "Opieka nad ranami",
+      "Blood Pressure": "Ci?nienie krwi"
     },
     "journalTypeLabels": {
       "tracker": "Dziennik monitorowania",
@@ -5314,7 +5316,8 @@ export const journalsPageUi = {
       "Sleep Check": "Verificare somn",
       "Toileting": "Toaletare",
       "Vitals": "Semne vitale",
-      "Wound Care": "Îngrijire a rănilor"
+      "Wound Care": "Îngrijire a rănilor",
+      "Blood Pressure": "Tensiune arterial?"
     },
     "journalTypeLabels": {
       "tracker": "Jurnal de monitorizare",
@@ -5434,7 +5437,8 @@ export const journalsPageUi = {
       "Sleep Check": "ਨੀੰਦ ਦੀ ਜਾਂਚ",
       "Toileting": "ਟਾਇਲਟ ਦੀ ਵਰਤੋਂ",
       "Vitals": "ਜੀਵ-ਸੰਕੇਤ",
-      "Wound Care": "ਜ਼ਖਮ ਦੀ ਦੇਖਭਾਲ"
+      "Wound Care": "ਜ਼ਖਮ ਦੀ ਦੇਖਭਾਲ",
+      "Blood Pressure": "??? ?? ????"
     },
     "journalTypeLabels": {
       "tracker": "ਟ੍ਰੈਕਰ ਲੌਗ",
@@ -5554,7 +5558,8 @@ export const journalsPageUi = {
       "Sleep Check": "نیند کی جانچ",
       "Toileting": "ٹوائلٹ استعمال",
       "Vitals": "حیاتیاتی اشارے",
-      "Wound Care": "زخم کی دیکھ بھال"
+      "Wound Care": "زخم کی دیکھ بھال",
+      "Blood Pressure": "??? ?????"
     },
     "journalTypeLabels": {
       "tracker": "ٹریکَر لاگ",
@@ -5674,7 +5679,8 @@ export const journalsPageUi = {
       "Sleep Check": "Verificação de sono",
       "Toileting": "Uso do sanitário",
       "Vitals": "Sinais vitais",
-      "Wound Care": "Cuidados com feridas"
+      "Wound Care": "Cuidados com feridas",
+      "Blood Pressure": "Press?o arterial"
     },
     "journalTypeLabels": {
       "tracker": "Registro de rastreadores",
@@ -5794,7 +5800,8 @@ export const journalsPageUi = {
       "Sleep Check": "Control del sueño",
       "Toileting": "Uso del baño",
       "Vitals": "Signos vitales",
-      "Wound Care": "Cuidado de heridas"
+      "Wound Care": "Cuidado de heridas",
+      "Blood Pressure": "Presi?n arterial"
     },
     "journalTypeLabels": {
       "tracker": "Registro de seguimiento",
@@ -5914,7 +5921,8 @@ export const journalsPageUi = {
       "Sleep Check": "فحص النوم",
       "Toileting": "استخدام المرحاض",
       "Vitals": "المؤشرات الحيوية",
-      "Wound Care": "عناية بالجروح"
+      "Wound Care": "عناية بالجروح",
+      "Blood Pressure": "??? ????"
     },
     "journalTypeLabels": {
       "tracker": "سجل المتتبعات",
@@ -6034,7 +6042,8 @@ export const journalsPageUi = {
       "Sleep Check": "فحص النوم",
       "Toileting": "التواليت",
       "Vitals": "المؤشرات الحيوية",
-      "Wound Care": "العناية بالجروح"
+      "Wound Care": "العناية بالجروح",
+      "Blood Pressure": "??? ????"
     },
     "journalTypeLabels": {
       "tracker": "سجل المتابعة",
@@ -6154,7 +6163,8 @@ export const journalsPageUi = {
       "Sleep Check": "ঘুম পরীক্ষা",
       "Toileting": "মলত্যাগ",
       "Vitals": "মূল লক্ষণ",
-      "Wound Care": "ঘা/জখম যত্ন"
+      "Wound Care": "ঘা/জখম যত্ন",
+      "Blood Pressure": "???????"
     },
     "journalTypeLabels": {
       "tracker": "ট্র্যাকার লগ",
@@ -6274,7 +6284,8 @@ export const journalsPageUi = {
       "Sleep Check": "નિદ્રા તપાસ",
       "Toileting": "શૌચાલયનો ઉપયોગ",
       "Vitals": "વિટાલ્સ",
-      "Wound Care": "જખમની સંભાળ"
+      "Wound Care": "જખમની સંભાળ",
+      "Blood Pressure": "???? ??????"
     },
     "journalTypeLabels": {
       "tracker": "ટ્રેકર લોગ",
@@ -6394,7 +6405,8 @@ export const journalsPageUi = {
       "Sleep Check": "Controllo del sonno",
       "Toileting": "Uso del bagno",
       "Vitals": "Parametri vitali",
-      "Wound Care": "Cura delle ferite"
+      "Wound Care": "Cura delle ferite",
+      "Blood Pressure": "Pressione arteriosa"
     },
     "journalTypeLabels": {
       "tracker": "Diario del tracker",
@@ -6514,7 +6526,8 @@ export const journalsPageUi = {
       "Sleep Check": "Sleep Check",
       "Toileting": "Toileting",
       "Vitals": "Vitals",
-      "Wound Care": "Wound Care"
+      "Wound Care": "Wound Care",
+      "Blood Pressure": "????? ????"
     },
     "journalTypeLabels": {
       "tracker": "Tracker log",
@@ -6634,7 +6647,8 @@ export const journalsPageUi = {
       "Sleep Check": "کنترل خواب",
       "Toileting": "استفاده از دستشویی",
       "Vitals": "علائم حیاتی",
-      "Wound Care": "مراقبت از زخم"
+      "Wound Care": "مراقبت از زخم",
+      "Blood Pressure": "???? ???"
     },
     "journalTypeLabels": {
       "tracker": "گزارش ردیابی",
@@ -6754,7 +6768,8 @@ export const journalsPageUi = {
       "Sleep Check": "Uyku Kontrolü",
       "Toileting": "Tuvalete Çıkma",
       "Vitals": "Yaşam Bulguları",
-      "Wound Care": "Yara Bakımı"
+      "Wound Care": "Yara Bakımı",
+      "Blood Pressure": "Kan Bas?nc?"
     },
     "journalTypeLabels": {
       "tracker": "Takip Günlüğü",
@@ -6874,7 +6889,8 @@ export const journalsPageUi = {
       "Sleep Check": "உறக்கம் பரிசோதனை",
       "Toileting": "விடுதலை",
       "Vitals": "முக்கிய அறிகுறிகள்",
-      "Wound Care": "காய பராமரிப்பு"
+      "Wound Care": "காய பராமரிப்பு",
+      "Blood Pressure": "????? ????????"
     },
     "journalTypeLabels": {
       "tracker": "டிராக்கர் பதிவு",
@@ -6994,7 +7010,8 @@ export const journalsPageUi = {
       "Sleep Check": "Gwirio Cysgu",
       "Toileting": "Toileting",
       "Vitals": "Arwyddion bywyd",
-      "Wound Care": "Gofal anafiadau"
+      "Wound Care": "Gofal anafiadau",
+      "Blood Pressure": "Pwysedd Gwaed"
     },
     "journalTypeLabels": {
       "tracker": "Cofnod trac",
@@ -7114,7 +7131,8 @@ export const journalsPageUi = {
       "Sleep Check": "Перевірка сну",
       "Toileting": "Туалетний догляд",
       "Vitals": "Життєві показники",
-      "Wound Care": "Догляд за ранами"
+      "Wound Care": "Догляд за ранами",
+      "Blood Pressure": "???????????? ????"
     },
     "journalTypeLabels": {
       "tracker": "Журнал відстеження",

@@ -91,6 +91,7 @@ const ACTIVITY_OPTIONS = [
   "Bathing",
   "Bed Rail Check",
   "Behaviour",
+  "Blood Pressure",
   "Blood Glucose",
   "Bowel Movement",
   "Enteral Feeding",

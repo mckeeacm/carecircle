@@ -334,6 +334,7 @@ const pages = {
       Bathing: "Bathing",
       "Bed Rail Check": "Bed Rail Check",
       Behaviour: "Behaviour",
+      "Blood Pressure": "Blood Pressure",
       "Blood Glucose": "Blood Glucose",
       "Bowel Movement": "Bowel Movement",
       "Enteral Feeding": "Enteral Feeding",
