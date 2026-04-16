@@ -260,18 +260,30 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
       setMyRole(role);
       setIsPatientRole(role === "patient");
 
-      let query = supabase
-        .from("journal_entries")
-        .select(
-          "id, patient_id, journal_type, occurred_at, created_by, created_at, updated_at, shared_to_circle, pain_level, include_in_clinician_summary, content_encrypted, mood_encrypted"
-        )
-        .eq("patient_id", patientId)
-        .order("created_at", { ascending: false })
-        .limit(50);
+      const baseSelect =
+        "id, patient_id, journal_type, occurred_at, created_by, created_at, shared_to_circle, pain_level, include_in_clinician_summary, content_encrypted, mood_encrypted";
+      const selectWithAudit = `${baseSelect}, updated_at`;
 
-      if (viewMode === "shared") query = query.eq("shared_to_circle", true);
+      const buildJournalQuery = (selectColumns: string) => {
+        let journalQuery = supabase
+          .from("journal_entries")
+          .select(selectColumns)
+          .eq("patient_id", patientId)
+          .order("created_at", { ascending: false })
+          .limit(50);
 
-      const { data, error } = await query;
+        if (viewMode === "shared") journalQuery = journalQuery.eq("shared_to_circle", true);
+        return journalQuery;
+      };
+
+      let { data, error } = await buildJournalQuery(selectWithAudit);
+
+      if (error && (error.code === "PGRST204" || /updated_at|schema cache|column/i.test(error.message ?? ""))) {
+        const fallback = await buildJournalQuery(baseSelect);
+        data = (fallback.data ?? []).map((row) => ({ ...row, updated_at: null }));
+        error = fallback.error;
+      }
+
       if (error) throw error;
 
       setRows((data ?? []) as JournalRow[]);
