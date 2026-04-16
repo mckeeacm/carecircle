@@ -276,17 +276,24 @@ export default function JournalsClient({ patientId }: { patientId: string }) {
         return journalQuery;
       };
 
-      let { data, error } = await buildJournalQuery(selectWithAudit);
+      const primary = await buildJournalQuery(selectWithAudit);
+      let journalRows: JournalRow[] = [];
+      let queryError = primary.error;
 
-      if (error && (error.code === "PGRST204" || /updated_at|schema cache|column/i.test(error.message ?? ""))) {
+      if (queryError && (queryError.code === "PGRST204" || /updated_at|schema cache|column/i.test(queryError.message ?? ""))) {
         const fallback = await buildJournalQuery(baseSelect);
-        data = (fallback.data ?? []).map((row) => ({ ...row, updated_at: null }));
-        error = fallback.error;
+        journalRows = ((fallback.data ?? []) as unknown as Array<Omit<JournalRow, "updated_at">>).map((row) => ({
+          ...row,
+          updated_at: null,
+        }));
+        queryError = fallback.error;
+      } else {
+        journalRows = (primary.data ?? []) as unknown as JournalRow[];
       }
 
-      if (error) throw error;
+      if (queryError) throw queryError;
 
-      setRows((data ?? []) as JournalRow[]);
+      setRows(journalRows);
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : "failed_to_load_journals");
     } finally {
